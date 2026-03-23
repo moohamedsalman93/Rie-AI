@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --surface-bg: #0a0a0a;
+    --card-bg: #141414;
+    --input-bg: #000000;
+    --border-subtle: rgba(255, 255, 255, 0.05);
+    --border-muted: rgba(255, 255, 255, 0.1);
+    --accent-emerald: #10b981;
+    --accent-blue: #3b82f6;
+    --accent-amber: #f59e0b;
+  }
+
+  body {
+    @apply m-0 bg-transparent text-neutral-100 antialiased;
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  html {
+    background: transparent;
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  #root {
+    background: transparent;
+    border-radius: 16px;
+    overflow: hidden;
+  }
+}
+
+/* Custom Scrollbar Styles */
+@layer utilities {
+
+  /* Premium Solid Surfaces */
+  .premium-surface {
+    background: var(--surface-bg);
+    border: 1px solid var(--border-muted);
+  }
+
+  .premium-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-subtle);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .premium-card:hover {
+    background: #1a1a1a;
+    border-color: var(--border-muted);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+
+  .premium-input {
+    background: var(--input-bg);
+    border: 1px solid var(--border-muted);
+    transition: all 0.2s ease;
+  }
+
+  .premium-input:focus {
+    border-color: rgba(16, 185, 129, 0.6);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
+  }
+
+  /* Webkit browsers (Chrome, Safari, Edge) */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    transition: background 0.2s ease;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  /* Firefox */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  }
+
+  /* Hide scrollbar utility */
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+  }
+}
+
+/* Smooth transitions for elements */
+.smooth-transition {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Terminal cursor blink */
+@keyframes terminal-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.terminal-cursor {
+  animation: terminal-blink 1s step-end infinite;
+}

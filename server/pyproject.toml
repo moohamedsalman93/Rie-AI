@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "rie-be"
+version = "0.1.0"
+description = "FastAPI chat endpoint"
+authors = ["Your Name <your.email@example.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "3.11.9"
+fastapi = ">=0.115.0"
+uvicorn = ">=0.30.0"
+deepagents = "^0.3.0"
+tavily-python = "^0.7.17"
+python-dotenv = "^1.0.0"
+langchain-groq = "^1.0.0"
+langchain-google-genai = "^2.0.0"
+langchain-google-vertexai = "^2.0.0"
+pyautogui = "^0.9.54"
+pygetwindow = "^0.0.9"
+pillow = "^12.0.0"
+pywinauto = "^0.6.9"
+pywin32 = "^311"
+langchain-mcp-adapters = "^0.2.1"
+mcp = "^1.25.0"
+uiautomation = "^2.0.29"
+humancursor = "^1.1.5"
+fuzzywuzzy = "^0.18.0"
+markdownify = "^1.2.2"
+tabulate = "^0.9.0"
+psutil = "^7.2.1"
+aiosqlite = "^0.22.1"
+langgraph-checkpoint-sqlite = "^3.0.1"
+langchain-openai = "^1.1.6"
+python-multipart = "^0.0.21"
+openai = "^2.14.0"
+edge-tts = "^7.2.7"
+langchain-ollama = "^1.0.1"
+chromadb = "^0.5.23"
+sentence-transformers = "^3.3.0"
+apscheduler = "^3.11.0"
+
+
+[tool.poetry.group.dev.dependencies]
+pyinstaller = "^6.3.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
