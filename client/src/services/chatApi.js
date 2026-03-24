@@ -1,10 +1,10 @@
 /**
- * API service for communicating with rie-be chat backend
+ * API service for communicating with server chat backend
  */
 
 import { getConversationContext } from "./memoryService";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:14300";
 
 /**
  * User device local clock for the backend (avoids wrong year/day in scheduling).

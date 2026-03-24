@@ -164,7 +164,7 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
                 {/* Footer */}
                 <footer className="mt-6 pt-4 border-t border-white/5 flex items-center justify-between opacity-40 shrink-0">
                     <span className="text-[10px] font-medium text-neutral-400 tracking-wider">
-                        Backend health check at <span className="text-emerald-500 font-bold">localhost:8000</span>
+                        Backend health check at <span className="text-emerald-500 font-bold">localhost:14300</span>
                     </span>
                     <span className="text-[10px] font-medium text-neutral-600 tracking-widest uppercase">
                         Secure Neural Link

@@ -10,7 +10,7 @@ try {
 } catch {}
 
 Write-Host "`n--- Rebuilding Python Backend (PyInstaller) ---" -ForegroundColor Cyan
-Set-Location ".\rie-be"
+Set-Location ".\server"
 poetry run pyinstaller --noconfirm --onefile --windowed --name rie-backend `
     --collect-all deepagents `
     --collect-all langchain_groq `
@@ -21,10 +21,10 @@ poetry run pyinstaller --noconfirm --onefile --windowed --name rie-backend `
 Set-Location ".."
 
 Write-Host "`n--- Updating Tauri Sidecar Binary ---" -ForegroundColor Cyan
-if (-not (Test-Path "app\Rie-tauri\src-tauri\bin")) {
-    New-Item -ItemType Directory -Path "app\Rie-tauri\src-tauri\bin" -Force
+if (-not (Test-Path "client\src-tauri\bin")) {
+    New-Item -ItemType Directory -Path "client\src-tauri\bin" -Force
 }
 
-copy "app\rie-be\dist\rie-backend.exe" "app\Rie-tauri\src-tauri\bin\rie-backend-x86_64-pc-windows-msvc.exe"
+copy "server\dist\rie-backend.exe" "client\src-tauri\bin\rie-backend-x86_64-pc-windows-msvc.exe"
 
 Write-Host "`n--- Done! You can now run 'npm run tauri:staging' ---" -ForegroundColor Green

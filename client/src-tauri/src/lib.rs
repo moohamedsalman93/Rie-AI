@@ -15,7 +15,7 @@ fn is_backend_running() -> bool {
     use std::net::TcpStream;
     use std::time::Duration;
     TcpStream::connect_timeout(
-        &"127.0.0.1:8000".parse().unwrap(),
+        &"127.0.0.1:14300".parse().unwrap(),
         Duration::from_millis(100),
     )
     .is_ok()
@@ -118,7 +118,7 @@ pub fn run() {
 
             if std::env::var("SKIP_SIDECAR").unwrap_or_default() != "true" {
                 if is_backend_running() {
-                    println!("Backend already running on port 8000, skipping sidecar spawn.");
+                    println!("Backend already running on port 14300, skipping sidecar spawn.");
                 } else {
                     let sidecar_command = app.shell().sidecar("rie-backend").unwrap();
                     let sidecar_command = sidecar_command.env("RIE_APP_TOKEN", &app_token);

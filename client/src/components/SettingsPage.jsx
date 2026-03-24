@@ -687,11 +687,11 @@ key2,
                               onClick={async () => {
                                 try {
                                   const { openUrl } = await import('@tauri-apps/plugin-opener');
-                                  await openUrl('http://localhost:5173/login?redirect_to_app=true');
+                                  await openUrl('http://localhost:14200/login?redirect_to_app=true');
                                 } catch (e) {
                                   console.error("Failed to open login URL:", e);
                                   // Fallback for dev if plugin naming is different or not found
-                                  window.open('http://localhost:5173/login?redirect_to_app=true', '_blank');
+                                  window.open('http://localhost:14200/login?redirect_to_app=true', '_blank');
                                 }
                               }}
                               className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95"

@@ -68,3 +68,5 @@ htmlcov/
 
 # Windows binaries (build artifacts)
 *.exe
+
+*db

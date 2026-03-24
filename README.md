@@ -87,7 +87,7 @@ poetry install
 poetry run uvicorn main:app --reload
 ```
 
-Backend runs on `http://127.0.0.1:8000`.
+Backend runs on `http://127.0.0.1:14300`.
 
 ### 2) Start desktop app
 
@@ -177,7 +177,7 @@ Key routes:
 - **Tauri build fails**
   - Verify Rust toolchain and platform prerequisites
 - **UI cannot connect to backend**
-  - Confirm backend is running at `127.0.0.1:8000`
+  - Confirm backend is running at `127.0.0.1:14300`
   - Restart client and backend after major settings changes
 - **Provider unavailable**
   - Validate provider keys/model names in settings

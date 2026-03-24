@@ -79,10 +79,8 @@ async def shutdown_event():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:1420",  # Tauri dev server
-        "http://localhost:5173",  # Vite dev server (fallback)
-        "http://127.0.0.1:1420",
-        "http://127.0.0.1:5173",
+        "http://localhost:14200",  # Tauri/Vite dev server
+        "http://127.0.0.1:14200",
         "tauri://localhost",  # Tauri production
         "https://tauri.localhost",  # Tauri production HTTPS
         "http://tauri.localhost",  # Tauri production HTTP
@@ -131,7 +129,7 @@ if __name__ == "__main__":
     uvicorn.run(
         app if is_frozen else "main:app",
         host="127.0.0.1",
-        port=8000,
+        port=14300,
         reload=settings.DEBUG if not is_frozen else False,
         use_colors=not is_frozen,  # Disable colors in frozen/windowed mode
         log_config=LOG_CONFIG
