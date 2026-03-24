@@ -117,7 +117,12 @@ export function FloatingChatWindow({
       />
 
       {showWelcome ? (
-        <WelcomeScreen onGetStarted={() => { setShowWelcome(false); setIsSettingsOpen(true); }} />
+        <WelcomeScreen
+          onGetStarted={() => { setShowWelcome(false); setIsSettingsOpen(true); }}
+          onMouseDown={onDragStart}
+          onMinimize={onMinimize}
+          onClose={onCloseApp}
+        />
       ) : isSettingsOpen ? (
         <SettingsPage onClose={() => setIsSettingsOpen(false)} />
       ) : (

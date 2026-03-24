@@ -41,7 +41,7 @@ function App() {
   const [isOpen, setIsOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(true);
   const [input, setInput] = useState("");
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [sessions, setSessions] = useState({});
@@ -1594,7 +1594,12 @@ function App() {
               className="pointer-events-auto w-full h-full"
             >
               {showWelcome ? (
-                <WelcomeScreen onGetStarted={() => { setShowWelcome(false); setIsSettingsOpen(true); }} />
+                <WelcomeScreen
+                  onGetStarted={() => { setShowWelcome(false); setIsSettingsOpen(true); }}
+                  onMouseDown={handleDragStart}
+                  onClose={handleCloseApp}
+                  onMinimize={() => getWindow().minimize()}
+                />
               ) : isSettingsOpen ? (
                 <SettingsPage onClose={() => setIsSettingsOpen(false)} />
               ) : (
