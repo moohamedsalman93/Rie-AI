@@ -114,10 +114,6 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
 
     return (
         <div
-            onMouseDown={(e) => {
-                onMouseDown?.(e);
-            }}
-            data-tauri-drag-region
             className="absolute inset-0 bg-neutral-900 z-[60] flex flex-col font-sans text-neutral-100 border border-neutral-800 rounded-2xl overflow-hidden pointer-events-auto select-none"
         >
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -125,8 +121,12 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
                 <div className="absolute top-[40%] -right-[10%] w-[50%] h-[50%] rounded-full bg-blue-500/10 blur-[100px]" />
             </div>
 
-            <div className="relative z-20 h-10 px-3 border-b border-neutral-800/60 bg-neutral-950/70 backdrop-blur-md flex items-center justify-between">
-                <div className="flex-1 h-full flex items-center text-xs text-neutral-500 font-medium tracking-wide cursor-move">
+            <div
+                onMouseDown={(e) => onMouseDown?.(e)}
+                data-tauri-drag-region
+                className="relative z-20 h-10 px-3 border-b border-neutral-800/60 bg-neutral-950/70 backdrop-blur-md flex items-center justify-between cursor-move"
+            >
+                <div className="flex-1 h-full flex items-center text-xs text-neutral-500 font-medium tracking-wide">
                     Onboarding
                 </div>
                 <div className="flex items-center gap-1">

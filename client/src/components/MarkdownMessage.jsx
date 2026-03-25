@@ -4,7 +4,7 @@ import { useTypewriter } from '../hooks/useTypewriter';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 /**
  * Component for rendering markdown content in chat messages
@@ -35,6 +35,19 @@ const CopyButton = ({ code }) => {
 
 export function MarkdownMessage({ content, className = "", isStreaming = false, typesWrite, setTypesWrite }) {
   const displayedText = useTypewriter(content, isStreaming);
+
+  const handleOpenExternalUrl = useCallback(async (event, href) => {
+    if (!href) return;
+    event.preventDefault();
+
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener');
+      await openUrl(href);
+    } catch (error) {
+      console.error('Failed to open URL with Tauri opener:', error);
+      window.open(href, '_blank', 'noopener,noreferrer');
+    }
+  }, []);
 
   // Update parent state for auto-scrolling only when streaming
   useEffect(() => {
@@ -94,11 +107,13 @@ export function MarkdownMessage({ content, className = "", isStreaming = false, 
             <pre className="mb-2 overflow-x-auto max-w-[85%]" {...props} />
           ),
           // Style links
-          a: ({ node, ...props }) => (
+          a: ({ node, href, ...props }) => (
             <a
               className="text-neutral-300 hover:text-neutral-200 underline underline-offset-2 transition"
               target="_blank"
               rel="noopener noreferrer"
+              href={href}
+              onClick={(event) => handleOpenExternalUrl(event, href)}
               {...props}
             />
           ),

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
@@ -36,12 +37,36 @@ function mergeScheduleNotificationLog(prev, incoming) {
   return arr;
 }
 
+function playScheduleAlertSound() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.25);
+    osc.onended = () => {
+      ctx.close().catch(() => {});
+    };
+  } catch (e) {
+    console.warn("Schedule alert sound failed:", e);
+  }
+}
+
 function App() {
   //#region State
   const [isOpen, setIsOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [showWelcome, setShowWelcome] = useState(true);
+  const [showWelcome, setShowWelcome] = useState(false);
   const [input, setInput] = useState("");
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [sessions, setSessions] = useState({});
@@ -925,9 +950,20 @@ function App() {
   }, [windowMode]);
 
   useEffect(() => {
-    if (typeof Notification !== "undefined" && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
+    let cancelled = false;
+    const ensureNotificationPermission = async () => {
+      try {
+        const granted = await isPermissionGranted();
+        if (cancelled || granted) return;
+        await requestPermission();
+      } catch (e) {
+        console.warn("Notification permission check failed:", e);
+      }
+    };
+    ensureNotificationPermission();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -939,6 +975,7 @@ function App() {
         const list = await getScheduleNotifications();
         if (cancelled) return;
         const next = Array.isArray(list) ? list : [];
+        let hasNewScheduleNotification = false;
 
         if (!scheduleNotifInitializedRef.current) {
           scheduleNotifInitializedRef.current = true;
@@ -950,17 +987,44 @@ function App() {
 
         for (const n of next) {
           if (!scheduleNotifSeenIdsRef.current.has(n.id)) {
-            if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-              try {
-                new Notification(n.title, {
+            hasNewScheduleNotification = true;
+            try {
+              const granted = await isPermissionGranted();
+              if (granted) {
+                sendNotification({
+                  title: n.title || "Scheduled task completed",
                   body: (n.body || "").slice(0, 200),
+                  // These are best-effort across platforms.
+                  ongoing: true,
+                  sound: "default",
                 });
-              } catch (e) {
-                console.warn("Desktop notification failed:", e);
               }
+              playScheduleAlertSound();
+            } catch (e) {
+              console.warn("Desktop notification failed:", e);
             }
           }
         }
+
+        if (hasNewScheduleNotification) {
+          try {
+            if (windowMode === "floating") {
+              if (!isOpen) {
+                await handleOpen();
+              } else {
+                await getWindow().setFocus();
+              }
+            } else {
+              const win = getWindow();
+              await win.show();
+              await win.unminimize();
+              await win.setFocus();
+            }
+          } catch (e) {
+            console.warn("Failed to open/focus window for schedule notification:", e);
+          }
+        }
+
         scheduleNotifSeenIdsRef.current = new Set(next.map((n) => n.id));
         setScheduleNotifications(next);
         setScheduleNotificationLog((prev) => mergeScheduleNotificationLog(prev, next));
@@ -975,7 +1039,7 @@ function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [apiStatus, isSettingsOpen, showWelcome]);
+  }, [apiStatus, isSettingsOpen, showWelcome, windowMode, isOpen, handleOpen, getWindow]);
 
   useEffect(() => {
     prevThreadScheduleNotifIdsRef.current = new Set();

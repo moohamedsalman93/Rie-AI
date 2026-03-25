@@ -155,11 +155,11 @@ export function ScheduleNotificationsBell({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: -4 }}
               transition={{ duration: 0.15 }}
-              className="fixed inset-x-0 top-12 z-[60] flex justify-center px-3 pt-1 pointer-events-none"
+              className="fixed inset-x-0 top-12 z-[60] flex justify-center px-3 pt-1 cursor-default"
               onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              <div className=" w-[min(20rem,calc(100%-1.5rem))] max-h-80 rounded-xl border border-neutral-700 bg-neutral-900/98 shadow-2xl backdrop-blur-xl overflow-hidden flex flex-col">
+              <div className=" w-[min(20rem,calc(100%-1.5rem))] max-h-80 rounded-xl border border-neutral-700 bg-neutral-900/98 shadow-2xl backdrop-blur-xl overflow-hidden flex flex-col cursor-default">
                 {panelBody}
               </div>
             </motion.div>
@@ -170,7 +170,7 @@ export function ScheduleNotificationsBell({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: -4 }}
               transition={{ duration: 0.15 }}
-              className="absolute right-0 top-full z-[60] mt-2 w-80 max-h-80 rounded-xl border border-neutral-700 bg-neutral-900/98 shadow-2xl backdrop-blur-xl overflow-hidden flex flex-col"
+              className="absolute right-0 top-full z-[60] mt-2 w-80 max-h-80 rounded-xl border border-neutral-700 bg-neutral-900/98 shadow-2xl backdrop-blur-xl overflow-hidden flex flex-col cursor-default"
               onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}
             >
