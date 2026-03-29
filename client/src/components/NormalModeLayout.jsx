@@ -341,7 +341,7 @@ export function NormalModeLayout({
                 {/* Chat Area */}
                 <div className="flex-1 flex flex-col min-w-0 bg-neutral-950">
                     {/* Messages */}
-                    <main className={`flex-1 overflow-y-auto custom-scrollbar transition-transform duration-300  py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"}`}>
+                    <main className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar transition-transform duration-300  py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"}`}>
                         <AnimatePresence>
                             {messages.map((m) => {
                                 if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
@@ -354,7 +354,7 @@ export function NormalModeLayout({
                                         animate={{ opacity: 1, y: 0 }}
                                         className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
                                     >
-                                        <div className={`flex items-end gap-2 max-w-[85%] ${m.from === 'user' ? 'justify-end' : ''}`}>
+                                        <div className={`flex items-end gap-2 min-w-0 max-w-[85%] ${m.from === 'user' ? 'justify-end' : ''}`}>
 
                                             {m.from === 'user' && m.error && (
                                                 <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
@@ -380,7 +380,7 @@ export function NormalModeLayout({
                                                 </div>
                                             )}
 
-                                            <div className={`rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
+                                            <div className={`min-w-0 max-w-full break-words overflow-x-auto rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
                                                 ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
                                                 : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
                                                 }`}>

@@ -57,7 +57,7 @@ export function MarkdownMessage({ content, className = "", isStreaming = false, 
   }, [displayedText, isStreaming, setTypesWrite]);
 
   return (
-    <div className={`markdown-content ${className}`}>
+    <div className={`markdown-content min-w-0 max-w-full break-words ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -104,7 +104,7 @@ export function MarkdownMessage({ content, className = "", isStreaming = false, 
             );
           },
           pre: ({ node, ...props }) => (
-            <pre className="mb-2 overflow-x-auto max-w-[85%]" {...props} />
+            <pre className="mb-2 max-w-full overflow-x-auto" {...props} />
           ),
           // Style links
           a: ({ node, href, ...props }) => (

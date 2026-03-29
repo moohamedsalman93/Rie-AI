@@ -8,12 +8,12 @@ import {
     RefreshCw,
     Mic,
     Square,
-    Settings,
     ChevronRight,
     ChevronLeft,
     CheckCircle2,
     Minus,
     X,
+    AlertTriangle,
 } from "lucide-react";
 import logo from "../assets/logo.png";
 
@@ -183,6 +183,20 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
                             {steps[step].content}
                         </motion.div>
                     </AnimatePresence>
+                </div>
+
+                <div
+                    className="mt-4 rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 flex gap-3 items-start text-left select-text"
+                    role="status"
+                >
+                    <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" aria-hidden />
+                    <div className="min-w-0">
+                        <p className="text-sm font-semibold text-amber-100">Please use with caution</p>
+                        <p className="text-xs text-amber-200/85 mt-1 leading-relaxed">
+                            This app can use terminal access on your system. Use at your own risk—commands could delete, modify,
+                            or expose important data.
+                        </p>
+                    </div>
                 </div>
 
                 <div className="flex justify-between items-center mt-6 pt-5 border-t border-neutral-800/50">

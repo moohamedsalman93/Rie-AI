@@ -414,10 +414,10 @@ export function SettingsPage({ onClose }) {
           <button
             onClick={onClose}
             onMouseDown={(e) => e.stopPropagation()}
-            className="p-2.5 rounded-xl hover:bg-white/10 text-neutral-400 hover:text-white transition-all group"
+            className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-semibold tracking-wide transition-all group"
             title="Back to chat"
           >
-            <X size={20} className="group-hover:rotate-90 transition-transform duration-300" />
+            Back to Chat
           </button>
         </div>
       </div>

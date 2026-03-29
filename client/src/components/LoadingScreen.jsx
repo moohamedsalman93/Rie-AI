@@ -38,7 +38,7 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
         if (currentStepIndex < LOADING_STEPS.length - 1) {
             const timer = setTimeout(() => {
                 setCurrentStepIndex(prev => prev + 1);
-            }, 800 + Math.random() * 1000); // Random duration per step
+            }, 800 + Math.random() * 2000); // Random duration per step
             return () => clearTimeout(timer);
         }
     }, [currentStepIndex]);
@@ -156,7 +156,13 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
                 <div className="mt-6 overflow-hidden h-1 w-full bg-white/5 rounded-full relative shrink-0">
                     <motion.div
                         className="absolute inset-y-0 left-0 bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full"
-                        animate={{ width: `${((currentStepIndex + 1) / LOADING_STEPS.length) * 100}%` }}
+                        animate={{
+                            width: `${
+                                currentStepIndex === LOADING_STEPS.length - 1
+                                    ? 90
+                                    : ((currentStepIndex + 1) / LOADING_STEPS.length) * 100
+                            }%`,
+                        }}
                         transition={{ duration: 0.8, ease: "easeInOut" }}
                     />
                 </div>

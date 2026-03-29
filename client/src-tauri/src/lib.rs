@@ -21,6 +21,31 @@ fn is_backend_running() -> bool {
     .is_ok()
 }
 
+/// Kill all rie-backend.exe processes using taskkill /T to terminate the entire process tree.
+/// This is necessary because PyInstaller's --onefile mode creates a parent+child process pair.
+fn kill_backend_processes() {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        // taskkill /F = force /IM = image name /T = terminate tree (children too)
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "rie-backend.exe", "/T"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // On non-Windows, try to kill by process name using pkill
+        use std::process::Command;
+        let _ = Command::new("pkill")
+            .args(["-f", "rie-backend"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+}
+
 struct AppToken(String);
 
 #[tauri::command]
@@ -119,17 +144,26 @@ pub fn run() {
 
             if std::env::var("SKIP_SIDECAR").unwrap_or_default() != "true" {
                 if is_backend_running() {
-                    println!("Backend already running on port 14300, skipping sidecar spawn.");
-                } else {
-                    let sidecar_command = app.shell().sidecar("rie-backend").unwrap();
-                    let sidecar_command = sidecar_command.env("RIE_APP_TOKEN", &app_token);
-                    let (mut _rx, child) = sidecar_command
-                        .spawn()
-                        .expect("Failed to spawn sidecar");
-                    
-                    let state = app.state::<BackendState>();
-                    *state.0.lock().unwrap() = Some(child);
+                    println!("Backend already running on port 14300. Killing stale processes before respawn...");
+                    // Kill any zombie processes that may be holding the port
+                    kill_backend_processes();
+                    // Brief delay for process termination (reduced from 500ms to 150ms)
+                    std::thread::sleep(std::time::Duration::from_millis(150));
                 }
+                
+                // Additional safety: kill any existing rie-backend.exe processes before spawning
+                // kill_backend_processes();
+                // Brief delay for process termination (reduced from 200ms to 150ms)
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                
+                let sidecar_command = app.shell().sidecar("rie-backend").unwrap();
+                let sidecar_command = sidecar_command.env("RIE_APP_TOKEN", &app_token);
+                let (mut _rx, child) = sidecar_command
+                    .spawn()
+                    .expect("Failed to spawn sidecar");
+                
+                let state = app.state::<BackendState>();
+                *state.0.lock().unwrap() = Some(child);
             } else {
                 println!("Skipping sidecar spawning (SKIP_SIDECAR is true)");
             }
@@ -159,10 +193,17 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 let state = app_handle.state::<BackendState>();
                 let mut lock = state.0.lock().unwrap();
+                
+                // First, try to kill the child process we have a handle to
                 if let Some(child) = lock.take() {
                     let _ = child.kill();
-                    println!("Killed backend sidecar on exit.");
                 }
+                
+                // Then, kill the entire process tree using taskkill /T
+                // This ensures both PyInstaller parent and child processes are terminated
+                kill_backend_processes();
+                
+                println!("Killed backend sidecar process tree on exit.");
             }
         });
 }
