@@ -398,7 +398,7 @@ export function SettingsPage({ onClose }) {
   };
 
   return (
-    <div className="absolute inset-0 premium-surface z-50 flex flex-col font-sans border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
+    <div className="absolute inset-0 premium-surface z-50 flex flex-col font-sans border border-white/10 overflow-hidden shadow-2xl">
       {/* Header */}
       <div
         data-tauri-drag-region
@@ -415,9 +415,9 @@ export function SettingsPage({ onClose }) {
             onClick={onClose}
             onMouseDown={(e) => e.stopPropagation()}
             className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-semibold tracking-wide transition-all group"
-            title="Back to chat"
+            title="Close settings"
           >
-            Back to Chat
+            Close
           </button>
         </div>
       </div>

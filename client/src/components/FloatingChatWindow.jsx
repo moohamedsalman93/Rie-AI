@@ -12,6 +12,7 @@ export function FloatingChatWindow({
   setShowWelcome,
   isSettingsOpen,
   setIsSettingsOpen,
+  onOpenSettingsWindow = null,
   apiStatus,
   isMenuOpen,
   setIsMenuOpen,
@@ -96,7 +97,14 @@ export function FloatingChatWindow({
         setIsMenuOpen={setIsMenuOpen}
         windowMode={windowMode}
         onToggleWindowMode={onToggleWindowMode}
-        onOpenSettings={() => { setShowWelcome(false); setIsSettingsOpen(true); }}
+        onOpenSettings={() => {
+          if (onOpenSettingsWindow) {
+            onOpenSettingsWindow();
+            return;
+          }
+          setShowWelcome(false);
+          setIsSettingsOpen(true);
+        }}
         onOpenHistory={onOpenHistory}
         onNewChat={onNewChat}
         onMinimize={onMinimize}
@@ -118,7 +126,14 @@ export function FloatingChatWindow({
 
       {showWelcome ? (
         <WelcomeScreen
-          onGetStarted={() => { setShowWelcome(false); setIsSettingsOpen(true); }}
+          onGetStarted={() => {
+            if (onOpenSettingsWindow) {
+              onOpenSettingsWindow();
+              return;
+            }
+            setShowWelcome(false);
+            setIsSettingsOpen(true);
+          }}
           onMouseDown={onDragStart}
           onMinimize={onMinimize}
           onClose={onCloseApp}

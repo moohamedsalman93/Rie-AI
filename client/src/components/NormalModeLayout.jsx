@@ -163,14 +163,7 @@ export function NormalModeLayout({
 
                 {/* Right: Window Controls */}
                 <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-end">
-                    <ScheduleNotificationsBell
-                        notifications={scheduleNotifications}
-                        unreadCount={scheduleUnreadCount}
-                        onMarkRead={onScheduleMarkRead}
-                        onMarkAllRead={onScheduleMarkAllRead}
-                        onOpenChat={onScheduleOpenChat}
-                        apiStatus={apiStatus}
-                    />
+                    
                     <button
                         onClick={() => setIsHistoryVisible(!isHistoryVisible)}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -217,10 +210,19 @@ export function NormalModeLayout({
                         </svg>
                     </button>
 
+                    <div className="h-4 w-[2px] bg-neutral-800 mx-1" />
+
+                    <ScheduleNotificationsBell
+                        notifications={scheduleNotifications}
+                        unreadCount={scheduleUnreadCount}
+                        onMarkRead={onScheduleMarkRead}
+                        onMarkAllRead={onScheduleMarkAllRead}
+                        onOpenChat={onScheduleOpenChat}
+                        apiStatus={apiStatus}
+                    />
 
 
-
-                    <div className="h-4 w-[1px] bg-neutral-800 mx-1" />
+                    <div className="h-4 w-[2px] bg-neutral-800 mx-1" />
 
                     <button
                         onClick={onMinimize}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
+import { LogicalSize, LogicalPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
@@ -61,7 +62,7 @@ function playScheduleAlertSound() {
   }
 }
 
-function App() {
+function MainApp() {
   //#region State
   const [isOpen, setIsOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -200,6 +201,53 @@ function App() {
       setIsMenuOpen(false);
     }
   }, [windowMode]);
+
+  const handleOpenSettingsWindow = useCallback(async () => {
+    // In plain web/dev mode, keep existing in-window settings behavior.
+    if (!window.__TAURI_INTERNALS__) {
+      setShowWelcome(false);
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    try {
+      const existing = await WebviewWindow.getByLabel("settings");
+      if (existing) {
+        await existing.show();
+        await existing.setFocus();
+        return;
+      }
+
+      const settingsUrl = `${window.location.origin}${window.location.pathname}?view=settings`;
+      const settingsWindow = new WebviewWindow("settings", {
+        title: "Rie-AI Settings",
+        url: settingsUrl,
+        width: WINDOW_SIZES.SETTINGS.width,
+        height: WINDOW_SIZES.SETTINGS.height,
+        resizable: true,
+        center: true,
+        decorations: false,
+      });
+
+      settingsWindow.once("tauri://created", async () => {
+        try {
+          await settingsWindow.show();
+          await settingsWindow.setFocus();
+        } catch {
+          // no-op
+        }
+      });
+      settingsWindow.once("tauri://error", (e) => {
+        console.error("Failed to create settings window:", e);
+        setShowWelcome(false);
+        setIsSettingsOpen(true);
+      });
+    } catch (err) {
+      console.error("Failed to open settings window:", err);
+      setShowWelcome(false);
+      setIsSettingsOpen(true);
+    }
+  }, []);
 
   const handleCloseApp = useCallback(async () => {
     try {
@@ -1659,7 +1707,7 @@ function App() {
             >
               {showWelcome ? (
                 <WelcomeScreen
-                  onGetStarted={() => { setShowWelcome(false); setIsSettingsOpen(true); }}
+                  onGetStarted={handleOpenSettingsWindow}
                   onMouseDown={handleDragStart}
                   onClose={handleCloseApp}
                   onMinimize={() => getWindow().minimize()}
@@ -1678,7 +1726,7 @@ function App() {
                   onSelectThread={handleSelectThread}
                   onNewChat={handleNewChat}
                   currentThreadId={activeThreadId}
-                  onOpenSettings={() => setIsSettingsOpen(true)}
+                  onOpenSettings={handleOpenSettingsWindow}
                   onToggleFloating={handleToggleWindowMode}
                   onCloseApp={handleCloseApp}
                   onMinimize={() => getWindow().minimize()}
@@ -1745,6 +1793,7 @@ function App() {
               setShowWelcome={setShowWelcome}
               isSettingsOpen={isSettingsOpen}
               setIsSettingsOpen={setIsSettingsOpen}
+              onOpenSettingsWindow={handleOpenSettingsWindow}
               apiStatus={apiStatus}
               isMenuOpen={isMenuOpen}
               setIsMenuOpen={setIsMenuOpen}
@@ -1817,6 +1866,57 @@ function App() {
 
     </>
   );
+}
+
+function SettingsWindowApp() {
+  const [isReady, setIsReady] = useState(false);
+  const handleCloseSettingsWindow = useCallback(async () => {
+    try {
+      await getCurrentWindow().close();
+    } catch (err) {
+      console.error("Failed to close settings window:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const initSettingsWindow = async () => {
+      try {
+        // Each Tauri window has its own JS context. Rehydrate app token here.
+        const { invoke } = await import("@tauri-apps/api/core");
+        const token = await invoke("get_app_token");
+        setAppToken(token);
+      } catch (err) {
+        console.error("Failed to initialize settings window auth:", err);
+      } finally {
+        if (!cancelled) setIsReady(true);
+      }
+    };
+
+    initSettingsWindow();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!isReady) {
+    return <LoadingScreen onMouseDown={() => {}} onClose={handleCloseSettingsWindow} onMinimize={() => getCurrentWindow().minimize()} />;
+  }
+
+  return <SettingsPage onClose={handleCloseSettingsWindow} />;
+}
+
+function App() {
+  const isSettingsWindow =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("view") === "settings";
+
+  if (isSettingsWindow) {
+    return <SettingsWindowApp />;
+  }
+
+  return <MainApp />;
 }
 
 export default App;
