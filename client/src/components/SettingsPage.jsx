@@ -1029,7 +1029,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             <div>
                               <h4 className="text-xs font-medium text-neutral-300">Embedding Model</h4>
                               <p className="text-[10px] text-neutral-500">
-                                Download <code className="text-neutral-400">all-MiniLM-L6-v2</code> for semantic memory search (~90MB).
+                                Download ONNX <code className="text-neutral-400">all-MiniLM-L6-v2</code> for bundled LTM (~80MB one-time).
                               </p>
                             </div>
                             <button

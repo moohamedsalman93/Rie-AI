@@ -70,3 +70,5 @@ htmlcov/
 *.exe
 
 *db
+
+server/chroma_ltm

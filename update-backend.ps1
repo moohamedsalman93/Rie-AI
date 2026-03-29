@@ -1,30 +1,44 @@
 # update-backend.ps1
 # This script automates rebuilding the Python backend and updating the Tauri sidecar.
+# Always uses paths relative to this script (not your shell cwd). Clear other venvs first:
+# if another project's venv is active, Poetry can bind PyInstaller to the wrong Python
+# (e.g. you would see graphRAG\.venv in the PyInstaller log).
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "--- Stopping background backend processes ---" -ForegroundColor Cyan
+$AppRoot = $PSScriptRoot
+$ServerDir = Join-Path $AppRoot "server"
+$DistExe = Join-Path $ServerDir "dist\rie-backend.exe"
+$SidecarDir = Join-Path $AppRoot "client\src-tauri\bin"
+$SidecarExe = Join-Path $SidecarDir "rie-backend-x86_64-pc-windows-msvc.exe"
+
+Write-Host "--- Stopping background backend processes ---"
 try {
     taskkill /F /IM rie-backend.exe /T 2>$null
     taskkill /F /IM rie-backend-x86_64-pc-windows-msvc.exe /T 2>$null
 } catch {}
 
-Write-Host "`n--- Rebuilding Python Backend (PyInstaller) ---" -ForegroundColor Cyan
-Set-Location ".\server"
-poetry run pyinstaller --noconfirm --onefile --windowed --name rie-backend `
-    --collect-all deepagents `
-    --collect-all langchain_groq `
-    --collect-all langchain_google_genai `
-    --collect-all langchain_google_vertexai `
-    --collect-all chromadb `
-    main.py
-Set-Location ".."
+# Do not inherit another repo's activated venv (common cause of wrong PyInstaller environment).
+Remove-Item Env:\VIRTUAL_ENV -ErrorAction SilentlyContinue
+Remove-Item Env:\VIRTUAL_ENV_PROMPT -ErrorAction SilentlyContinue
 
-Write-Host "`n--- Updating Tauri Sidecar Binary ---" -ForegroundColor Cyan
-if (-not (Test-Path "client\src-tauri\bin")) {
-    New-Item -ItemType Directory -Path "client\src-tauri\bin" -Force
+Write-Host "`n--- Rebuilding Python Backend (PyInstaller) ---"
+Push-Location $ServerDir
+try {
+    $venv = (poetry env info -p 2>$null | Select-Object -First 1).Trim()
+    if (-not $venv) {
+        Write-Error "No Poetry env for $ServerDir. Run: cd server; poetry install"
+    }
+    Write-Host "Using Poetry venv: $venv"
+    poetry run pyinstaller --noconfirm rie-backend.spec
+} finally {
+    Pop-Location
 }
 
-copy "server\dist\rie-backend.exe" "client\src-tauri\bin\rie-backend-x86_64-pc-windows-msvc.exe"
+Write-Host "`n--- Updating Tauri Sidecar Binary ---"
+if (-not (Test-Path $SidecarDir)) {
+    New-Item -ItemType Directory -Path $SidecarDir -Force | Out-Null
+}
+Copy-Item -Force $DistExe $SidecarExe
 
-Write-Host "`n--- Done! You can now run 'npm run tauri:staging' ---" -ForegroundColor Green
+Write-Host "`n--- Done! Sidecar: $SidecarExe"

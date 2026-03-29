@@ -1,13 +1,15 @@
 """
 Chroma-backed store adapter matching LangGraph store interface (put/get/search).
 Used for LTM to support preferences, emails, notes, etc. with semantic search.
-Supports bundled embeddings (sentence-transformers, no Ollama) or Ollama.
+Bundled mode uses Chroma's ONNX MiniLM (same 384-dim vectors as all-MiniLM-L6-v2; no PyTorch).
 """
 import logging
+from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence, Tuple
 
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
 
 from app.config import settings
 
@@ -25,7 +27,7 @@ class _StoreResult:
 
 
 def _get_embedding_function() -> EmbeddingFunction[Documents]:
-    """Return the configured embedding function (bundled or Ollama)."""
+    """Return the configured embedding function (bundled ONNX or Ollama)."""
     source = (settings.EMBEDDING_SOURCE or "bundled").strip().lower()
     if source == "ollama":
         from langchain_ollama import OllamaEmbeddings
@@ -43,29 +45,24 @@ def _get_embedding_function() -> EmbeddingFunction[Documents]:
                 return self._embed.embed_documents(list(input))
 
         return _OllamaChromaEmbeddingFunction()
-    # Default: bundled (sentence-transformers)
-    try:
-        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-    except ImportError:
-        raise ImportError(
-            "Bundled embeddings require sentence-transformers. "
-            "Install with: pip install sentence-transformers"
-        )
-    model_name_or_path = settings.EMBEDDING_MODEL_PATH or "all-MiniLM-L6-v2"
-    logger.info("Using bundled embeddings: model=%s", model_name_or_path)
+    # Default: bundled Chroma ONNX MiniLM (no sentence-transformers / torch)
+    model_root = (settings.EMBEDDING_MODEL_PATH or "").strip()
+    if model_root:
+        root = Path(model_root)
+        if not (root / "onnx" / "model.onnx").is_file():
+            logger.warning(
+                "EMBEDDING_MODEL_PATH %s is not a Chroma ONNX bundle; using default cache",
+                root,
+            )
+            return ONNXMiniLM_L6_V2()
+        logger.info("Using bundled ONNX embeddings from %s", root)
 
-    # Prevent HuggingFace Hub from trying to reach the internet on every startup.
-    # Without this, sentence-transformers retries 5x with exponential backoff (~30s)
-    # if huggingface.co is unreachable, even when the model is already cached locally.
-    import os
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        class _LocalONNXMiniLM(ONNXMiniLM_L6_V2):
+            DOWNLOAD_PATH = root
 
-    return SentenceTransformerEmbeddingFunction(
-        model_name=model_name_or_path,
-        device="cpu",
-        normalize_embeddings=False,
-    )
+        return _LocalONNXMiniLM()
+    logger.info("Using bundled ONNX embeddings (default cache path)")
+    return ONNXMiniLM_L6_V2()
 
 
 def _namespace_to_collection_name(namespace: Sequence[str]) -> str:

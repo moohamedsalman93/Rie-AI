@@ -172,18 +172,17 @@ class Settings:
     def EMBEDDING_SOURCE(self) -> str:
         """
         LTM embedding source: 'bundled' (default) or 'ollama'.
-        - bundled: use sentence-transformers model in-process (no Ollama needed).
+        - bundled: Chroma ONNX all-MiniLM-L6-v2 in-process (no Ollama; no PyTorch).
         - ollama: use Ollama's nomic-embed-text (requires Ollama running).
-        If you switch between them, delete the chroma_ltm folder to recreate LTM (different vector sizes).
+        If you switch between bundled and ollama, delete the chroma_ltm folder (different vector sizes).
         """
         return (self._get("EMBEDDING_SOURCE") or "bundled").strip().lower()
 
     @property
     def EMBEDDING_MODEL_PATH(self) -> Optional[str]:
         """
-        Optional path to a bundled embedding model (for PyInstaller/frozen builds).
-        If set, sentence-transformers loads from this path instead of downloading.
-        E.g. pass sys._MEIPASS + '/embedding_model' when model is bundled in the exe.
+        Optional directory containing the extracted ONNX bundle (folder with onnx/ inside).
+        Default when unset: ~/.cache/chroma/onnx_models/all-MiniLM-L6-v2
         """
         path = (self._get("EMBEDDING_MODEL_PATH") or "").strip()
         return path if path else None

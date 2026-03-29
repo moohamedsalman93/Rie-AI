@@ -321,7 +321,7 @@ async def update_settings(data: SettingsUpdate):
 @router.post("/embedding/download")
 async def download_embedding_model():
     """
-    Download the bundled embedding model (all-MiniLM-L6-v2) with progress.
+    Download Chroma's ONNX all-MiniLM-L6-v2 bundle with progress.
     Streams SSE events: {"progress": 0-100, "message": str, "done": bool, "error": str?}
     """
     from app.embedding_download import _download_with_progress
