@@ -1,8 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-import glob
-import os
-
-from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
@@ -17,30 +14,6 @@ tmp_ret = collect_all('langchain_google_vertexai')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('chromadb')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-# Chroma loads onnxruntime via importlib — bundle capi DLLs + core module only.
-# collect_all('onnxruntime') pulls hundreds of optional onnxruntime.transformers/* modules.
-binaries += collect_dynamic_libs('onnxruntime')
-hiddenimports += [
-    'onnxruntime',
-    'onnxruntime.capi.onnxruntime_pybind11_state',
-]
-# Chroma ONNX uses importlib for tokenizers — must be explicit; include Rust extension .pyd.
-try:
-    import tokenizers as _tok
-
-    _pkg = os.path.dirname(_tok.__file__)
-    for _p in glob.glob(os.path.join(_pkg, '*.pyd')) + glob.glob(
-        os.path.join(_pkg, '*.so')
-    ):
-        binaries.append((_p, 'tokenizers'))
-except ImportError:
-    pass
-hiddenimports += [
-    'tokenizers',
-    'tokenizers.tokenizers',
-    'tokenizers.implementations',
-    'tokenizers.tools',
-]
 
 
 a = Analysis(
@@ -52,15 +25,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        'torch',
-        'torchvision',
-        'torchaudio',
-        'transformers',
-        'sentence_transformers',
-        'tensorflow',
-        'jax',
-    ],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

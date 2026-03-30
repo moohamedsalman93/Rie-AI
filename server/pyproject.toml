@@ -37,6 +37,7 @@ edge-tts = "^7.2.7"
 langchain-ollama = "^1.0.1"
 chromadb = "^0.5.23"
 apscheduler = "^3.11.0"
+onnxruntime = "^1.22.1"
 
 
 [tool.poetry.group.dev.dependencies]

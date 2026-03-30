@@ -4,16 +4,16 @@ Used for LTM to support preferences, emails, notes, etc. with semantic search.
 Bundled mode uses Chroma's ONNX MiniLM (same 384-dim vectors as all-MiniLM-L6-v2; no PyTorch).
 """
 import logging
+import math
+from hashlib import blake2b
 from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence, Tuple
-
-import chromadb
-from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
-from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+Documents = list[str]
+Embeddings = list[list[float]]
 
 
 class _StoreResult:
@@ -26,13 +26,36 @@ class _StoreResult:
         self.metadata = metadata or {}
 
 
-def _get_embedding_function() -> EmbeddingFunction[Documents]:
+class _DeterministicFallbackEmbeddingFunction:
+    """Dependency-free embedding fallback to prevent startup crashes."""
+
+    def __call__(self, input: Documents) -> Embeddings:
+        if not input:
+            return []
+        return [self._embed_text(text) for text in input]
+
+    @staticmethod
+    def _embed_text(text: str, dim: int = 384) -> list[float]:
+        if not text:
+            return [0.0] * dim
+        vec = [0.0] * dim
+        for token in text.lower().split():
+            digest = blake2b(token.encode("utf-8", "ignore"), digest_size=16).digest()
+            idx = int.from_bytes(digest[:4], "little") % dim
+            vec[idx] += 1.0
+        norm = math.sqrt(sum(v * v for v in vec))
+        if norm > 0:
+            vec = [v / norm for v in vec]
+        return vec
+
+
+def _get_embedding_function():
     """Return the configured embedding function (bundled ONNX or Ollama)."""
     source = (settings.EMBEDDING_SOURCE or "bundled").strip().lower()
     if source == "ollama":
         from langchain_ollama import OllamaEmbeddings
 
-        class _OllamaChromaEmbeddingFunction(EmbeddingFunction[Documents]):
+        class _OllamaChromaEmbeddingFunction:
             def __init__(self):
                 self._embed = OllamaEmbeddings(
                     model="nomic-embed-text",
@@ -46,6 +69,15 @@ def _get_embedding_function() -> EmbeddingFunction[Documents]:
 
         return _OllamaChromaEmbeddingFunction()
     # Default: bundled Chroma ONNX MiniLM (no sentence-transformers / torch)
+    try:
+        from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+    except Exception as exc:
+        logger.warning(
+            "ONNX embedding unavailable (%s). Falling back to deterministic local embeddings.",
+            exc,
+        )
+        return _DeterministicFallbackEmbeddingFunction()
+
     model_root = (settings.EMBEDDING_MODEL_PATH or "").strip()
     if model_root:
         root = Path(model_root)
@@ -77,12 +109,27 @@ class ChromaStore:
     """
 
     def __init__(self, persist_path: str):
-        self._client = chromadb.PersistentClient(path=persist_path)
         self._embed_fn = _get_embedding_function()
+        self._client = None
         self._collection_cache: dict[str, Any] = {}
+        self._fallback_docs: dict[str, dict[str, dict[str, str]]] = {}
+        try:
+            import chromadb  # Local import so missing ONNX does not crash module import.
+
+            self._client = chromadb.PersistentClient(path=persist_path)
+            logger.info("Chroma persistent client initialized at %s", persist_path)
+        except Exception as exc:
+            logger.warning(
+                "Chroma unavailable (%s). Using in-process fallback memory store.",
+                exc,
+            )
 
     def _collection(self, namespace: Sequence[str]):
         name = _namespace_to_collection_name(namespace)
+        if self._client is None:
+            if name not in self._fallback_docs:
+                self._fallback_docs[name] = {}
+            return self._fallback_docs[name]
         if name not in self._collection_cache:
             # Use metadata (legacy) instead of configuration to avoid Chroma type mismatch
             # when loading existing collections (CollectionConfigurationInterface vs Internal)
@@ -98,6 +145,9 @@ class ChromaStore:
         coll = self._collection(namespace)
         content = value.get("content", "")
         category = value.get("category", "")
+        if self._client is None:
+            coll[key] = {"content": content, "category": category}
+            return
         # Chroma upserts by id; same id replaces previous
         coll.upsert(
             ids=[key],
@@ -108,6 +158,17 @@ class ChromaStore:
     def get(self, namespace: Tuple[str, ...], key: str) -> Optional[_StoreResult]:
         """Retrieve an item by key."""
         coll = self._collection(namespace)
+        if self._client is None:
+            item = coll.get(key)
+            if not item:
+                return None
+            return _StoreResult(
+                value={
+                    "content": item.get("content", ""),
+                    "category": item.get("category", ""),
+                },
+                metadata={},
+            )
         try:
             out = coll.get(ids=[key], include=["documents", "metadatas"])
         except Exception:
@@ -130,6 +191,28 @@ class ChromaStore:
     ) -> Iterator[_StoreResult]:
         """Semantic search over stored items. Yields results with .value and .metadata['score']."""
         coll = self._collection(namespace)
+        if self._client is None:
+            if not coll:
+                return
+            qv = self._embed_fn([query])[0] if query else [0.0] * 384
+            scored: list[tuple[float, dict[str, str]]] = []
+            for item in coll.values():
+                dv = self._embed_fn([item.get("content", "")])[0]
+                dot = sum(a * b for a, b in zip(qv, dv))
+                qn = math.sqrt(sum(a * a for a in qv))
+                dn = math.sqrt(sum(b * b for b in dv))
+                sim = (dot / (qn * dn)) if qn > 0 and dn > 0 else 0.0
+                scored.append((sim, item))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            for score, item in scored[:limit]:
+                yield _StoreResult(
+                    value={
+                        "content": item.get("content", ""),
+                        "category": item.get("category", ""),
+                    },
+                    metadata={"score": max(0.0, min(1.0, float(score)))},
+                )
+            return
         try:
             out = coll.query(
                 query_texts=[query],

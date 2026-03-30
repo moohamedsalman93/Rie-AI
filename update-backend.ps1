@@ -30,6 +30,8 @@ try {
         Write-Error "No Poetry env for $ServerDir. Run: cd server; poetry install"
     }
     Write-Host "Using Poetry venv: $venv"
+    Write-Host "Syncing backend dependencies..."
+    poetry install --no-root
     poetry run pyinstaller --noconfirm rie-backend.spec
 } finally {
     Pop-Location
