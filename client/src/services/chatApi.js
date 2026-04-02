@@ -419,6 +419,25 @@ export async function getMcpStatus() {
 }
 
 /**
+ * Generate instruction text for a Boss Team member using backend LLM.
+ * @param {{boss_name:string, member_name:string, member_description?:string, selected_tools?:string[], style?:string, tone?:string}} payload
+ * @returns {Promise<{instruction_text: string, reasoning_summary?: string}>}
+ */
+export async function generatePlannerInstruction(payload) {
+  const response = await fetch(`${API_BASE_URL}/planner/generate-instruction`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to generate instruction");
+  }
+  return response.json();
+}
+
+/**
  * Get chat history threads
  * @returns {Promise<Array>}
  */

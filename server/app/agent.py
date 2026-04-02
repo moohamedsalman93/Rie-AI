@@ -1,9 +1,10 @@
 """
 Deep Agent setup and configuration
 """
-import logging
 import asyncio
+import logging
 import os
+import re
 from itertools import cycle
 from typing import Any, List, Optional, Iterator, AsyncIterator
 from collections.abc import Generator
@@ -17,6 +18,7 @@ from langchain_openai import ChatOpenAI
 from langchain_ollama import ChatOllama
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.outputs import ChatResult, ChatGenerationChunk
 from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware, HumanInTheLoopMiddleware, InterruptOnConfig
 from deepagents.middleware.subagents import SubAgentMiddleware
@@ -80,6 +82,8 @@ Style:
 - Be friendly in general interactions; use emojis when appropriate 🙂
 - Stay serious and precise for technical or critical tasks.
 """
+
+SUBAGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{2,64}$")
 
 
 class RotatingChatGroq(BaseChatModel):
@@ -428,6 +432,86 @@ class AgentManager:
     
         return FilesystemBackend(root_dir=project_root, virtual_mode=True)
 
+    def _default_subagents_config(self) -> list[dict]:
+        return [
+            {
+                "name": "coding_specialist",
+                "description": "Expert at modifying and understanding code in the local filesystem.",
+                "system_prompt": "You are a coding specialist. You have direct access to the files.",
+                "tool_ids": [],
+                "enabled": True,
+            },
+            {
+                "name": "mcp_registry",
+                "description": "Expert at managing MCP server connections and registry. Use this to add, update, list, or delete MCP servers.",
+                "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations. Use your tools to manage the external capabilities of the Rie agent.",
+                "tool_ids": [],
+                "enabled": True,
+            },
+        ]
+
+    def _build_subagents(
+        self,
+        all_tools_map: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        raw_subagents = settings.SUBAGENTS_CONFIG or self._default_subagents_config()
+        built_subagents: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+
+        for item in raw_subagents:
+            if not isinstance(item, dict):
+                continue
+
+            name = str(item.get("name", "")).strip()
+            if not name or not SUBAGENT_NAME_PATTERN.match(name):
+                logging.warning("Skipping sub-agent with invalid name: %s", name)
+                continue
+            lowered = name.lower()
+            if lowered in seen_names:
+                logging.warning("Skipping duplicate sub-agent name: %s", name)
+                continue
+            seen_names.add(lowered)
+
+            if not bool(item.get("enabled", True)):
+                continue
+
+            description = str(item.get("description", "")).strip() or f"{name} sub-agent"
+            system_prompt = str(item.get("system_prompt", "")).strip()
+            if not system_prompt:
+                logging.warning("Skipping sub-agent '%s' with empty system_prompt", name)
+                continue
+
+            configured_tool_ids = item.get("tool_ids", [])
+            if not isinstance(configured_tool_ids, list):
+                configured_tool_ids = []
+
+            resolved_tools = []
+            for tool_id in configured_tool_ids:
+                if not isinstance(tool_id, str):
+                    continue
+                tool = all_tools_map.get(tool_id)
+                if tool is None:
+                    logging.warning("Sub-agent '%s' references unavailable tool '%s'", name, tool_id)
+                    continue
+                resolved_tools.append(tool)
+
+            subagent_middleware = []
+            if name == "coding_specialist":
+                subagent_middleware.append(FilesystemMiddleware(backend=self.dynamic_backend))
+
+            built_subagents.append(
+                {
+                    "name": name,
+                    "description": description,
+                    "system_prompt": system_prompt,
+                    "model": self._llm,
+                    "tools": resolved_tools,
+                    "middleware": subagent_middleware,
+                }
+            )
+
+        return built_subagents
+
 
     async def _initialize_agent_async(self, chat_mode: Optional[str] = None, speed_mode: Optional[str] = None) -> None:
         """Initialize the Deep Agent if API keys are configured (Async)"""
@@ -460,53 +544,23 @@ class AgentManager:
             # Explicitly disable if not configured to prevent accidental tracing
             os.environ["LANGCHAIN_TRACING_V2"] = "false"
 
-        # Define available tools
-        ALL_TOOLS = {
+        # Define baseline available tools
+        all_tools_map = {
             "internet_search": internet_search,
             "schedule_chat_task": schedule_chat_task_tool,
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
         }
-        
-        # Resolve effective mode
+        loaded_mcp_tools: list[Any] = []
+        loaded_external_tools: list[Any] = []
+
+        # Resolve effective modes early (used by prompt construction and tool policy).
         effective_chat_mode = chat_mode or "agent"
         effective_speed_mode = speed_mode or "thinking"
+        orchestration_mode = settings.AGENT_ORCHESTRATION_MODE
         self._current_chat_mode = effective_chat_mode
         self._current_speed_mode = effective_speed_mode
-        
-        # Filter tools based on chat_mode
-        if effective_chat_mode == "chat":
-            # Chat mode: internet_search + LTM + scheduling (reminders / timed tasks)
-            tools_to_use = []
-            if "internet_search" in ALL_TOOLS:
-                tools_to_use.append(ALL_TOOLS["internet_search"])
-            if "schedule_chat_task" in ALL_TOOLS:
-                tools_to_use.append(ALL_TOOLS["schedule_chat_task"])
-            tools_to_use.extend(LTM_TOOLS)
-            print(f"DEBUG: Chat mode active - using limited tools: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
-        else:
-            # Agent mode: all tools (as before)
-            # Filter tools
-            enabled_tool_names = settings.ENABLED_TOOLS
-            if enabled_tool_names is None:
-                # Default set if nothing configured (or first run)
-                # Default to all tools
-                tools_to_use = list(ALL_TOOLS.values())
-            else:
-                # Explicit configuration exists (can be empty list)
-                tools_to_use = [ALL_TOOLS[name] for name in enabled_tool_names if name in ALL_TOOLS]
-                # Always include LTM tools if they exist in ALL_TOOLS
-                for tool in LTM_TOOLS:
-                    if tool.name not in [getattr(t, 'name', '') for t in tools_to_use]:
-                        tools_to_use.append(tool)
-                # Always include in-app scheduler (legacy ENABLED_TOOLS presets omit it)
-                if "schedule_chat_task" in ALL_TOOLS:
-                    _sched_tool = ALL_TOOLS["schedule_chat_task"]
-                    if _sched_tool.name not in [getattr(t, 'name', '') for t in tools_to_use]:
-                        tools_to_use.append(_sched_tool)
-            
-        print(f"DEBUG: Initializing agent with tools: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
 
 
         # Select LLM based on provider setting
@@ -540,7 +594,17 @@ class AgentManager:
         else:
             mode_instructions += "\n- SPEED: Thinking. Please think step-by-step and write down your plan before executing."
 
-        final_system_prompt = SYSTEM_PROMPT + mode_instructions
+        planner_graph = settings.SUBAGENT_PLANNER_GRAPH or {}
+        planner_main_instruction = str(planner_graph.get("main_instruction", "")).strip()
+        planner_main_section = ""
+        if planner_main_instruction:
+            planner_main_section = (
+                "\n\n[Planner Main Instruction]\n"
+                f"{planner_main_instruction}\n"
+                "[End Planner Main Instruction]"
+            )
+
+        final_system_prompt = SYSTEM_PROMPT + mode_instructions + planner_main_section
 
         if provider == "vertex":
             self._llm = self._create_vertex_llm()
@@ -572,20 +636,71 @@ class AgentManager:
 
         # Load MCP Tools
         try:
-            mcp_tools = await mcp_manager.refresh_tools()
-            tools_to_use.extend(mcp_tools)
-            print(f"DEBUG: Integrated {len(mcp_tools)} MCP tools")
+            loaded_mcp_tools = await mcp_manager.refresh_tools()
+            print(f"DEBUG: Integrated {len(loaded_mcp_tools)} MCP tools")
         except Exception as e:
             print(f"ERROR: Failed to load MCP tools: {e}")
 
         # Load Custom External Tools
         try:
-            external_tools = get_external_tools(settings.EXTERNAL_APIS)
-            if external_tools:
-                tools_to_use.extend(external_tools)
-                print(f"DEBUG: Integrated {len(external_tools)} external tools")
+            loaded_external_tools = get_external_tools(settings.EXTERNAL_APIS) or []
+            if loaded_external_tools:
+                print(f"DEBUG: Integrated {len(loaded_external_tools)} external tools")
         except Exception as e:
             print(f"ERROR: Failed to load external tools: {e}")
+
+        for tool in loaded_mcp_tools + loaded_external_tools:
+            tool_name = getattr(tool, "name", None)
+            if tool_name:
+                all_tools_map[tool_name] = tool
+
+        def _resolve_tools_from_ids(tool_ids: list[str]) -> list[Any]:
+            resolved: list[Any] = []
+            seen: set[str] = set()
+            for tool_id in tool_ids:
+                if not isinstance(tool_id, str):
+                    continue
+                normalized = tool_id.strip()
+                if not normalized or normalized in seen:
+                    continue
+                tool = all_tools_map.get(normalized)
+                if tool is None:
+                    continue
+                seen.add(normalized)
+                resolved.append(tool)
+            return resolved
+
+        # Filter tools based on chat_mode + orchestration mode.
+        if effective_chat_mode == "chat":
+            # Chat mode: internet_search + LTM + scheduling (reminders / timed tasks)
+            tools_to_use = []
+            if "internet_search" in all_tools_map:
+                tools_to_use.append(all_tools_map["internet_search"])
+            if "schedule_chat_task" in all_tools_map:
+                tools_to_use.append(all_tools_map["schedule_chat_task"])
+            tools_to_use.extend(LTM_TOOLS)
+            print(f"DEBUG: Chat mode active - using limited tools: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
+        elif orchestration_mode == "team":
+            planner_graph = settings.SUBAGENT_PLANNER_GRAPH or {}
+            main_tool_ids = planner_graph.get("main_tool_ids") if isinstance(planner_graph, dict) else []
+            if not isinstance(main_tool_ids, list):
+                main_tool_ids = []
+            tools_to_use = _resolve_tools_from_ids(main_tool_ids)
+        else:
+            # Solo mode: full catalog by default, with user-controlled disable list.
+            enabled_tool_names = settings.ENABLED_TOOLS
+            if enabled_tool_names is None:
+                tools_to_use = list(all_tools_map.values())
+            else:
+                tools_to_use = _resolve_tools_from_ids(enabled_tool_names)
+
+        print(
+            "DEBUG: Initializing agent with orchestration_mode=%s and tools=%s"
+            % (
+                orchestration_mode,
+                [getattr(t, "name", getattr(t, "__name__", str(t))) for t in tools_to_use],
+            )
+        )
 
         try:
             print(f"DEBUG: Creating deep agent with {provider}...")
@@ -605,32 +720,15 @@ class AgentManager:
                 print(f"DEBUG: Flash mode - TodoListMiddleware skipped")
             
             # Only add SubAgentMiddleware in agent mode
-            if effective_chat_mode != "chat":
+            if effective_chat_mode != "chat" and orchestration_mode == "team":
+                subagents = self._build_subagents(
+                    all_tools_map=all_tools_map,
+                )
                 middleware_stack.append(
                     SubAgentMiddleware(
                         default_model=self._llm,
                         default_tools=tools_to_use,
-                        subagents=[
-                            {
-                                "name": "coding_specialist",
-                                "description": "Expert at modifying and understanding code in the local filesystem.",
-                                "system_prompt": "You are a coding specialist. You have direct access to the files.",
-                                "model": self._llm,
-                                "tools": [],
-                                "middleware": [
-                                    # Subagent uses the factory to get the path dynamically
-                                    FilesystemMiddleware(backend=self.dynamic_backend)
-                                ]
-                            },
-                            {
-                                "name": "mcp_registry",
-                                "description": "Expert at managing MCP server connections and registry. Use this to add, update, list, or delete MCP servers.",
-                                "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations. Use your tools to manage the external capabilities of the Rie agent.",
-                                "model": self._llm,
-                                "tools": MCP_REGISTRY_TOOLS,
-                                "middleware": []
-                            }
-                        ]
+                        subagents=subagents,
                     )
                 )
             
@@ -741,6 +839,55 @@ class AgentManager:
                     # LangChain HITL middleware puts HITLRequest here
                     return task.interrupts[0].value
         return None
+
+    async def generate_planner_instruction(
+        self,
+        boss_name: str,
+        member_name: str,
+        member_description: str,
+        selected_tools: Optional[list[str]] = None,
+        style: Optional[str] = None,
+        tone: Optional[str] = None,
+    ) -> str:
+        """Generate member instruction text for planner using the configured LLM."""
+        if not self._llm:
+            await self._initialize_agent_async(chat_mode="agent", speed_mode="thinking")
+        if not self._llm:
+            raise RuntimeError("LLM is not initialized. Please verify provider settings.")
+
+        tools_text = ", ".join(selected_tools or []) or "No specific tools assigned"
+        style_text = style.strip() if style else "clear and practical"
+        tone_text = tone.strip() if tone else "professional"
+
+        system_text = (
+            "You write instruction prompts for AI team members. "
+            "Return plain text only. Do not use markdown fences. "
+            "Keep it specific, actionable, and under 1400 characters."
+        )
+        user_text = (
+            f"Boss name: {boss_name.strip() or 'Boss'}\n"
+            f"Member name: {member_name.strip()}\n"
+            f"Member description: {member_description.strip() or 'N/A'}\n"
+            f"Assigned tools: {tools_text}\n"
+            f"Style: {style_text}\n"
+            f"Tone: {tone_text}\n\n"
+            "Write a final instruction prompt the member should follow."
+        )
+
+        response = await self._llm.ainvoke(
+            [
+                SystemMessage(content=system_text),
+                HumanMessage(content=user_text),
+            ]
+        )
+        content = getattr(response, "content", "")
+        if isinstance(content, list):
+            text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+            content = "\n".join([p for p in text_parts if p])
+        instruction = (content or "").strip()
+        if not instruction:
+            raise RuntimeError("Model returned empty instruction.")
+        return instruction[:1400]
 
     async def invoke(
         self,

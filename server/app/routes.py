@@ -15,10 +15,15 @@ from app.models import (
     ChatMessage, HealthResponse, SettingsUpdate, SettingsResponse, 
     CancelRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
     ScheduleTaskRequest, ScheduledTaskResponse, ScheduleNotificationItem,
+    SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
 )
 from app.agent import agent_manager
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
 from app.config import settings
+from app.windows_tools import WINDOWS_TOOLS
+from app.ltm_tools import LTM_TOOLS
+from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
+from app.mcp_client import mcp_manager
 from app.database import (
     update_setting,
     get_setting,
@@ -37,6 +42,190 @@ import io
 import base64
 
 router = APIRouter()
+
+
+def _get_runtime_tool_catalog_ids() -> set[str]:
+    """Best-effort runtime tool ID catalog for validating planner assignments."""
+    tool_ids: set[str] = {
+        "internet_search",
+        "schedule_chat_task",
+        *WINDOWS_TOOLS.keys(),
+        *[t.name for t in LTM_TOOLS],
+        *[t.name for t in MCP_REGISTRY_TOOLS],
+    }
+    # External APIs configured by the user.
+    for api in settings.EXTERNAL_APIS or []:
+        name = str(api.get("name", "")).strip() if isinstance(api, dict) else ""
+        if name:
+            tool_ids.add(name)
+    # MCP tools currently loaded by the MCP manager.
+    for tool in getattr(mcp_manager, "tools", []) or []:
+        name = getattr(tool, "name", None)
+        if isinstance(name, str) and name.strip():
+            tool_ids.add(name.strip())
+    return tool_ids
+
+
+def _runtime_catalog_help_text() -> str:
+    return (
+        "Tool IDs must exist in the current runtime catalog (built-in tools, configured EXTERNAL_APIS names, "
+        "or currently loaded MCP tools)."
+    )
+
+def _validate_subagents_config(raw_value: str) -> list[dict]:
+    """Validate SUBAGENTS_CONFIG payload and return normalized objects."""
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid SUBAGENTS_CONFIG JSON: {exc}") from exc
+
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail="SUBAGENTS_CONFIG must be a JSON array")
+
+    validated: list[dict] = []
+    names_seen: set[str] = set()
+    for item in parsed:
+        try:
+            config = SubAgentConfig(**item)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid sub-agent config: {exc}") from exc
+
+        normalized_name = config.name.strip().lower()
+        if not normalized_name:
+            raise HTTPException(status_code=400, detail="Sub-agent name cannot be empty")
+        if normalized_name in names_seen:
+            raise HTTPException(status_code=400, detail=f"Duplicate sub-agent name: {config.name}")
+        names_seen.add(normalized_name)
+
+        if not config.system_prompt.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sub-agent '{config.name}' must have a non-empty system_prompt",
+            )
+
+        validated.append(config.model_dump())
+    required_members = {"coding_specialist", "mcp_registry"}
+    missing_required = [name for name in required_members if name not in names_seen]
+    if missing_required:
+        raise HTTPException(
+            status_code=400,
+            detail=f"SUBAGENTS_CONFIG must include protected members: {', '.join(sorted(required_members))}",
+        )
+
+    return validated
+
+
+def _derive_subagents_from_planner_graph(graph_payload: dict) -> list[dict]:
+    """Derive runtime SUBAGENTS_CONFIG list from validated planner graph payload."""
+    nodes = graph_payload.get("nodes", []) if isinstance(graph_payload, dict) else []
+    runtime_subagents: list[dict] = []
+    for node in nodes:
+        runtime_subagents.append(
+            {
+                "name": (node.get("name") or "").strip(),
+                "description": node.get("description") or "",
+                "system_prompt": (node.get("system_prompt") or "").strip(),
+                "tool_ids": node.get("tool_ids") or [],
+                "enabled": bool(node.get("enabled", True)),
+            }
+        )
+    return runtime_subagents
+
+def _validate_planner_graph(raw_value: str) -> dict:
+    """Validate SUBAGENT_PLANNER_GRAPH payload and enforce single-level graph rules."""
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid SUBAGENT_PLANNER_GRAPH JSON: {exc}") from exc
+
+    try:
+        graph = PlannerGraphConfig(**parsed)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid planner graph: {exc}") from exc
+
+    main_node_id = (graph.main_node_id or "").strip() or "main_agent"
+    main_instruction = (graph.main_instruction or "").strip()
+    if not main_instruction:
+        raise HTTPException(status_code=400, detail="main_instruction cannot be empty")
+    main_tool_ids: list[str] = []
+    for tool_id in graph.main_tool_ids or []:
+        if not isinstance(tool_id, str):
+            continue
+        normalized = tool_id.strip()
+        if normalized and normalized not in main_tool_ids:
+            main_tool_ids.append(normalized)
+    runtime_tool_ids = _get_runtime_tool_catalog_ids()
+    unknown_main_tool_ids = [tool_id for tool_id in main_tool_ids if tool_id not in runtime_tool_ids]
+    if unknown_main_tool_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown main tool IDs: {', '.join(sorted(unknown_main_tool_ids))}. {_runtime_catalog_help_text()}",
+        )
+    node_ids = set()
+    node_names = set()
+    normalized_nodes = []
+    for node in graph.nodes:
+        node_id = node.id.strip()
+        if not node_id:
+            raise HTTPException(status_code=400, detail="Planner node id cannot be empty")
+        if node_id in node_ids:
+            raise HTTPException(status_code=400, detail=f"Duplicate planner node id: {node_id}")
+        node_ids.add(node_id)
+
+        node_name = node.name.strip().lower()
+        if not node_name:
+            raise HTTPException(status_code=400, detail="Planner node name cannot be empty")
+        if node_name in node_names:
+            raise HTTPException(status_code=400, detail=f"Duplicate planner node name: {node.name}")
+        node_names.add(node_name)
+
+        if not node.system_prompt.strip():
+            raise HTTPException(status_code=400, detail=f"Planner node '{node.name}' must include system_prompt")
+
+        normalized_tool_ids: list[str] = []
+        for tool_id in node.tool_ids or []:
+            if not isinstance(tool_id, str):
+                continue
+            normalized = tool_id.strip()
+            if normalized and normalized not in normalized_tool_ids:
+                normalized_tool_ids.append(normalized)
+        unknown_node_tool_ids = [tool_id for tool_id in normalized_tool_ids if tool_id not in runtime_tool_ids]
+        if unknown_node_tool_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Planner node '{node.name}' references unknown tool IDs: "
+                    f"{', '.join(sorted(unknown_node_tool_ids))}. {_runtime_catalog_help_text()}"
+                ),
+            )
+        normalized_nodes.append(node.model_copy(update={"tool_ids": normalized_tool_ids}))
+
+    required_members = {"coding_specialist", "mcp_registry"}
+    missing_required = [name for name in required_members if name not in node_names]
+    if missing_required:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Planner must include protected members: {', '.join(sorted(required_members))}",
+        )
+
+    for edge in graph.edges:
+        if edge.source != main_node_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only single-level edges from '{main_node_id}' are allowed",
+            )
+        if edge.target not in node_ids:
+            raise HTTPException(status_code=400, detail=f"Edge target '{edge.target}' does not exist")
+
+    return PlannerGraphConfig(
+        main_node_id=main_node_id,
+        main_label=(graph.main_label or "").strip() or "Rie",
+        main_logo_url=graph.main_logo_url,
+        main_tool_ids=main_tool_ids,
+        main_instruction=main_instruction,
+        nodes=normalized_nodes,
+        edges=graph.edges,
+    ).model_dump()
 
 
 @router.post("/chat/cancel")
@@ -147,6 +336,33 @@ async def speak_text(data: SpeakRequest):
         raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
 
 
+@router.post("/planner/generate-instruction", response_model=PlannerInstructionGenerateResponse)
+async def planner_generate_instruction(data: PlannerInstructionGenerateRequest):
+    """Generate a member instruction prompt using configured backend LLM."""
+    if not data.member_name.strip():
+        raise HTTPException(status_code=400, detail="member_name is required")
+
+    try:
+        instruction = await agent_manager.generate_planner_instruction(
+            boss_name=data.boss_name,
+            member_name=data.member_name,
+            member_description=data.member_description or "",
+            selected_tools=data.selected_tools or [],
+            style=data.style,
+            tone=data.tone,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logging.error(f"Failed to generate planner instruction: {exc}")
+        raise HTTPException(status_code=500, detail="Instruction generation failed") from exc
+
+    return PlannerInstructionGenerateResponse(
+        instruction_text=instruction,
+        reasoning_summary=f"Generated for {data.member_name.strip()} with {len(data.selected_tools or [])} tools.",
+    )
+
+
 @router.get("/rie/usage")
 async def get_rie_usage():
     """
@@ -255,6 +471,7 @@ async def get_settings():
         window_mode=settings.WINDOW_MODE,
         chat_mode=settings.CHAT_MODE,
         speed_mode=settings.SPEED_MODE,
+        agent_orchestration_mode=settings.AGENT_ORCHESTRATION_MODE,
         hitl_enabled=settings.HITL_ENABLED,
         
         langsmith_tracing=settings.LANGSMITH_TRACING,
@@ -270,7 +487,9 @@ async def get_settings():
         ollama_api_key=mask_key(settings.OLLAMA_API_KEY) if settings.OLLAMA_API_KEY else None,
         embedding_source=settings.EMBEDDING_SOURCE,
         embedding_model_path=settings.EMBEDDING_MODEL_PATH,
-        external_apis=settings.EXTERNAL_APIS
+        external_apis=settings.EXTERNAL_APIS,
+        subagents_config=settings.SUBAGENTS_CONFIG,
+        subagent_planner_graph=settings.SUBAGENT_PLANNER_GRAPH,
     )
 
 
@@ -286,18 +505,39 @@ async def update_settings(data: SettingsUpdate):
         "VERTEX_PROJECT", "VERTEX_LOCATION", "VERTEX_CREDENTIALS_PATH",
         "LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
-        "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "HITL_ENABLED",
+        "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
         "VOICE_REPLY", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
         "OLLAMA_MODEL", "OLLAMA_API_URL", "OLLAMA_API_KEY", "EXTERNAL_APIS",
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
+        "SUBAGENTS_CONFIG",
+        "SUBAGENT_PLANNER_GRAPH",
     }
     
     if data.key not in ALLOWED_KEYS:
         raise HTTPException(status_code=400, detail=f"Invalid setting key: {data.key}")
-    
+    if data.key == "AGENT_ORCHESTRATION_MODE":
+        mode = (data.value or "").strip().lower()
+        if mode not in {"solo", "team"}:
+            raise HTTPException(status_code=400, detail="AGENT_ORCHESTRATION_MODE must be 'solo' or 'team'")
+        value_to_store = mode
+    else:
+        value_to_store = data.value
+    derived_subagents_value: Optional[str] = None
+    if data.key == "SUBAGENTS_CONFIG":
+        validated = _validate_subagents_config(data.value)
+        value_to_store = json.dumps(validated)
+    elif data.key == "SUBAGENT_PLANNER_GRAPH":
+        validated_graph = _validate_planner_graph(data.value)
+        value_to_store = json.dumps(validated_graph)
+        derived_subagents = _derive_subagents_from_planner_graph(validated_graph)
+        validated_subagents = _validate_subagents_config(json.dumps(derived_subagents))
+        derived_subagents_value = json.dumps(validated_subagents)
+
     # Update DB
-    update_setting(data.key, data.value)
+    update_setting(data.key, value_to_store)
+    if derived_subagents_value is not None:
+        update_setting("SUBAGENTS_CONFIG", derived_subagents_value)
     
     # Reload settings in memory
     settings.reload()
@@ -315,6 +555,11 @@ async def update_settings(data: SettingsUpdate):
         # Don't crash the request if agent re-init fails
         logging.error(f"Failed to reset agent after settings update: {e}")
     
+    if data.key == "SUBAGENT_PLANNER_GRAPH":
+        return {
+            "status": "success",
+            "message": "Updated SUBAGENT_PLANNER_GRAPH and auto-synced SUBAGENTS_CONFIG",
+        }
     return {"status": "success", "message": f"Updated {data.key}"}
 
 

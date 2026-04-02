@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import {
@@ -15,6 +16,7 @@ import {
   Globe,
   Mic,
   Rocket,
+  Workflow,
   RefreshCw,
   Trash2,
   Plus,
@@ -35,6 +37,7 @@ import {
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen } from '@tauri-apps/api/event';
+import { WINDOW_SIZES } from '../constants/appConfig';
 
 const PROVIDERS = {
   gemini: { label: "Google Gemini", icon: <Sparkles className="w-5 h-5" /> },
@@ -60,11 +63,28 @@ const AVAILABLE_TOOLS = [
   { id: "wait", label: "Wait", desc: "Pauses execution for a specified duration." }
 ];
 
+const DEFAULT_SUBAGENTS = [
+  {
+    name: 'coding_specialist',
+    description: 'Expert at modifying and understanding code in the local filesystem.',
+    system_prompt: 'You are a coding specialist. You have direct access to the files.',
+    tool_ids: [],
+    enabled: true,
+  },
+  {
+    name: 'mcp_registry',
+    description: 'Expert at managing MCP server connections and registry. Use this to add, update, list, or delete MCP servers.',
+    system_prompt: 'You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations. Use your tools to manage the external capabilities of the Rie agent.',
+    tool_ids: [],
+    enabled: true,
+  },
+];
+
 export function SettingsPage({ onClose }) {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('provider'); // 'provider', 'tools', 'general', 'logs'
+  const [activeTab, setActiveTab] = useState('provider'); // 'provider', 'tools', 'orchestration', ...
   const [savingKey, setSavingKey] = useState(null);
   const [logs, setLogs] = useState('');
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -74,6 +94,7 @@ export function SettingsPage({ onClose }) {
   // Local state for edits
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [enabledTools, setEnabledTools] = useState([]);
+  const [subagentsConfig, setSubagentsConfig] = useState([]);
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [ollamaModels, setOllamaModels] = useState([]);
   const [loadingOllamaModels, setLoadingOllamaModels] = useState(false);
@@ -295,6 +316,7 @@ export function SettingsPage({ onClose }) {
       } else {
         setEnabledTools(data.enabled_tools);
       }
+      setSubagentsConfig(Array.isArray(data.subagents_config) && data.subagents_config.length > 0 ? data.subagents_config : DEFAULT_SUBAGENTS);
 
       setError(null);
       // Check auto-start status
@@ -382,6 +404,44 @@ export function SettingsPage({ onClose }) {
     await handleSaveSetting('ENABLED_TOOLS', JSON.stringify(newTools));
   };
 
+  const handleOpenPlannerWindow = async () => {
+    if (!window.__TAURI_INTERNALS__) {
+      window.open(`${window.location.origin}${window.location.pathname}?view=planner`, '_blank');
+      return;
+    }
+    try {
+      const existing = await WebviewWindow.getByLabel("planner");
+      if (existing) {
+        await existing.show();
+        await existing.setFocus();
+        return;
+      }
+      const plannerUrl = `${window.location.origin}${window.location.pathname}?view=planner`;
+      const plannerWindow = new WebviewWindow("planner", {
+        title: "Boss Team Planner",
+        url: plannerUrl,
+        width: WINDOW_SIZES.SETTINGS.width + 120,
+        height: WINDOW_SIZES.SETTINGS.height + 80,
+        resizable: true,
+        center: true,
+        decorations: false,
+      });
+      plannerWindow.once("tauri://created", async () => {
+        try {
+          await plannerWindow.show();
+          await plannerWindow.setFocus();
+        } catch {
+          // no-op
+        }
+      });
+      plannerWindow.once("tauri://error", (e) => {
+        console.error("Failed to create planner window:", e);
+      });
+    } catch (err) {
+      console.error("Failed to open planner window:", err);
+    }
+  };
+
   const handleAutoStartToggle = async () => {
     try {
       const newState = !autoStartEnabled;
@@ -449,6 +509,14 @@ export function SettingsPage({ onClose }) {
           </SidebarButton>
 
           <SidebarButton
+            active={activeTab === 'orchestration'}
+            onClick={() => setActiveTab('orchestration')}
+            icon={<Workflow size={18} />}
+          >
+            Orchestration & Planner
+          </SidebarButton>
+
+          <SidebarButton
             active={activeTab === 'external'}
             onClick={() => setActiveTab('external')}
             icon={<Link size={18} />}
@@ -511,7 +579,11 @@ export function SettingsPage({ onClose }) {
               {error}
             </div>
           ) : (
-            <div className="max-w-2xl mx-auto space-y-8 animate-in fade-in duration-300 slide-in-from-bottom-2">
+            <div
+              className={`mx-auto space-y-8 animate-in fade-in duration-300 slide-in-from-bottom-2 ${
+                activeTab === 'orchestration' ? 'max-w-3xl' : 'max-w-2xl'
+              }`}
+            >
 
               {/* PROVIDER TAB */}
               {activeTab === 'provider' && (
@@ -920,6 +992,87 @@ key2,
                         isSaving={savingKey === 'MCP_SERVERS'}
                       />
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ORCHESTRATION & PLANNER TAB */}
+              {activeTab === 'orchestration' && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="space-y-1">
+                    <h3 className="text-xl font-bold text-white tracking-tight">Orchestration &amp; Planner</h3>
+                    <p className="text-sm text-neutral-500">
+                      Choose how agents are structured: one main agent, or a planner-led team with separate roles.
+                    </p>
+                  </div>
+
+                  <div className="premium-card rounded-2xl p-6 space-y-6">
+                    <div className="space-y-3 p-3">
+                      <div className="text-[11px] uppercase tracking-wider text-neutral-400">Orchestration Mode</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveSetting('AGENT_ORCHESTRATION_MODE', 'solo')}
+                          className={`px-3 py-1.5 rounded-lg text-xs border ${
+                            (settings.agent_orchestration_mode || 'team') === 'solo'
+                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                              : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
+                          }`}
+                        >
+                          Solo (Main only)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveSetting('AGENT_ORCHESTRATION_MODE', 'team')}
+                          className={`px-3 py-1.5 rounded-lg text-xs border ${
+                            (settings.agent_orchestration_mode || 'team') === 'team'
+                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                              : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
+                          }`}
+                        >
+                          Team (Planner delegation)
+                        </button>
+                      </div>
+                      {(settings.agent_orchestration_mode || 'team') === 'solo' ? (
+                        <div className="text-sm text-neutral-500 leading-relaxed space-y-1">
+                          <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
+                            Solo
+                          </div>
+                          <p>
+                            One main agent runs the full workflow: reasoning, tool use, and answers stay in a single
+                            pipeline with one shared configuration.
+                          </p>
+                          <p className="text-neutral-500 text-xs">
+                            Use this when you want the simplest setup and do not need separate roles or delegated
+                            sub-agents.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-neutral-500 leading-relaxed space-y-1">
+                          <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
+                            Team
+                          </div>
+                          <p>
+                            The planner breaks work into steps and delegates to a boss and member agents. Each role can
+                            have its own tools, external APIs, and instructions.
+                          </p>
+                          <p className="text-neutral-500 text-xs">
+                            Use this when tasks benefit from structured delegation or when different agents should use
+                            different capabilities.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    
+
+                    <button
+                      type="button"
+                      onClick={handleOpenPlannerWindow}
+                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+                    >
+                      Open planner
+                    </button>
                   </div>
                 </div>
               )}
@@ -2010,7 +2163,7 @@ function SidebarButton({ children, active, onClick, icon }) {
       <div className={`transition-transform duration-300 ${active ? 'scale-110' : 'group-hover:scale-110'}`}>
         {icon}
       </div>
-      <span className={`text-sm font-semibold tracking-wide ${active ? 'opacity-100' : 'opacity-80 group-hover:opacity-100'}`}>
+      <span className={`text-sm text-start font-semibold tracking-wide ${active ? 'opacity-100' : 'opacity-80 group-hover:opacity-100'}`}>
         {children}
       </span>
       {active && (

@@ -10,6 +10,7 @@ import { motion, AnimatePresence, animate } from "framer-motion";
 import { checkApiHealth, getSettings, updateSetting, getThreadMessages, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead } from "./services/chatApi";
 import { saveThreadId, getStoredThreadId } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
+import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { UpdateNotification } from "./components/UpdateNotification";
@@ -1908,12 +1909,18 @@ function SettingsWindowApp() {
 }
 
 function App() {
-  const isSettingsWindow =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("view") === "settings";
+  const view =
+    typeof window !== "undefined" ?
+      new URLSearchParams(window.location.search).get("view") :
+      null;
+  const isSettingsWindow = view === "settings";
+  const isPlannerWindow = view === "planner";
 
   if (isSettingsWindow) {
     return <SettingsWindowApp />;
+  }
+  if (isPlannerWindow) {
+    return <PlannerWindowStandalone />;
   }
 
   return <MainApp />;

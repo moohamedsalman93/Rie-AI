@@ -61,6 +61,56 @@ class CustomAPIConfig(BaseModel):
     body: Optional[str] = Field(None, description="Request body as JSON string for POST/PUT/PATCH. Use {param_name} for values the AI will fill. Omit to send tool parameters as JSON body.")
     parameters_schema: Optional[Dict[str, Any]] = Field(None, description="JSON schema for tool parameters (optional)")
 
+class SubAgentConfig(BaseModel):
+    """Configuration for a user-defined sub-agent."""
+    name: str = Field(..., description="Unique sub-agent name used for routing")
+    description: str = Field(..., description="Short description of the sub-agent responsibilities")
+    system_prompt: str = Field(..., description="Sub-agent instruction prompt")
+    tool_ids: List[str] = Field(default_factory=list, description="Tool IDs assigned to this sub-agent")
+    enabled: bool = Field(True, description="Whether this sub-agent is enabled")
+
+class PlannerNodePosition(BaseModel):
+    x: float = Field(..., description="Canvas X coordinate")
+    y: float = Field(..., description="Canvas Y coordinate")
+
+class PlannerSubAgentNode(BaseModel):
+    id: str = Field(..., description="Unique node id")
+    name: str = Field(..., description="Unique sub-agent name")
+    description: str = Field(..., description="Short node description")
+    system_prompt: str = Field(..., description="Sub-agent instruction prompt")
+    tool_ids: List[str] = Field(default_factory=list, description="Assigned tool IDs")
+    enabled: bool = Field(True, description="Whether node is enabled")
+    logo_url: Optional[str] = Field(None, description="Optional custom logo URL/data URL")
+    position: PlannerNodePosition
+
+class PlannerEdge(BaseModel):
+    source: str = Field(..., description="Source node id")
+    target: str = Field(..., description="Target node id")
+
+class PlannerGraphConfig(BaseModel):
+    main_node_id: str = Field("main_agent", description="Root node id for the main agent")
+    main_label: str = Field("Rie", description="Display label for the main role")
+    main_logo_url: Optional[str] = Field(None, description="Optional custom logo for the main role")
+    main_tool_ids: List[str] = Field(default_factory=list, description="Tool IDs assigned to the main agent")
+    main_instruction: str = Field(
+        "You are Rie, the main coordinator. Delegate tasks to the right team members and ensure high-quality results.",
+        description="Instruction text for the main role",
+    )
+    nodes: List[PlannerSubAgentNode] = Field(default_factory=list, description="Sub-agent nodes")
+    edges: List[PlannerEdge] = Field(default_factory=list, description="Main-to-sub-agent edges")
+
+class PlannerInstructionGenerateRequest(BaseModel):
+    boss_name: str = Field(..., description="Display name of the boss role")
+    member_name: str = Field(..., description="Name of the member to generate instruction for")
+    member_description: Optional[str] = Field("", description="Short role description of the member")
+    selected_tools: List[str] = Field(default_factory=list, description="Tools assigned to this member")
+    style: Optional[str] = Field(None, description="Optional writing style hint")
+    tone: Optional[str] = Field(None, description="Optional tone hint")
+
+class PlannerInstructionGenerateResponse(BaseModel):
+    instruction_text: str = Field(..., description="Generated plain-text instruction for the member")
+    reasoning_summary: Optional[str] = Field(None, description="Optional short explanation for the generated instruction")
+
 class HealthResponse(BaseModel):
     """Response model for health check endpoint"""
     message: str
@@ -125,6 +175,9 @@ class SettingsResponse(BaseModel):
 
     # Custom External APIs
     external_apis: Optional[List[CustomAPIConfig]] = None
+    subagents_config: Optional[List[SubAgentConfig]] = None
+    subagent_planner_graph: Optional[PlannerGraphConfig] = None
+    agent_orchestration_mode: str = "team"
 
 
 class ActionRequest(BaseModel):

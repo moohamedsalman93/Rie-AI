@@ -3,9 +3,11 @@ Configuration settings for the application
 """
 import os
 import sys
+import json
 from pathlib import Path
 from typing import Optional, Dict, Any
 from app.database import get_all_settings, get_setting
+from app.models import SubAgentConfig, PlannerGraphConfig
 
 # Get the project root directory
 if getattr(sys, 'frozen', False):
@@ -241,6 +243,14 @@ class Settings:
         return self._get("SPEED_MODE", "thinking")
 
     @property
+    def AGENT_ORCHESTRATION_MODE(self) -> str:
+        """
+        Agent orchestration mode: 'solo' or 'team'
+        """
+        mode = (self._get("AGENT_ORCHESTRATION_MODE", "team") or "team").strip().lower()
+        return mode if mode in {"solo", "team"} else "team"
+
+    @property
     def HITL_ENABLED(self) -> bool:
         """
         Whether Human‑in‑the‑Loop (HITL) middleware is enabled.
@@ -330,6 +340,87 @@ class Settings:
             return json.loads(apis_json)
         except json.JSONDecodeError:
             return []
+
+    @property
+    def SUBAGENTS_CONFIG(self) -> list[dict]:
+        """
+        User-configurable sub-agent definitions.
+        Stored as JSON string in DB, returned as list of dicts.
+        """
+        default_config = [
+            {
+                "name": "coding_specialist",
+                "description": "Expert at modifying and understanding code in the local filesystem.",
+                "system_prompt": "You are a coding specialist. You have direct access to the files.",
+                "tool_ids": [],
+                "enabled": True,
+            },
+            {
+                "name": "mcp_registry",
+                "description": "Expert at managing MCP server connections and registry. Use this to add, update, list, or delete MCP servers.",
+                "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations. Use your tools to manage the external capabilities of the Rie agent.",
+                "tool_ids": [],
+                "enabled": True,
+            },
+        ]
+        subagents_json = self._get("SUBAGENTS_CONFIG")
+        if not subagents_json:
+            return default_config
+
+        try:
+            parsed = json.loads(subagents_json)
+            if not isinstance(parsed, list):
+                return default_config
+            validated: list[dict] = []
+            for item in parsed:
+                validated.append(SubAgentConfig(**item).model_dump())
+            return validated or default_config
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return default_config
+
+    @property
+    def SUBAGENT_PLANNER_GRAPH(self) -> dict:
+        """
+        UI-only planner graph for Main Agent -> Sub-Agent flow.
+        Stored as JSON string in DB, returned as normalized dict.
+        """
+        planner_json = self._get("SUBAGENT_PLANNER_GRAPH")
+        default_nodes = []
+        default_edges = []
+        spacing = 180
+        for idx, sub in enumerate(self.SUBAGENTS_CONFIG):
+            node_id = f"subagent_{idx+1}"
+            default_nodes.append(
+                {
+                    "id": node_id,
+                    "name": sub.get("name", f"sub_agent_{idx+1}"),
+                    "description": sub.get("description", ""),
+                    "system_prompt": sub.get("system_prompt", ""),
+                    "tool_ids": sub.get("tool_ids", []),
+                    "enabled": sub.get("enabled", True),
+                    "logo_url": None,
+                    "position": {"x": 360, "y": 120 + idx * spacing},
+                }
+            )
+            default_edges.append({"source": "main_agent", "target": node_id})
+
+        default_graph = {
+            "main_node_id": "main_agent",
+            "main_label": "Rie",
+            "main_logo_url": None,
+            "main_tool_ids": [],
+            "main_instruction": "You are Rie, the main coordinator. Delegate tasks to the right team members and ensure high-quality results.",
+            "nodes": default_nodes,
+            "edges": default_edges,
+        }
+        if not planner_json:
+            return default_graph
+
+        try:
+            parsed = json.loads(planner_json)
+            return PlannerGraphConfig(**parsed).model_dump()
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return default_graph
 
     
     @property
