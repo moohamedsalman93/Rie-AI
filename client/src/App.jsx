@@ -1908,6 +1908,50 @@ function SettingsWindowApp() {
   return <SettingsPage onClose={handleCloseSettingsWindow} />;
 }
 
+function PlannerWindowApp() {
+  const [isReady, setIsReady] = useState(false);
+  const handleClosePlannerWindow = useCallback(async () => {
+    try {
+      await getCurrentWindow().close();
+    } catch (err) {
+      console.error("Failed to close planner window:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const initPlannerWindow = async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const token = await invoke("get_app_token");
+        setAppToken(token);
+      } catch (err) {
+        console.error("Failed to initialize planner window auth:", err);
+      } finally {
+        if (!cancelled) setIsReady(true);
+      }
+    };
+
+    initPlannerWindow();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!isReady) {
+    return (
+      <LoadingScreen
+        onMouseDown={() => {}}
+        onClose={handleClosePlannerWindow}
+        onMinimize={() => getCurrentWindow().minimize()}
+      />
+    );
+  }
+
+  return <PlannerWindowStandalone />;
+}
+
 function App() {
   const view =
     typeof window !== "undefined" ?
@@ -1920,7 +1964,7 @@ function App() {
     return <SettingsWindowApp />;
   }
   if (isPlannerWindow) {
-    return <PlannerWindowStandalone />;
+    return <PlannerWindowApp />;
   }
 
   return <MainApp />;
