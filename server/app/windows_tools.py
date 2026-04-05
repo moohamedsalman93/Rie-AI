@@ -17,6 +17,7 @@ from app.integrations.windows_mcp.desktop.views import Image
 from app.integrations.windows_mcp.watch_cursor import WatchCursor
 from langchain_core.runnables import RunnableConfig
 from app.terminal_stream import streamer
+from app.powershell_capture import strip_clixml_noise, wrap_for_capture
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +118,10 @@ async def terminal_tool(command: str, config: RunnableConfig = None) -> str:
     try:
         # Instead of executing synchronously with desktop.execute_command
         # We spawn a child process to stream outputs.
-        # We encode it like desktop.execute_command
+        # Wrap command so progress streams do not serialize as CLIXML on stderr.
         import base64
-        encoded = base64.b64encode(command.encode("utf-16le")).decode("ascii")
+        ps_command = wrap_for_capture(command)
+        encoded = base64.b64encode(ps_command.encode("utf-16le")).decode("ascii")
         
         loop = asyncio.get_running_loop()
         
@@ -128,7 +130,7 @@ async def terminal_tool(command: str, config: RunnableConfig = None) -> str:
             creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
         process = subprocess.Popen(
-            ['powershell', '-NoProfile', '-EncodedCommand', encoded],
+            ['powershell', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=os.path.expanduser('~'),
@@ -137,6 +139,8 @@ async def terminal_tool(command: str, config: RunnableConfig = None) -> str:
         
         stdout_lines = []
         stderr_lines = []
+        # PowerShell may write CLIXML progress to stderr across one or two lines; skip from live stream.
+        stderr_skip_clixml = [False]
 
         def read_stream(stream, lines_list, is_stderr):
             while True:
@@ -147,9 +151,25 @@ async def terminal_tool(command: str, config: RunnableConfig = None) -> str:
                     line = line_bytes.decode('utf-8', errors='ignore')
                 except:
                     line = str(line_bytes)
-                
+
+                if is_stderr:
+                    if stderr_skip_clixml[0]:
+                        if "</Objs>" in line:
+                            stderr_skip_clixml[0] = False
+                        continue
+                    if line.lstrip().startswith("#< CLIXML"):
+                        if "</Objs>" in line:
+                            continue
+                        stderr_skip_clixml[0] = True
+                        continue
+                    if (
+                        line.lstrip().startswith("<Objs")
+                        and "schemas.microsoft.com/powershell" in line
+                    ):
+                        continue
+
                 lines_list.append(line)
-                
+
                 if thread_id:
                     # Stream the raw line to the frontend via SSE pub/sub
                     payload = {
@@ -177,7 +197,8 @@ async def terminal_tool(command: str, config: RunnableConfig = None) -> str:
         returncode = process.returncode
 
         output_stdout = "".join(stdout_lines)
-        output_stderr = "".join(stderr_lines)
+        output_stderr = strip_clixml_noise("".join(stderr_lines))
+        output_stdout = strip_clixml_noise(output_stdout)
 
         status = 'ok' if returncode == 0 else 'error'
         

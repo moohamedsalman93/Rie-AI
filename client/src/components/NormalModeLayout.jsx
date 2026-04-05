@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Info, RotateCw } from 'lucide-react';
 import { getHistory, deleteThread } from '../services/chatApi';
@@ -79,6 +79,18 @@ export function NormalModeLayout({
     const [showExitConfirm, setShowExitConfirm] = useState(false);
     const isDragging = dragCounter > 0;
     const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot;
+
+    const terminalScrollRef = useRef(null);
+    const terminalBottomRef = useRef(null);
+
+    useLayoutEffect(() => {
+        if (!isTerminalOpen) return;
+        terminalBottomRef.current?.scrollIntoView({ block: 'end', behavior: 'instant' });
+        const el = terminalScrollRef.current;
+        if (el) {
+            el.scrollTop = el.scrollHeight;
+        }
+    }, [terminalLogs, isTerminalOpen]);
 
     useEffect(() => {
         loadThreads();
@@ -739,6 +751,7 @@ export function NormalModeLayout({
 
                             {/* Terminal output - single scroll, raw lines */}
                             <div
+                                ref={terminalScrollRef}
                                 className="flex-1 overflow-y-auto overflow-x-auto custom-scrollbar p-3 font-mono text-[11px] leading-[1.45] text-[#d4d4d4] selection:bg-emerald-500/30"
                                 style={{ fontFamily: "ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace" }}
                             >
@@ -775,6 +788,7 @@ export function NormalModeLayout({
                                             <span className="text-[#3d8b40]">$</span>
                                             <span className="terminal-cursor w-2 h-3 bg-[#3d8b40] ml-0.5 inline-block" />
                                         </div>
+                                        <div ref={terminalBottomRef} className="h-0 w-0 shrink-0" aria-hidden />
                                     </>
                                 )}
                             </div>

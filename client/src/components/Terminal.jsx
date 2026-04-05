@@ -1,14 +1,18 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 export function Terminal({ isOpen, onClose, onClear, logs = [] }) {
     const scrollRef = useRef(null);
+    const bottomRef = useRef(null);
 
-    useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    useLayoutEffect(() => {
+        if (!isOpen) return;
+        bottomRef.current?.scrollIntoView({ block: "end", behavior: "instant" });
+        const el = scrollRef.current;
+        if (el) {
+            el.scrollTop = el.scrollHeight;
         }
-    }, [logs]);
+    }, [logs, isOpen]);
 
     return (
         <AnimatePresence>
@@ -100,6 +104,7 @@ export function Terminal({ isOpen, onClose, onClear, logs = [] }) {
                                     <span className="text-[#3d8b40]">$</span>
                                     <span className="w-2 h-3.5 bg-[#3d8b40] ml-0.5 terminal-cursor" />
                                 </div>
+                                <div ref={bottomRef} className="h-0 w-0 shrink-0" aria-hidden />
                             </>
                         )}
                     </div>

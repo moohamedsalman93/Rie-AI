@@ -1,3 +1,4 @@
+from app.powershell_capture import strip_clixml_noise, wrap_for_capture
 from app.integrations.windows_mcp.desktop.config import BROWSER_NAMES, PROCESS_PER_MONITOR_DPI_AWARE
 from app.integrations.windows_mcp.desktop.views import DesktopState, App, Size, Status
 from app.integrations.windows_mcp.tree.service import Tree
@@ -114,17 +115,20 @@ class Desktop:
     
     def execute_command(self,command:str)->tuple[str,int]:
         try:
-            encoded = base64.b64encode(command.encode("utf-16le")).decode("ascii")
+            ps_command = wrap_for_capture(command)
+            encoded = base64.b64encode(ps_command.encode("utf-16le")).decode("ascii")
             result = subprocess.run(
-                ['powershell', '-NoProfile', '-EncodedCommand', encoded], 
-                capture_output=True, 
+                ['powershell', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+                capture_output=True,
                 errors='ignore',
                 timeout=25,
                 cwd=os.path.expanduser(path='~')
             )
-            stdout=result.stdout
-            stderr=result.stderr
-            return (stdout or stderr,result.returncode)
+            stdout = result.stdout or ""
+            stderr = result.stderr or ""
+            stdout = strip_clixml_noise(stdout)
+            stderr = strip_clixml_noise(stderr)
+            return (stdout or stderr, result.returncode)
         except subprocess.TimeoutExpired:
             return ('Command execution timed out', 1)
         except Exception as e:
