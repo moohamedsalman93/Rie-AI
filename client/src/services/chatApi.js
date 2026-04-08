@@ -69,6 +69,55 @@ function getHeaders() {
   return headers;
 }
 
+function pickServerErrorMessage(payload) {
+  if (!payload) return "";
+  if (typeof payload === "string") return payload.trim();
+  if (typeof payload !== "object") return "";
+
+  const candidateKeys = ["detail", "message", "error"];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+async function getResponseErrorMessage(response, fallbackMessage = "Request failed") {
+  let serverMessage = "";
+
+  try {
+    const jsonPayload = await response.clone().json();
+    serverMessage = pickServerErrorMessage(jsonPayload);
+  } catch {
+    // Non-JSON responses are handled below.
+  }
+
+  if (!serverMessage) {
+    try {
+      const textPayload = (await response.text()).trim();
+      if (textPayload) {
+        serverMessage = textPayload;
+      }
+    } catch {
+      // Ignore body read failures and use fallback.
+    }
+  }
+
+  if (serverMessage) {
+    return serverMessage;
+  }
+
+  const statusPart = response.status ? ` (status ${response.status})` : "";
+  return `${fallbackMessage}${statusPart}`;
+}
+
+async function throwHttpError(response, fallbackMessage) {
+  const message = await getResponseErrorMessage(response, fallbackMessage);
+  throw new Error(message);
+}
+
 /**
  * Resume a paused chat stream with decisions
  * @param {string} threadId
@@ -111,7 +160,7 @@ export async function resumeChat(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      await throwHttpError(response, "Failed to resume chat");
     }
 
     const reader = response.body.getReader();
@@ -158,7 +207,7 @@ export async function getPendingAction(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch pending action");
+      await throwHttpError(response, "Failed to fetch pending action");
   }
   return response.json();
 }
@@ -192,7 +241,8 @@ export async function streamChat(
   token = null,
   clipboardText = null,
   chatMode = "agent",
-  speedMode = "thinking"
+  speedMode = "thinking",
+  friendTarget = null
 ) {
   const payload = {
     message,
@@ -204,6 +254,8 @@ export async function streamChat(
     clipboard_text: clipboardText,
     chat_mode: chatMode,
     speed_mode: speedMode,
+    friend_target_id: friendTarget?.id || null,
+    friend_target_name: friendTarget?.name || null,
     ...getClientDatetimePayload(),
   };
   try {
@@ -215,7 +267,7 @@ export async function streamChat(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      await throwHttpError(response, "Failed to start chat stream");
     }
 
     const reader = response.body.getReader();
@@ -260,7 +312,7 @@ export async function checkApiHealth() {
     });
 
     if (!response.ok) {
-      throw new Error(`Health check failed with status ${response.status}`);
+      await throwHttpError(response, "Health check failed");
     }
 
     return await response.json();
@@ -279,10 +331,7 @@ export async function stopAgent() {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(
-      errorData.detail || `Failed to stop agent (status ${response.status})`
-    );
+    await throwHttpError(response, "Failed to stop agent");
   }
 
   return response.json();
@@ -302,7 +351,7 @@ export async function cancelChat(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to cancel chat");
+    await throwHttpError(response, "Failed to cancel chat");
   }
   return response.json();
 }
@@ -318,7 +367,7 @@ export async function getSettings() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to load settings");
+    await throwHttpError(response, "Failed to load settings");
   }
   return response.json();
 }
@@ -337,7 +386,126 @@ export async function updateSetting(key, value) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to update setting");
+    await throwHttpError(response, "Failed to update setting");
+  }
+  return response.json();
+}
+
+export async function getConnectivityIdentity() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/identity`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to load connectivity identity");
+  }
+  return response.json();
+}
+
+export async function initPairing(name = null) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/pair/init`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to initialize pairing");
+  }
+  return response.json();
+}
+
+export async function confirmPairing(payload) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/pair/confirm`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to confirm pairing");
+  }
+  return response.json();
+}
+
+export async function getFriends() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch friends");
+  }
+  return response.json();
+}
+
+export async function askFriend(friendId, query) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ friend_id: friendId, query }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to ask friend");
+  }
+  return response.json();
+}
+
+export async function checkFriendStatus(friendId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/status`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to check friend status");
+  }
+  return response.json();
+}
+
+export async function getCloudflareStatus() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/cloudflare/status`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to get Cloudflare status");
+  }
+  return response.json();
+}
+
+export async function installCloudflare(tunnelToken) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/cloudflare/install`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ confirmed: true, tunnel_token: tunnelToken }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to install Cloudflare");
+  }
+  return response.json();
+}
+
+export async function installCloudflareNamedTunnel(tunnelToken) {
+  return installCloudflare(tunnelToken);
+}
+
+export async function getFriendApproval(friendId, threadId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/approval?thread_id=${encodeURIComponent(threadId)}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to get friend approval");
+  }
+  return response.json();
+}
+
+export async function approveFriendForThread(friendId, threadId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/approval`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ thread_id: threadId }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to approve friend");
   }
   return response.json();
 }
@@ -353,7 +521,7 @@ export async function getLogs() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch logs");
+    await throwHttpError(response, "Failed to fetch logs");
   }
   return response.json();
 }
@@ -370,7 +538,7 @@ export async function downloadEmbeddingModel(onProgress) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to start embedding download");
+    await throwHttpError(response, "Failed to start embedding download");
   }
 
   const reader = response.body.getReader();
@@ -413,7 +581,7 @@ export async function getMcpStatus() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch MCP status");
+    await throwHttpError(response, "Failed to fetch MCP status");
   }
   return response.json();
 }
@@ -431,8 +599,7 @@ export async function generatePlannerInstruction(payload) {
   });
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to generate instruction");
+    await throwHttpError(response, "Failed to generate instruction");
   }
   return response.json();
 }
@@ -448,7 +615,7 @@ export async function getHistory() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch history");
+    await throwHttpError(response, "Failed to fetch history");
   }
   return response.json();
 }
@@ -465,7 +632,7 @@ export async function getThreadMessages(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch messages");
+    await throwHttpError(response, "Failed to fetch messages");
   }
   return response.json();
 }
@@ -482,7 +649,7 @@ export async function deleteThread(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to delete thread");
+    await throwHttpError(response, "Failed to delete thread");
   }
   return response.json();
 }
@@ -498,7 +665,7 @@ export async function getScreenshot() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to capture screenshot");
+    await throwHttpError(response, "Failed to capture screenshot");
   }
   return response.json();
 }
@@ -522,8 +689,7 @@ export async function transcribeAudio(audioBlob) {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Transcription failed");
+    await throwHttpError(response, "Transcription failed");
   }
 
   return response.json();
@@ -547,8 +713,7 @@ export async function speakText(
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Text-to-speech failed");
+    await throwHttpError(response, "Text-to-speech failed");
   }
 
   return response.blob();
@@ -565,7 +730,7 @@ export async function getOllamaModels() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch Ollama models");
+    await throwHttpError(response, "Failed to fetch Ollama models");
   }
   return response.json();
 }
@@ -584,8 +749,7 @@ export async function getRieUsage() {
     if (response.status === 401) {
       throw new Error("Session expired");
     }
-    const errorText = await response.text();
-    throw new Error(errorText || "Failed to fetch usage");
+    await throwHttpError(response, "Failed to fetch usage");
   }
   return response.json();
 }
@@ -609,8 +773,7 @@ export async function scheduleTaskRequest(payload) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to schedule task");
+    await throwHttpError(response, "Failed to schedule task");
   }
   return response.json();
 }
@@ -621,7 +784,7 @@ export async function listScheduledTasks() {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to list scheduled tasks");
+    await throwHttpError(response, "Failed to list scheduled tasks");
   }
   return response.json();
 }
@@ -632,7 +795,7 @@ export async function cancelScheduledTask(jobId) {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to cancel scheduled task");
+    await throwHttpError(response, "Failed to cancel scheduled task");
   }
   return response.json();
 }
@@ -643,7 +806,7 @@ export async function getScheduleNotifications() {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to fetch schedule notifications");
+    await throwHttpError(response, "Failed to fetch schedule notifications");
   }
   return response.json();
 }
@@ -657,7 +820,7 @@ export async function markScheduleNotificationRead(notifId) {
     }
   );
   if (!response.ok) {
-    throw new Error("Failed to mark notification read");
+    await throwHttpError(response, "Failed to mark notification read");
   }
   return response.json();
 }
@@ -668,7 +831,7 @@ export async function markAllScheduleNotificationsRead() {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to mark notifications read");
+    await throwHttpError(response, "Failed to mark notifications read");
   }
   return response.json();
 }

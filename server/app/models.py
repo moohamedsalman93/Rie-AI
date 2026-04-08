@@ -25,6 +25,8 @@ class ChatMessage(BaseModel):
     clipboard_text: Optional[str] = None
     chat_mode: Optional[str] = None  # "agent" or "chat"
     speed_mode: Optional[str] = None  # "thinking" or "flash"
+    friend_target_id: Optional[str] = None
+    friend_target_name: Optional[str] = None
     # Client device clock — used so the model does not guess wrong year/day for scheduling
     client_timezone: Optional[str] = Field(
         default=None,
@@ -60,6 +62,7 @@ class CustomAPIConfig(BaseModel):
     headers: Optional[Dict[str, str]] = Field(default_factory=dict, description="HTTP headers")
     body: Optional[str] = Field(None, description="Request body as JSON string for POST/PUT/PATCH. Use {param_name} for values the AI will fill. Omit to send tool parameters as JSON body.")
     parameters_schema: Optional[Dict[str, Any]] = Field(None, description="JSON schema for tool parameters (optional)")
+    enabled: bool = Field(True, description="Whether this custom API tool is enabled for runtime registration")
 
 class SubAgentConfig(BaseModel):
     """Configuration for a user-defined sub-agent."""
@@ -178,6 +181,12 @@ class SettingsResponse(BaseModel):
     subagents_config: Optional[List[SubAgentConfig]] = None
     subagent_planner_graph: Optional[PlannerGraphConfig] = None
     agent_orchestration_mode: str = "team"
+    connectivity_cloudflare_enabled: bool = False
+    connectivity_cloudflare_public_url: Optional[str] = None
+    connectivity_device_name: Optional[str] = None
+    connectivity_cloudflare_install_path: Optional[str] = None
+    connectivity_cloudflare_hostname: Optional[str] = None
+    connectivity_cloudflare_named_only: bool = True
 
 
 class ActionRequest(BaseModel):
@@ -244,5 +253,107 @@ class ScheduleNotificationItem(BaseModel):
     title: str
     body: str
     created_at: str
+
+
+class DeviceIdentity(BaseModel):
+    device_id: str
+    name: str
+    public_key: str
+    fingerprint: str
+    cloudflare_public_url: Optional[str] = None
+
+
+class FriendRecord(BaseModel):
+    id: str
+    name: str
+    device_id: str
+    fingerprint: str
+    public_key: str
+    cloudflare_public_url: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class PairingRequest(BaseModel):
+    name: Optional[str] = None
+
+
+class PairingInitResponse(BaseModel):
+    pairing_token: str
+    identity: DeviceIdentity
+
+
+class PairingConfirmRequest(BaseModel):
+    pairing_token: str
+    peer_name: str
+    peer_device_id: str
+    peer_fingerprint: str
+    peer_public_key: str
+    peer_public_url: Optional[str] = None
+
+
+class PeerAskRequest(BaseModel):
+    friend_id: str
+    query: str
+
+
+class PeerReceiveRequest(BaseModel):
+    from_device_id: str
+    from_fingerprint: str
+    query: str
+
+
+class PeerAskResponse(BaseModel):
+    status: str
+    message: str
+    responder_device_id: Optional[str] = None
+
+
+class FriendStatusResponse(BaseModel):
+    friend_id: str
+    reachable: bool
+    status: str
+    latency_ms: Optional[int] = None
+    message: str
+    checked_at: str
+
+
+class FriendApprovalRequest(BaseModel):
+    thread_id: str
+
+
+class CloudflareInstallRequest(BaseModel):
+    confirmed: bool = False
+    tunnel_token: Optional[str] = None
+
+
+class CloudflareInstallResponse(BaseModel):
+    ok: bool
+    installed: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+    enabled: bool = False
+    public_url: Optional[str] = None
+    tunnel_running: bool = False
+    tunnel_pid: Optional[int] = None
+    hostname: Optional[str] = None
+    named_only: bool = True
+    compliance_issue: Optional[str] = None
+    ready_state: str = "failed"
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CloudflareStatusResponse(BaseModel):
+    installed: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+    enabled: bool = False
+    public_url: Optional[str] = None
+    tunnel_running: bool = False
+    tunnel_pid: Optional[int] = None
+    hostname: Optional[str] = None
+    named_only: bool = True
+    compliance_issue: Optional[str] = None
+    ready_state: str = "not_ready"
 
 

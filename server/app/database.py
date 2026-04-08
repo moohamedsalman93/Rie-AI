@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import sys
 import uuid
+import secrets
+import hashlib
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
@@ -123,6 +125,58 @@ def init_db():
         read_at TEXT
     )
     ''')
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS device_identity (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            device_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            public_key TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS friends (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            public_key TEXT NOT NULL,
+            cloudflare_public_url TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_device_id ON friends(device_id)")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS friend_pair_tokens (
+            token TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS friend_thread_approvals (
+            thread_id TEXT NOT NULL,
+            friend_id TEXT NOT NULL,
+            approved_at TEXT NOT NULL,
+            PRIMARY KEY(thread_id, friend_id)
+        )
+        """
+    )
     
     conn.commit()
     conn.close()
@@ -437,6 +491,221 @@ def mark_all_schedule_notifications_read() -> None:
     cursor.execute(
         "UPDATE schedule_notifications SET read_at = ? WHERE read_at IS NULL",
         (now,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _generate_device_identity() -> Dict[str, str]:
+    now = datetime.utcnow().isoformat()
+    public_key = secrets.token_hex(32)
+    digest = hashlib.sha256(public_key.encode("utf-8")).hexdigest()
+    fingerprint = f"SHA256:{digest}"
+    device_id = f"rie-{secrets.token_hex(4)}"
+    return {
+        "device_id": device_id,
+        "name": "My Rie",
+        "public_key": public_key,
+        "fingerprint": fingerprint,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def get_or_create_device_identity() -> Dict[str, Any]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM device_identity WHERE id = 1")
+    row = cursor.fetchone()
+    if row:
+        conn.close()
+        return dict(row)
+
+    identity = _generate_device_identity()
+    cursor.execute(
+        """
+        INSERT INTO device_identity (id, device_id, name, public_key, fingerprint, created_at, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            identity["device_id"],
+            identity["name"],
+            identity["public_key"],
+            identity["fingerprint"],
+            identity["created_at"],
+            identity["updated_at"],
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": 1, **identity}
+
+
+def update_device_identity_name(name: str) -> Dict[str, Any]:
+    identity = get_or_create_device_identity()
+    now = datetime.utcnow().isoformat()
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE device_identity SET name = ?, updated_at = ? WHERE id = 1",
+        (name.strip() or identity["name"], now),
+    )
+    conn.commit()
+    conn.close()
+    identity["name"] = name.strip() or identity["name"]
+    identity["updated_at"] = now
+    return identity
+
+
+def create_pairing_token(ttl_seconds: int = 600) -> str:
+    token = secrets.token_urlsafe(24)
+    now = datetime.utcnow()
+    expires = datetime.fromtimestamp(now.timestamp() + ttl_seconds)
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM friend_pair_tokens WHERE expires_at < ?", (now.isoformat(),))
+    cursor.execute(
+        "INSERT INTO friend_pair_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
+        (token, now.isoformat(), expires.isoformat()),
+    )
+    conn.commit()
+    conn.close()
+    return token
+
+
+def consume_pairing_token(token: str) -> bool:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    now_iso = datetime.utcnow().isoformat()
+    cursor.execute("SELECT token, expires_at FROM friend_pair_tokens WHERE token = ?", (token,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False
+    if row["expires_at"] < now_iso:
+        cursor.execute("DELETE FROM friend_pair_tokens WHERE token = ?", (token,))
+        conn.commit()
+        conn.close()
+        return False
+    cursor.execute("DELETE FROM friend_pair_tokens WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def upsert_friend(
+    name: str,
+    device_id: str,
+    fingerprint: str,
+    public_key: str,
+    cloudflare_public_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    now = datetime.utcnow().isoformat()
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, created_at FROM friends WHERE device_id = ?", (device_id,))
+    existing = cursor.fetchone()
+    if existing:
+        friend_id = existing["id"]
+        created_at = existing["created_at"]
+        cursor.execute(
+            """
+            UPDATE friends
+            SET name = ?, fingerprint = ?, public_key = ?, cloudflare_public_url = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (name, fingerprint, public_key, cloudflare_public_url, now, friend_id),
+        )
+    else:
+        friend_id = str(uuid.uuid4())
+        created_at = now
+        cursor.execute(
+            """
+            INSERT INTO friends (id, name, device_id, fingerprint, public_key, cloudflare_public_url, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (friend_id, name, device_id, fingerprint, public_key, cloudflare_public_url, now, now),
+        )
+    conn.commit()
+    conn.close()
+    return {
+        "id": friend_id,
+        "name": name,
+        "device_id": device_id,
+        "fingerprint": fingerprint,
+        "public_key": public_key,
+        "cloudflare_public_url": cloudflare_public_url,
+        "created_at": created_at,
+        "updated_at": now,
+    }
+
+
+def list_friends() -> List[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM friends ORDER BY updated_at DESC")
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_friend_by_id(friend_id: str) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_friend_by_device_id(device_id: str) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM friends WHERE device_id = ?", (device_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def has_friend_thread_approval(thread_id: str, friend_id: str) -> bool:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM friend_thread_approvals WHERE thread_id = ? AND friend_id = ?",
+        (thread_id, friend_id),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row is not None
+
+
+def approve_friend_for_thread(thread_id: str, friend_id: str) -> None:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        """
+        INSERT INTO friend_thread_approvals (thread_id, friend_id, approved_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(thread_id, friend_id) DO UPDATE SET approved_at = excluded.approved_at
+        """,
+        (thread_id, friend_id, now),
     )
     conn.commit()
     conn.close()

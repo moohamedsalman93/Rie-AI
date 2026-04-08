@@ -39,6 +39,7 @@ from app.ltm_tools import LTM_TOOLS, Context
 from app.custom_tools import get_external_tools
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 from app.scheduler_tools import schedule_chat_task_tool
+from app.remote_friend_tools import remote_friend_ask_tool
 from app.runtime_context import set_agent_context, reset_agent_context
 
 
@@ -548,6 +549,7 @@ class AgentManager:
         all_tools_map = {
             "internet_search": internet_search,
             "schedule_chat_task": schedule_chat_task_tool,
+            "remote_friend_ask": remote_friend_ask_tool,
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
@@ -678,6 +680,8 @@ class AgentManager:
                 tools_to_use.append(all_tools_map["internet_search"])
             if "schedule_chat_task" in all_tools_map:
                 tools_to_use.append(all_tools_map["schedule_chat_task"])
+            if "remote_friend_ask" in all_tools_map:
+                tools_to_use.append(all_tools_map["remote_friend_ask"])
             tools_to_use.extend(LTM_TOOLS)
             print(f"DEBUG: Chat mode active - using limited tools: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
         elif orchestration_mode == "team":
@@ -900,6 +904,8 @@ class AgentManager:
         speed_mode: Optional[str] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        friend_target_id: Optional[str] = None,
+        friend_target_name: Optional[str] = None,
     ) -> dict:
         """
         Invoke the agent (Async)
@@ -936,7 +942,13 @@ class AgentManager:
             else:
                 input_data = {"messages": messages}
 
-        tokens = set_agent_context(thread_id, effective_chat_mode, effective_speed_mode)
+        tokens = set_agent_context(
+            thread_id,
+            effective_chat_mode,
+            effective_speed_mode,
+            friend_target_id=friend_target_id,
+            friend_target_name=friend_target_name,
+        )
         try:
             return await self._agent.ainvoke(input_data, config=config, context=context)
         finally:
@@ -954,6 +966,8 @@ class AgentManager:
         speed_mode: Optional[str] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        friend_target_id: Optional[str] = None,
+        friend_target_name: Optional[str] = None,
     ) -> AsyncIterator[dict]:
         """Stream the agent with messages or resume with decisions (Async/thread-aware)."""
         # Check if modes changed and re-initialize if needed
@@ -1057,7 +1071,13 @@ class AgentManager:
             self._active_tasks[thread_id] = current_task
             logger.info(f"Registered task for thread_id={thread_id}")
 
-        tokens = set_agent_context(thread_id, effective_chat_mode, effective_speed_mode)
+        tokens = set_agent_context(
+            thread_id,
+            effective_chat_mode,
+            effective_speed_mode,
+            friend_target_id=friend_target_id,
+            friend_target_name=friend_target_name,
+        )
         try:
             async for chunk in stream_gen:
                 logger.debug(f"Agent stream chunk keys: {list(chunk.keys())}")

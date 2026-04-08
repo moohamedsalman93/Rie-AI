@@ -251,6 +251,49 @@ class Settings:
         return mode if mode in {"solo", "team"} else "team"
 
     @property
+    def CONNECTIVITY_CLOUDFLARE_ENABLED(self) -> bool:
+        return self._get("CONNECTIVITY_CLOUDFLARE_ENABLED", "false").lower() == "true"
+
+    @property
+    def CONNECTIVITY_CLOUDFLARE_PUBLIC_URL(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_CLOUDFLARE_PUBLIC_URL") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_DEVICE_NAME(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_DEVICE_NAME") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_CLOUDFLARE_INSTALL_PATH(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_CLOUDFLARE_INSTALL_PATH") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_CLOUDFLARE_TUNNEL_PID(self) -> Optional[int]:
+        raw = (self._get("CONNECTIVITY_CLOUDFLARE_TUNNEL_PID") or "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    @property
+    def CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_CLOUDFLARE_HOSTNAME(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_CLOUDFLARE_HOSTNAME") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_CLOUDFLARE_NAMED_ONLY(self) -> bool:
+        return self._get("CONNECTIVITY_CLOUDFLARE_NAMED_ONLY", "true").lower() == "true"
+
+    @property
     def HITL_ENABLED(self) -> bool:
         """
         Whether Human‑in‑the‑Loop (HITL) middleware is enabled.

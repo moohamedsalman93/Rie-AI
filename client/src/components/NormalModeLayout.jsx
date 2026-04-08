@@ -1,6 +1,6 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Info, RotateCw } from 'lucide-react';
+import { GitBranch, Info, RotateCw } from 'lucide-react';
 import { getHistory, deleteThread } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
@@ -52,6 +52,7 @@ export function NormalModeLayout({
     setAttachedClipboardText,
     onAttachClipboard,
     onDeleteMessage,
+    onOpenMessageInNewChat,
     typesWrite,
     setTypesWrite,
     isWindowDraggingFile,
@@ -67,6 +68,9 @@ export function NormalModeLayout({
     onScheduleMarkRead = () => {},
     onScheduleMarkAllRead = () => {},
     onScheduleOpenChat = () => {},
+    friends = [],
+    selectedFriend = null,
+    onSelectFriendTarget = () => {},
 }) {
     // Sidebar state
     const [threads, setThreads] = useState([]);
@@ -77,8 +81,30 @@ export function NormalModeLayout({
     const [dragCounter, setDragCounter] = useState(0);
     const [isHistoryVisible, setIsHistoryVisible] = useState(true);
     const [showExitConfirm, setShowExitConfirm] = useState(false);
+    const [slashOpen, setSlashOpen] = useState(false);
+    const [slashIndex, setSlashIndex] = useState(0);
     const isDragging = dragCounter > 0;
     const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot;
+    const slashQuery = useMemo(() => {
+        const idx = input.lastIndexOf('/');
+        if (idx < 0) return '';
+        return input.slice(idx + 1).trim().toLowerCase();
+    }, [input]);
+    const filteredFriends = useMemo(() => {
+        if (!slashQuery) return friends.slice(0, 8);
+        return friends.filter((f) => (f.name || '').toLowerCase().includes(slashQuery)).slice(0, 8);
+    }, [friends, slashQuery]);
+
+    const selectFriend = (friend) => {
+        if (!friend) return;
+        const idx = input.lastIndexOf('/');
+        const replacement = `/${friend.name} `;
+        const next = idx >= 0 ? `${input.slice(0, idx)}${replacement}` : `${input}${replacement}`;
+        setInput(next);
+        onSelectFriendTarget(friend);
+        setSlashOpen(false);
+        setSlashIndex(0);
+    };
 
     const terminalScrollRef = useRef(null);
     const terminalBottomRef = useRef(null);
@@ -375,6 +401,16 @@ export function NormalModeLayout({
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
+                                                            onOpenMessageInNewChat?.(m);
+                                                        }}
+                                                        className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                        title="Open in new chat"
+                                                    >
+                                                        <GitBranch size={14} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
                                                             onDeleteMessage(m.id);
                                                             onSend(m.text, false, m.image_url);
                                                         }}
@@ -391,6 +427,20 @@ export function NormalModeLayout({
                                                             {m.errorMessage}
                                                         </div>
                                                     </div>
+                                                </div>
+                                            )}
+                                            {m.from === 'user' && !m.error && (
+                                                <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onOpenMessageInNewChat?.(m);
+                                                        }}
+                                                        className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                        title="Open in new chat"
+                                                    >
+                                                        <GitBranch size={14} />
+                                                    </button>
                                                 </div>
                                             )}
 
@@ -657,8 +707,34 @@ export function NormalModeLayout({
                                         ref={textareaRef}
                                         rows={1}
                                         value={input}
-                                        onChange={(e) => setInput(e.target.value)}
+                                        onChange={(e) => {
+                                            const v = e.target.value;
+                                            setInput(v);
+                                            setSlashOpen(v.includes('/'));
+                                        }}
                                         onKeyDown={(e) => {
+                                            if (slashOpen && filteredFriends.length > 0) {
+                                                if (e.key === 'ArrowDown') {
+                                                    e.preventDefault();
+                                                    setSlashIndex((prev) => (prev + 1) % filteredFriends.length);
+                                                    return;
+                                                }
+                                                if (e.key === 'ArrowUp') {
+                                                    e.preventDefault();
+                                                    setSlashIndex((prev) => (prev - 1 + filteredFriends.length) % filteredFriends.length);
+                                                    return;
+                                                }
+                                                if (e.key === 'Escape') {
+                                                    e.preventDefault();
+                                                    setSlashOpen(false);
+                                                    return;
+                                                }
+                                                if (e.key === 'Enter' && !e.shiftKey) {
+                                                    e.preventDefault();
+                                                    selectFriend(filteredFriends[slashIndex] || filteredFriends[0]);
+                                                    return;
+                                                }
+                                            }
                                             if (e.key === 'Enter' && !e.shiftKey) {
                                                 e.preventDefault();
                                                 onSend();
@@ -668,6 +744,19 @@ export function NormalModeLayout({
                                         className={`w-full resize-none rounded-xl border bg-neutral-800 px-4 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none transition-all max-h-[280px] custom-scrollbar ${isRecording ? 'border-emerald-500 ring-1 ring-emerald-500/20' : `border-neutral-700/50 focus:bg-neutral-800/50 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'}`} disabled:opacity-50`}
                                         disabled={isLoading}
                                     />
+                                    {slashOpen && filteredFriends.length > 0 && (
+                                        <div className="absolute bottom-full mb-2 left-0 w-full rounded-xl border border-neutral-700 bg-neutral-800 p-1 z-50 max-h-44 overflow-y-auto custom-scrollbar">
+                                            {filteredFriends.map((friend, idx) => (
+                                                <button
+                                                    key={friend.id}
+                                                    onClick={() => selectFriend(friend)}
+                                                    className={`w-full text-left px-2 py-1 rounded-md text-xs ${idx === slashIndex ? 'bg-emerald-500/20 text-emerald-200' : 'text-neutral-300 hover:bg-neutral-700'}`}
+                                                >
+                                                    /{friend.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                     {isRecording && (
                                         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
                                             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -675,6 +764,9 @@ export function NormalModeLayout({
                                         </div>
                                     )}
                                 </div>
+                                {selectedFriend && (
+                                    <div className="text-[10px] text-emerald-300">target: {selectedFriend.name}</div>
+                                )}
 
                                 {/* Send/Cancel button */}
                                 <button

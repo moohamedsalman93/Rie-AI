@@ -69,6 +69,7 @@ export function FloatingChatWindow({
   pendingAction,
   onActionDecision,
   onDeleteMessage,
+  onOpenMessageInNewChat,
   onClearTerminal,
   scheduleNotifications = [],
   scheduleUnreadCount,
@@ -78,6 +79,9 @@ export function FloatingChatWindow({
   isScheduleSheetOpen = false,
   onCloseScheduleSheet = () => {},
   onOpenScheduleSheet = () => {},
+  friends = [],
+  selectedFriend = null,
+  onSelectFriendTarget = () => {},
 }) {
   return (
     <motion.section
@@ -164,6 +168,7 @@ export function FloatingChatWindow({
                 onActionDecision={onActionDecision}
                 onDeleteMessage={onDeleteMessage}
                 onSend={onSend}
+                onOpenInNewChat={onOpenMessageInNewChat}
               />
             </div>
           </div>
@@ -194,6 +199,9 @@ export function FloatingChatWindow({
             onCancelRequest={onCancelRequest}
             textareaRef={textareaRef}
             isWindowDraggingFile={isWindowDraggingFile}
+            friends={friends}
+            selectedFriend={selectedFriend}
+            onSelectFriendTarget={onSelectFriendTarget}
           />
 
           <Terminal

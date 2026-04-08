@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel } from '../services/chatApi';
+import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, getFriends, checkFriendStatus, getCloudflareStatus, installCloudflareNamedTunnel } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import {
   MessageSquare,
@@ -99,6 +99,22 @@ export function SettingsPage({ onClose }) {
   const [ollamaModels, setOllamaModels] = useState([]);
   const [loadingOllamaModels, setLoadingOllamaModels] = useState(false);
   const [appVersion, setAppVersion] = useState('');
+  const [connectivityIdentity, setConnectivityIdentity] = useState(null);
+  const [friends, setFriends] = useState([]);
+  const [pairingToken, setPairingToken] = useState('');
+  const [pairingPayload, setPairingPayload] = useState('');
+  const [cloudflareStatus, setCloudflareStatus] = useState(null);
+  const [cloudflareInstallResult, setCloudflareInstallResult] = useState(null);
+  const [cloudflareInstalling, setCloudflareInstalling] = useState(false);
+  const [cloudflareConfirmOpen, setCloudflareConfirmOpen] = useState(false);
+  const [cloudflareReadyState, setCloudflareReadyState] = useState('idle');
+  const [cloudflareTokenInput, setCloudflareTokenInput] = useState('');
+  const [connectivityConfigOpen, setConnectivityConfigOpen] = useState(false);
+  const [pairModalOpen, setPairModalOpen] = useState(false);
+  const [friendStatusById, setFriendStatusById] = useState({});
+  const [checkingFriendId, setCheckingFriendId] = useState(null);
+  const [connectivityRefreshing, setConnectivityRefreshing] = useState(false);
+  const [pairTokenCopied, setPairTokenCopied] = useState(false);
 
   // Rie Auth State
   // Rie Auth State
@@ -331,11 +347,37 @@ export function SettingsPage({ onClose }) {
       } else {
         setRieToken(null);
       }
+      await loadConnectivityData();
     } catch (err) {
       console.error("Settings load error:", err);
       setError("Failed to load settings: " + (err.message || String(err)));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadConnectivityData = async () => {
+    try {
+      const [identityData, friendsData, cfStatus] = await Promise.all([
+        getConnectivityIdentity(),
+        getFriends(),
+        getCloudflareStatus(),
+      ]);
+      setConnectivityIdentity(identityData);
+      setFriends(Array.isArray(friendsData) ? friendsData : []);
+      setCloudflareStatus(cfStatus);
+      setCloudflareReadyState(cfStatus?.ready_state || 'not_ready');
+    } catch (err) {
+      console.error('Failed to load connectivity data:', err);
+    }
+  };
+
+  const handleRefreshConnectivity = async () => {
+    try {
+      setConnectivityRefreshing(true);
+      await loadConnectivityData();
+    } finally {
+      setConnectivityRefreshing(false);
     }
   };
 
@@ -395,6 +437,63 @@ export function SettingsPage({ onClose }) {
     await handleSaveSetting('LLM_PROVIDER', provider);
   };
 
+  const handleInitPairing = async () => {
+    try {
+      const result = await initPairing(settings.connectivity_device_name || connectivityIdentity?.name || null);
+      setPairingToken(result.pairing_token || '');
+      setConnectivityIdentity(result.identity || null);
+    } catch (err) {
+      setError(`Failed to start pairing: ${err.message}`);
+    }
+  };
+
+  const handleConfirmPairing = async () => {
+    try {
+      const parsed = JSON.parse(pairingPayload || '{}');
+      await confirmPairing(parsed);
+      setPairingPayload('');
+      await loadConnectivityData();
+    } catch (err) {
+      setError(`Failed to confirm pairing: ${err.message}`);
+    }
+  };
+
+  const handleCheckFriendStatus = async (friendId) => {
+    try {
+      setCheckingFriendId(friendId);
+      const result = await checkFriendStatus(friendId);
+      setFriendStatusById(prev => ({ ...prev, [friendId]: result }));
+    } catch (err) {
+      setFriendStatusById(prev => ({
+        ...prev,
+        [friendId]: { status: 'offline', message: err.message, checked_at: new Date().toISOString(), reachable: false }
+      }));
+    } finally {
+      setCheckingFriendId(null);
+    }
+  };
+
+  const handleInstallCloudflare = async () => {
+    try {
+      if (!cloudflareTokenInput.trim()) {
+        setError('Cloudflare named tunnel token is required.');
+        return;
+      }
+      setCloudflareInstalling(true);
+      setCloudflareInstallResult(null);
+      setCloudflareReadyState('starting');
+      const result = await installCloudflareNamedTunnel(cloudflareTokenInput.trim());
+      setCloudflareInstallResult(result);
+      setCloudflareReadyState(result?.ready_state || (result?.ok ? 'ready' : 'failed'));
+      await loadSettings();
+    } catch (err) {
+      setCloudflareInstallResult({ ok: false, steps: [{ step: 'install', ok: false, message: err.message }] });
+      setCloudflareReadyState('failed');
+    } finally {
+      setCloudflareInstalling(false);
+    }
+  };
+
   const handleToolToggle = async (toolId) => {
     const newTools = enabledTools.includes(toolId)
       ? enabledTools.filter(t => t !== toolId)
@@ -442,6 +541,13 @@ export function SettingsPage({ onClose }) {
     }
   };
 
+  const connectivityChipState = (() => {
+    if (!cloudflareStatus?.installed) return 'not install';
+    const needsConfig = !cloudflareStatus?.hostname || !cloudflareStatus?.public_url || !!cloudflareStatus?.compliance_issue;
+    if (needsConfig || !cloudflareStatus?.tunnel_running) return 'config needed';
+    return 'running';
+  })();
+
   const handleAutoStartToggle = async () => {
     try {
       const newState = !autoStartEnabled;
@@ -486,7 +592,7 @@ export function SettingsPage({ onClose }) {
       <div className="flex flex-1 overflow-hidden">
 
         {/* Sidebar */}
-        <div className="w-64 bg-neutral-950/50 border-r border-white/5 flex flex-col p-4 gap-1.5 shrink-0 overflow-y-auto custom-scrollbar">
+        <div className="w-64 relative bg-neutral-950/50 border-r border-white/5 flex flex-col p-4 gap-1.5 shrink-0 overflow-y-auto custom-scrollbar">
 
           <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-[0.2em] px-3 py-3 mb-1">
             Core
@@ -505,7 +611,7 @@ export function SettingsPage({ onClose }) {
             onClick={() => setActiveTab('tools')}
             icon={<Wrench size={18} />}
           >
-            Tools & MCP
+            Capability
           </SidebarButton>
 
           <SidebarButton
@@ -514,14 +620,6 @@ export function SettingsPage({ onClose }) {
             icon={<Workflow size={18} />}
           >
             Orchestration & Planner
-          </SidebarButton>
-
-          <SidebarButton
-            active={activeTab === 'external'}
-            onClick={() => setActiveTab('external')}
-            icon={<Link size={18} />}
-          >
-            External APIs
           </SidebarButton>
 
           <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-[0.2em] px-3 py-3 mt-4 mb-1">
@@ -534,6 +632,14 @@ export function SettingsPage({ onClose }) {
             icon={<Settings size={18} />}
           >
             General
+          </SidebarButton>
+
+          <SidebarButton
+            active={activeTab === 'connectivity'}
+            onClick={() => setActiveTab('connectivity')}
+            icon={<Link size={18} />}
+          >
+            Connectivity
           </SidebarButton>
 
           <SidebarButton
@@ -560,7 +666,7 @@ export function SettingsPage({ onClose }) {
             Observability
           </SidebarButton>
 
-          <div className="mt-auto pt-6 px-3">
+          <div className="mt-auto pt-1 px-3 absolute bottom-0 w-full left-0 bg-neutral-950/50">
             <div className="p-4 rounded-2xlborder border-white/5">
               <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Version</div>
               <div className="text-xs font-semibold text-white">Rie-AI v{appVersion}</div>
@@ -580,9 +686,7 @@ export function SettingsPage({ onClose }) {
             </div>
           ) : (
             <div
-              className={`mx-auto space-y-8 animate-in fade-in duration-300 slide-in-from-bottom-2 ${
-                activeTab === 'orchestration' ? 'max-w-3xl' : 'max-w-2xl'
-              }`}
+              className={`mx-auto space-y-8 animate-in fade-in duration-300 slide-in-from-bottom-2 `}
             >
 
               {/* PROVIDER TAB */}
@@ -918,12 +1022,12 @@ key2,
                 </div>
               )}
 
-              {/* TOOLS & MCP TAB */}
+              {/* CAPABILITY TAB */}
               {activeTab === 'tools' && (
                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <div className="space-y-1">
-                    <h3 className="text-xl font-bold text-white tracking-tight">Tools & Capabilities</h3>
-                    <p className="text-sm text-neutral-500">Expand your assistant's skills with built-in tools and MCP servers.</p>
+                    <h3 className="text-xl font-bold text-white tracking-tight">Capability</h3>
+                    <p className="text-sm text-neutral-500">Manage your assistant capabilities: built-in tools, MCP servers, and external APIs.</p>
                   </div>
 
                   {/* Built-in tools as chips */}
@@ -990,6 +1094,31 @@ key2,
                         servers={settings.mcp_servers || []}
                         onSave={(newServers) => handleSaveSetting('MCP_SERVERS', JSON.stringify(newServers))}
                         isSaving={savingKey === 'MCP_SERVERS'}
+                      />
+                    </div>
+                  </div>
+
+                  {/* External APIs section */}
+                  <div className="premium-card rounded-2xl p-6 space-y-6">
+                    <div className="flex items-center gap-3 pb-4 border-b border-white/5">
+                      <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">
+                        <Link size={16} />
+                      </div>
+                      <h4 className="text-sm font-bold text-white tracking-wide uppercase">External APIs</h4>
+                    </div>
+
+                    <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
+                      Connect custom API endpoints as tools for the agent. GET/DELETE use query params, while POST/PUT/PATCH send a body.
+                    </p>
+                    <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
+                      Use Request body (JSON) for fixed or templated payloads, for example <code className="bg-neutral-800 px-1 rounded">{'{"query": "{query}"}'}</code>.
+                    </p>
+
+                    <div className="pt-2">
+                      <ExternalApisManager
+                        apis={settings.external_apis || []}
+                        onSave={(updatedApis) => handleSaveSetting('EXTERNAL_APIS', JSON.stringify(updatedApis))}
+                        isSaving={savingKey === 'EXTERNAL_APIS'}
                       />
                     </div>
                   </div>
@@ -1073,6 +1202,168 @@ key2,
                     >
                       Open planner
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'connectivity' && (
+                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="space-y-1">
+                    <h3 className="text-xl font-bold text-white tracking-tight">Connection Hub</h3>
+                    <p className="text-sm text-neutral-500">
+                      Manage tunnel health, your public endpoint, and paired devices in one place.
+                    </p>
+                  </div>
+
+                  <div className="premium-card rounded-2xl p-6 space-y-6">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-base font-semibold text-white">Cloudflare Tunnel</h4>
+                          <span className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                            connectivityChipState === 'running'
+                              ? 'text-emerald-200 bg-emerald-500/20 border-emerald-500/40'
+                              : connectivityChipState === 'not install'
+                              ? 'text-red-200 bg-red-500/20 border-red-500/40'
+                              : 'text-amber-200 bg-amber-500/20 border-amber-500/40'
+                          }`}>
+                            {connectivityChipState}
+                          </span>
+                        </div>
+                        <p className="text-xs text-neutral-500 max-w-xl">
+                          Enable remote access so trusted friends can connect to your agent through a stable endpoint.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-neutral-400">Enable</span>
+                        <button
+                          onClick={() => handleSaveSetting('CONNECTIVITY_CLOUDFLARE_ENABLED', String(!settings.connectivity_cloudflare_enabled))}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all duration-300 ${
+                            settings.connectivity_cloudflare_enabled ? 'bg-emerald-500' : 'bg-neutral-800 border border-neutral-700'
+                          }`}
+                          aria-label="Toggle connectivity"
+                        >
+                          <motion.span
+                            animate={{ x: settings.connectivity_cloudflare_enabled ? 24 : 4 }}
+                            className="inline-block h-4 w-4 transform rounded-full bg-white shadow-lg"
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-4">
+                        <div className="text-[10px] uppercase tracking-wider text-neutral-500">Ready State</div>
+                        <div className="mt-2 text-sm font-semibold text-white">{cloudflareReadyState || 'unknown'}</div>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-4">
+                        <div className="text-[10px] uppercase tracking-wider text-neutral-500">Public Endpoint</div>
+                        <div className="mt-2 text-xs text-neutral-300 break-all">{cloudflareStatus?.public_url || 'Not available yet'}</div>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-4">
+                        <div className="text-[10px] uppercase tracking-wider text-neutral-500">Paired Friends</div>
+                        <div className="mt-2 text-sm font-semibold text-white">{friends.length}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <motion.button whileTap={{ scale: 0.97 }} onClick={() => setConnectivityConfigOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-200 text-xs cursor-pointer hover:border-neutral-500 transition-colors">
+                        <Settings size={14} />
+                        Tunnel Config
+                      </motion.button>
+                      <motion.button whileTap={{ scale: 0.97 }} onClick={() => setPairModalOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors">
+                        <Plus size={14} />
+                        Add Pair
+                      </motion.button>
+                      <button onClick={handleRefreshConnectivity} disabled={connectivityRefreshing} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer hover:border-neutral-500 disabled:opacity-60 transition-colors">
+                        <RefreshCw size={14} className={connectivityRefreshing ? "animate-spin" : ""} />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="premium-card rounded-2xl p-6 space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <h5 className="text-sm font-semibold text-neutral-100">Local Identity</h5>
+                        <p className="text-xs text-neutral-500">This profile is shared when establishing new pairing requests.</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                      <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-3">
+                        <div className="text-neutral-500 mb-1">Device Name</div>
+                        <div className="text-neutral-200 break-all">{connectivityIdentity?.name || settings.connectivity_device_name || 'Unnamed device'}</div>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-3">
+                        <div className="text-neutral-500 mb-1">Identity ID</div>
+                        <div className="text-neutral-200 break-all">{connectivityIdentity?.id || '-'}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="premium-card rounded-2xl p-6 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-sm font-semibold text-neutral-100">Paired Connections</h5>
+                      <span className="text-[11px] text-neutral-500">{friends.length} total</span>
+                    </div>
+
+                    {friends.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-neutral-700 p-8 text-center">
+                        <p className="text-sm text-neutral-400">No paired connections yet.</p>
+                        <p className="text-xs text-neutral-500 mt-1">Use Add Pair to connect your first friend device.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {friends.map((friend) => {
+                          const statusRow = friendStatusById[friend.id];
+                          const reachable = statusRow?.reachable === true;
+                          const hasStatus = !!statusRow;
+                          return (
+                            <div key={friend.id} className="rounded-xl border border-white/10 bg-neutral-900/40 p-4 space-y-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-sm font-semibold text-white truncate">{friend.name || 'Unnamed friend'}</div>
+                                  <div className="text-[11px] text-neutral-500 break-all mt-1">{friend.cloudflare_public_url || 'No endpoint'}</div>
+                                </div>
+                                <span className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
+                                  !hasStatus
+                                    ? 'text-neutral-300 bg-neutral-700/40 border-neutral-600'
+                                    : reachable
+                                    ? 'text-emerald-200 bg-emerald-500/20 border-emerald-500/40'
+                                    : 'text-red-200 bg-red-500/20 border-red-500/40'
+                                }`}>
+                                  {!hasStatus ? 'unknown' : reachable ? 'online' : 'offline'}
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                <div className="rounded-lg bg-black/20 border border-white/5 px-2 py-1.5">
+                                  <div className="text-neutral-500">Latency</div>
+                                  <div className="text-neutral-200">{statusRow?.latency_ms ? `${statusRow.latency_ms} ms` : '-'}</div>
+                                </div>
+                                <div className="rounded-lg bg-black/20 border border-white/5 px-2 py-1.5">
+                                  <div className="text-neutral-500">Last Check</div>
+                                  <div className="text-neutral-200">{statusRow?.checked_at ? new Date(statusRow.checked_at).toLocaleString() : '-'}</div>
+                                </div>
+                              </div>
+
+                              <div className="flex justify-end">
+                                <motion.button
+                                  whileTap={{ scale: 0.97 }}
+                                  onClick={() => handleCheckFriendStatus(friend.id)}
+                                  disabled={checkingFriendId === friend.id}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-xs font-medium cursor-pointer transition-colors"
+                                >
+                                  <RefreshCw size={13} className={checkingFriendId === friend.id ? "animate-spin" : ""} />
+                                  {checkingFriendId === friend.id ? 'Checking...' : 'Check Status'}
+                                </motion.button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1594,27 +1885,6 @@ Separate keywords by commas. Commands containing these words will be blocked."
                 </div>
               )}
 
-              {/* EXTERNAL APIS TAB */}
-              {activeTab === 'external' && (
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
-                    <div>
-                      <h3 className="text-lg font-medium text-neutral-100">External APIs</h3>
-                      <p className="text-sm text-neutral-500">Connect custom API endpoints as tools for the agent.</p>
-                      <p className="text-xs text-neutral-500 mt-1">
-                        <strong>Method:</strong> GET/DELETE use query params; POST/PUT/PATCH send a body. Use <strong>Request body (JSON)</strong> to set a fixed or templated payload (e.g. <code className="bg-neutral-800 px-1 rounded">{'{"query": "{query}"}'}</code>).
-                      </p>
-                    </div>
-                  </div>
-
-                  <ExternalApisManager
-                    apis={settings.external_apis || []}
-                    onSave={(updatedApis) => handleSaveSetting('EXTERNAL_APIS', JSON.stringify(updatedApis))}
-                    isSaving={savingKey === 'EXTERNAL_APIS'}
-                  />
-                </div>
-              )}
-
             </div>
           )}
         </div>
@@ -1716,6 +1986,109 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </p>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <ConfirmationModal
+        isOpen={cloudflareConfirmOpen}
+        onClose={() => setCloudflareConfirmOpen(false)}
+        onConfirm={handleInstallCloudflare}
+        title="Install Cloudflare Tunnel?"
+        message="Rie will download cloudflared if needed, then start a named tunnel using your token and save the stable hostname endpoint."
+        confirmText="Install"
+        cancelText="Cancel"
+        type="warning"
+      />
+      <AnimatePresence>
+        {connectivityConfigOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="w-full max-w-xl rounded-2xl border border-neutral-700 bg-neutral-950 p-5 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-white">Connection Config</h4>
+                <button onClick={() => setConnectivityConfigOpen(false)} className="text-neutral-400 hover:text-white text-xs cursor-pointer">Close</button>
+              </div>
+              <input
+                type="password"
+                value={cloudflareTokenInput}
+                onChange={(e) => setCloudflareTokenInput(e.target.value)}
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200"
+                placeholder="Paste named tunnel token"
+              />
+              <div className="flex items-center gap-2">
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => setCloudflareConfirmOpen(true)}
+                  disabled={cloudflareInstalling || !cloudflareTokenInput.trim()}
+                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  {cloudflareInstalling ? 'Setting up...' : 'Run Setup'}
+                </motion.button>
+                <button onClick={handleRefreshConnectivity} disabled={connectivityRefreshing} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer disabled:opacity-60">
+                  <RefreshCw size={14} className={connectivityRefreshing ? "animate-spin" : ""} />
+                  Refresh
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {pairModalOpen && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="w-full max-w-2xl rounded-2xl border border-neutral-700 bg-neutral-950 p-5 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-white">New Pair</h4>
+                <button onClick={() => setPairModalOpen(false)} className="text-neutral-400 hover:text-white text-xs cursor-pointer">Close</button>
+              </div>
+              <p className="text-xs text-neutral-400">Step 1: create token and share it. Step 2: paste friend payload and confirm.</p>
+              <div className="flex gap-2">
+                <motion.button whileTap={{ scale: 0.97 }} onClick={handleInitPairing} className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors">Create Pair Token</motion.button>
+                {pairingToken && (
+                  <motion.button
+                    whileTap={{ scale: 0.97 }}
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(pairingToken);
+                      setPairTokenCopied(true);
+                      setTimeout(() => setPairTokenCopied(false), 1200);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-200 text-xs cursor-pointer hover:border-neutral-500 transition-colors"
+                  >
+                    {pairTokenCopied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                    {pairTokenCopied ? 'Copied' : 'Copy Token'}
+                  </motion.button>
+                )}
+              </div>
+              {pairingToken && <div className="p-2 rounded border border-neutral-700 bg-neutral-900 text-xs text-neutral-200 break-all">{pairingToken}</div>}
+              <textarea
+                value={pairingPayload}
+                onChange={(e) => setPairingPayload(e.target.value)}
+                className="w-full h-32 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
+                placeholder='Paste friend pairing JSON and click "Confirm Pairing"'
+              />
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setPairModalOpen(false)} className="px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer">Cancel</button>
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  onClick={async () => {
+                    await handleConfirmPairing();
+                    setPairModalOpen(false);
+                  }}
+                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Confirm Pairing
+                </motion.button>
+              </div>
             </motion.div>
           </div>
         )}
@@ -2275,6 +2648,7 @@ function SettingInput({ label, dbKey, value, onSave, isSaving, placeholder, isSe
 
 function ExternalApisManager({ apis, onSave, isSaving }) {
   const [isAdding, setIsAdding] = useState(false);
+  const [editingIndex, setEditingIndex] = useState(null);
   const [newApi, setNewApi] = useState({
     name: '',
     description: '',
@@ -2282,12 +2656,13 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
     method: 'GET',
     headers: '{}',
     body: '',
+    enabled: true,
   });
   const [error, setError] = useState(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
-  const handleAdd = () => {
+  const handleSaveApi = () => {
     if (!newApi.name.trim() || !newApi.description.trim() || !newApi.url.trim()) {
       setError("Name, description, and URL are required");
       return;
@@ -2300,19 +2675,47 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
         JSON.parse(newApi.body.trim()); // validate JSON
         payload.body = newApi.body.trim();
       }
-      const updatedApis = [...apis, payload];
+      const updatedApis = [...apis];
+      if (editingIndex !== null) {
+        updatedApis[editingIndex] = payload;
+      } else {
+        updatedApis.push(payload);
+      }
       onSave(updatedApis);
       setIsAdding(false);
-      setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '' });
+      setEditingIndex(null);
+      setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
       setError(null);
     } catch (e) {
       setError(newApi.body?.trim() && e instanceof SyntaxError ? "Invalid JSON for body" : "Invalid JSON for headers");
     }
   };
 
+  const handleEditClick = (api, index) => {
+    setEditingIndex(index);
+    setIsAdding(true);
+    setError(null);
+    setNewApi({
+      name: api.name || '',
+      description: api.description || '',
+      url: api.url || '',
+      method: api.method || 'GET',
+      headers: JSON.stringify(api.headers || {}, null, 2),
+      body: typeof api.body === 'string' ? api.body : '',
+      enabled: api.enabled !== false,
+    });
+  };
+
   const handleDeleteClick = (index) => {
     setIndexToDelete(index);
     setIsConfirmOpen(true);
+  };
+
+  const handleToggleApi = (index) => {
+    const updatedApis = apis.map((api, idx) => (
+      idx === index ? { ...api, enabled: api.enabled !== false ? false : true } : api
+    ));
+    onSave(updatedApis);
   };
 
   const confirmDelete = () => {
@@ -2343,16 +2746,44 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
                     <p className="text-[11px] text-neutral-500 line-clamp-1">{api.description}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-400 border border-neutral-700 font-mono">{api.method}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold tracking-wide ${
+                        api.enabled !== false
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                          : 'bg-neutral-900 border-neutral-700 text-neutral-500'
+                      }`}>
+                        {api.enabled !== false ? 'ENABLED' : 'DISABLED'}
+                      </span>
                       <span className="text-[10px] text-neutral-600 font-mono truncate max-w-[200px]">{api.url}</span>
                     </div>
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDeleteClick(idx)}
-                  className="p-2 text-neutral-500 hover:text-red-400 transition-colors"
-                >
-                  <Trash2 size={16} />
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleEditClick(api, idx)}
+                    disabled={isSaving}
+                    className="p-2 text-neutral-500 hover:text-neutral-200 transition-colors disabled:opacity-50"
+                    title="Edit API"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    onClick={() => handleToggleApi(idx)}
+                    disabled={isSaving}
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold tracking-wide border transition-colors ${
+                      api.enabled !== false
+                        ? 'border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10'
+                        : 'border-white/10 text-neutral-400 hover:bg-white/5'
+                    } disabled:opacity-50`}
+                  >
+                    {api.enabled !== false ? 'Disable' : 'Enable'}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteClick(idx)}
+                    className="p-2 text-neutral-500 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
             </div>
           ))
@@ -2361,7 +2792,12 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
 
       {!isAdding ? (
         <button
-          onClick={() => setIsAdding(true)}
+          onClick={() => {
+            setIsAdding(true);
+            setEditingIndex(null);
+            setError(null);
+            setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
+          }}
           className="w-full py-3 border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 rounded-xl text-sm text-neutral-400 hover:text-emerald-400 transition-all flex items-center justify-center gap-2"
         >
           <Plus size={16} />
@@ -2369,7 +2805,9 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
         </button>
       ) : (
         <div className="p-6 bg-neutral-800/50 border border-neutral-700 rounded-xl space-y-4 animate-in slide-in-from-top-2">
-          <h4 className="text-sm font-medium text-neutral-200">New API Tool</h4>
+          <h4 className="text-sm font-medium text-neutral-200">
+            {editingIndex !== null ? 'Edit API Tool' : 'New API Tool'}
+          </h4>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -2447,14 +2885,19 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
 
           <div className="flex gap-2">
             <button
-              onClick={handleAdd}
+              onClick={handleSaveApi}
               disabled={isSaving}
               className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
             >
-              {isSaving ? "Saving..." : "Add API Tool"}
+              {isSaving ? "Saving..." : (editingIndex !== null ? "Update API Tool" : "Add API Tool")}
             </button>
             <button
-              onClick={() => { setIsAdding(false); setError(null); }}
+              onClick={() => {
+                setIsAdding(false);
+                setEditingIndex(null);
+                setError(null);
+                setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
+              }}
               className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-sm font-medium rounded-lg transition-colors"
             >
               Cancel

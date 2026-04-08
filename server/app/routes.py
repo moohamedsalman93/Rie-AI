@@ -5,8 +5,10 @@ import asyncio
 import json
 import queue
 import threading
+import time
 from typing import Any, Dict, Iterable, List, Optional, AsyncIterator
 import logging
+import httpx
 
 from fastapi import APIRouter, HTTPException, Query, File, UploadFile
 from fastapi.responses import StreamingResponse
@@ -16,6 +18,10 @@ from app.models import (
     CancelRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
     ScheduleTaskRequest, ScheduledTaskResponse, ScheduleNotificationItem,
     SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
+    DeviceIdentity, FriendRecord, PairingRequest, PairingInitResponse, PairingConfirmRequest, PeerAskRequest, PeerReceiveRequest, PeerAskResponse,
+    FriendStatusResponse,
+    CloudflareInstallRequest, CloudflareInstallResponse, CloudflareStatusResponse,
+    FriendApprovalRequest,
 )
 from app.agent import agent_manager
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
@@ -32,11 +38,31 @@ from app.database import (
     get_threads,
     get_thread_messages,
     delete_thread,
+    delete_last_message,
     vacuum_checkpoint_db,
     get_unread_schedule_notifications,
     mark_schedule_notification_read,
     mark_all_schedule_notifications_read,
+    get_or_create_device_identity,
+    update_device_identity_name,
+    create_pairing_token,
+    consume_pairing_token,
+    upsert_friend,
+    list_friends,
+    get_friend_by_id,
+    get_friend_by_device_id,
+    has_friend_thread_approval,
+    approve_friend_for_thread,
 )
+from app.connectivity.manager import connectivity_manager
+from app.connectivity.cloudflare_installer import (
+    detect_existing_cloudflared,
+    install_cloudflared_windows,
+    start_named_tunnel,
+    get_tunnel_runtime_status,
+    infer_hostname_from_token,
+)
+from app.connectivity.cloudflare_setup import persist_cloudflare_setup
 from fastapi.concurrency import run_in_threadpool
 import io
 import base64
@@ -49,13 +75,18 @@ def _get_runtime_tool_catalog_ids() -> set[str]:
     tool_ids: set[str] = {
         "internet_search",
         "schedule_chat_task",
+        "remote_friend_ask",
         *WINDOWS_TOOLS.keys(),
         *[t.name for t in LTM_TOOLS],
         *[t.name for t in MCP_REGISTRY_TOOLS],
     }
     # External APIs configured by the user.
     for api in settings.EXTERNAL_APIS or []:
-        name = str(api.get("name", "")).strip() if isinstance(api, dict) else ""
+        if not isinstance(api, dict):
+            continue
+        if api.get("enabled", True) is False:
+            continue
+        name = str(api.get("name", "")).strip()
         if name:
             tool_ids.add(name)
     # MCP tools currently loaded by the MCP manager.
@@ -490,6 +521,12 @@ async def get_settings():
         external_apis=settings.EXTERNAL_APIS,
         subagents_config=settings.SUBAGENTS_CONFIG,
         subagent_planner_graph=settings.SUBAGENT_PLANNER_GRAPH,
+        connectivity_cloudflare_enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
+        connectivity_cloudflare_public_url=settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+        connectivity_device_name=settings.CONNECTIVITY_DEVICE_NAME,
+        connectivity_cloudflare_install_path=settings.CONNECTIVITY_CLOUDFLARE_INSTALL_PATH,
+        connectivity_cloudflare_hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
+        connectivity_cloudflare_named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
     )
 
 
@@ -512,6 +549,13 @@ async def update_settings(data: SettingsUpdate):
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
         "SUBAGENTS_CONFIG",
         "SUBAGENT_PLANNER_GRAPH",
+        "CONNECTIVITY_CLOUDFLARE_ENABLED",
+        "CONNECTIVITY_CLOUDFLARE_PUBLIC_URL",
+        "CONNECTIVITY_DEVICE_NAME",
+        "CONNECTIVITY_CLOUDFLARE_INSTALL_PATH",
+        "CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN",
+        "CONNECTIVITY_CLOUDFLARE_HOSTNAME",
+        "CONNECTIVITY_CLOUDFLARE_NAMED_ONLY",
     }
     
     if data.key not in ALLOWED_KEYS:
@@ -561,6 +605,294 @@ async def update_settings(data: SettingsUpdate):
             "message": "Updated SUBAGENT_PLANNER_GRAPH and auto-synced SUBAGENTS_CONFIG",
         }
     return {"status": "success", "message": f"Updated {data.key}"}
+
+
+def _identity_payload() -> Dict[str, Any]:
+    identity = get_or_create_device_identity()
+    configured_name = settings.CONNECTIVITY_DEVICE_NAME
+    if configured_name and configured_name != identity["name"]:
+        identity = update_device_identity_name(configured_name)
+    return {
+        "device_id": identity["device_id"],
+        "name": identity["name"],
+        "public_key": identity["public_key"],
+        "fingerprint": identity["fingerprint"],
+        "cloudflare_public_url": settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+    }
+
+
+@router.get("/connectivity/identity", response_model=DeviceIdentity)
+async def get_connectivity_identity():
+    return DeviceIdentity(**_identity_payload())
+
+
+@router.post("/connectivity/pair/init", response_model=PairingInitResponse)
+async def connectivity_pair_init(data: PairingRequest):
+    if data.name and data.name.strip():
+        update_setting("CONNECTIVITY_DEVICE_NAME", data.name.strip())
+        settings.reload()
+    token = create_pairing_token()
+    return PairingInitResponse(
+        pairing_token=token,
+        identity=DeviceIdentity(**_identity_payload()),
+    )
+
+
+@router.post("/connectivity/pair/confirm", response_model=FriendRecord)
+async def connectivity_pair_confirm(data: PairingConfirmRequest):
+    if not consume_pairing_token(data.pairing_token):
+        raise HTTPException(status_code=400, detail="Invalid or expired pairing token")
+    friend = upsert_friend(
+        name=data.peer_name.strip(),
+        device_id=data.peer_device_id.strip(),
+        fingerprint=data.peer_fingerprint.strip(),
+        public_key=data.peer_public_key.strip(),
+        cloudflare_public_url=(data.peer_public_url or "").strip() or None,
+    )
+    return FriendRecord(**friend)
+
+
+@router.get("/connectivity/friends", response_model=List[FriendRecord])
+async def connectivity_friends():
+    return [FriendRecord(**item) for item in list_friends()]
+
+
+@router.post("/connectivity/friends/{friend_id}/ask", response_model=PeerAskResponse)
+async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
+    if friend_id != data.friend_id:
+        raise HTTPException(status_code=400, detail="Friend ID mismatch")
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+
+    try:
+        target_url = connectivity_manager.resolve_peer(friend)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    source_identity = _identity_payload()
+    endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
+    payload = {
+        "from_device_id": source_identity["device_id"],
+        "from_fingerprint": source_identity["fingerprint"],
+        "query": data.query,
+    }
+
+    try:
+        request_headers: Dict[str, str] = {}
+        if settings.RIE_ACCESS_TOKEN:
+            request_headers["X-Rie-App-Token"] = settings.RIE_ACCESS_TOKEN
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.post(
+                endpoint,
+                json=payload,
+                headers=request_headers,
+            )
+            if response.status_code >= 400:
+                raise HTTPException(status_code=502, detail=f"Peer call failed ({response.status_code})")
+            body = response.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to reach peer: {exc}") from exc
+
+    return PeerAskResponse(
+        status=str(body.get("status", "online")),
+        message=str(body.get("message", "")),
+        responder_device_id=str(body.get("responder_device_id", friend["device_id"])),
+    )
+
+
+@router.get("/connectivity/friends/{friend_id}/status", response_model=FriendStatusResponse)
+async def connectivity_friend_status(friend_id: str):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    checked_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        target_url = connectivity_manager.resolve_peer(friend)
+    except RuntimeError as exc:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=None,
+            message=str(exc),
+            checked_at=checked_at,
+        )
+
+    source_identity = _identity_payload()
+    endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
+    payload = {
+        "from_device_id": source_identity["device_id"],
+        "from_fingerprint": source_identity["fingerprint"],
+        "query": "status_ping",
+    }
+    headers: Dict[str, str] = {}
+    if settings.RIE_ACCESS_TOKEN:
+        headers["X-Rie-App-Token"] = settings.RIE_ACCESS_TOKEN
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(endpoint, json=payload, headers=headers)
+            if response.status_code >= 400:
+                return FriendStatusResponse(
+                    friend_id=friend_id,
+                    reachable=False,
+                    status="offline",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    message=f"Peer call failed ({response.status_code})",
+                    checked_at=checked_at,
+                )
+            body = response.json()
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=True,
+            status=str(body.get("status", "online")),
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message=str(body.get("message", "reachable")),
+            checked_at=checked_at,
+        )
+    except Exception as exc:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message=f"Failed to reach peer: {exc}",
+            checked_at=checked_at,
+        )
+
+
+@router.post("/connectivity/peer/receive", response_model=PeerAskResponse)
+async def connectivity_peer_receive(data: PeerReceiveRequest):
+    friend = get_friend_by_device_id(data.from_device_id)
+    if not friend:
+        raise HTTPException(status_code=403, detail="Unknown peer")
+    if friend["fingerprint"] != data.from_fingerprint:
+        raise HTTPException(status_code=403, detail="Fingerprint mismatch")
+    return PeerAskResponse(
+        status="online",
+        message=f"Received query: {data.query}",
+        responder_device_id=_identity_payload()["device_id"],
+    )
+
+
+@router.get("/connectivity/friends/{friend_id}/approval")
+async def connectivity_friend_approval(friend_id: str, thread_id: str):
+    return {"approved": has_friend_thread_approval(thread_id, friend_id)}
+
+
+@router.post("/connectivity/friends/{friend_id}/approval")
+async def connectivity_friend_approval_set(friend_id: str, data: FriendApprovalRequest):
+    approve_friend_for_thread(data.thread_id, friend_id)
+    return {"status": "success", "approved": True}
+
+
+@router.get("/connectivity/cloudflare/status", response_model=CloudflareStatusResponse)
+async def connectivity_cloudflare_status():
+    detected = detect_existing_cloudflared()
+    runtime = get_tunnel_runtime_status()
+    public_url = runtime.get("public_url") or settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL
+    compliance_issue = None
+    if settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY and public_url and public_url.endswith(".trycloudflare.com"):
+        compliance_issue = "Legacy quick tunnel URL detected; named tunnel setup required"
+    ready_state = "ready" if (detected.get("installed") and settings.CONNECTIVITY_CLOUDFLARE_ENABLED and runtime.get("running") and public_url and not compliance_issue) else "not_ready"
+    return CloudflareStatusResponse(
+        installed=bool(detected.get("installed")),
+        path=detected.get("path") or settings.CONNECTIVITY_CLOUDFLARE_INSTALL_PATH,
+        version=detected.get("version"),
+        enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
+        public_url=public_url,
+        tunnel_running=bool(runtime.get("running")),
+        tunnel_pid=runtime.get("pid"),
+        hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
+        named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
+        compliance_issue=compliance_issue,
+        ready_state=ready_state,
+    )
+
+
+@router.post("/connectivity/cloudflare/install", response_model=CloudflareInstallResponse)
+async def connectivity_cloudflare_install(data: CloudflareInstallRequest):
+    if not data.confirmed:
+        raise HTTPException(status_code=400, detail="Installation confirmation required")
+    token_value = (data.tunnel_token or settings.CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN or "").strip()
+    if not token_value:
+        raise HTTPException(status_code=400, detail="Tunnel token is required for named tunnel mode")
+    inferred_hostname = infer_hostname_from_token(token_value)
+    if not inferred_hostname:
+        raise HTTPException(status_code=400, detail="Could not infer stable hostname from token metadata")
+    update_setting("CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN", token_value)
+    update_setting("CONNECTIVITY_CLOUDFLARE_HOSTNAME", inferred_hostname)
+    update_setting("CONNECTIVITY_CLOUDFLARE_NAMED_ONLY", "true")
+    settings.reload()
+    result = await run_in_threadpool(install_cloudflared_windows)
+    if not result.get("ok"):
+        return CloudflareInstallResponse(
+            ok=False,
+            installed=False,
+            path=result.get("path"),
+            version=result.get("version"),
+            enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
+            public_url=settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+            tunnel_running=False,
+            tunnel_pid=None,
+            hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
+            named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
+            compliance_issue=None,
+            ready_state="failed",
+            steps=result.get("steps") or [],
+        )
+
+    tunnel = await run_in_threadpool(start_named_tunnel, result.get("path") or "", token_value, inferred_hostname)
+    all_steps = list(result.get("steps") or [])
+    all_steps.append(
+        {
+            "step": "launch_tunnel",
+            "ok": bool(tunnel.get("ok")),
+            "message": tunnel.get("public_url") or tunnel.get("message") or "Quick tunnel launched",
+        }
+    )
+    if not tunnel.get("ok"):
+        return CloudflareInstallResponse(
+            ok=False,
+            installed=True,
+            path=result.get("path"),
+            version=result.get("version"),
+            enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
+            public_url=settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+            tunnel_running=bool(tunnel.get("running")),
+            tunnel_pid=tunnel.get("pid"),
+            hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
+            named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
+            compliance_issue=None,
+            ready_state="failed",
+            steps=all_steps,
+        )
+
+    persisted = await run_in_threadpool(
+        persist_cloudflare_setup,
+        result.get("path") or "",
+        f"https://{inferred_hostname}",
+        tunnel.get("pid"),
+        inferred_hostname,
+    )
+    return CloudflareInstallResponse(
+        ok=True,
+        installed=True,
+        path=result.get("path"),
+        version=result.get("version"),
+        enabled=bool(persisted.get("enabled")),
+        public_url=persisted.get("public_url"),
+        tunnel_running=bool(tunnel.get("running")),
+        tunnel_pid=tunnel.get("pid"),
+        hostname=persisted.get("hostname"),
+        named_only=True,
+        compliance_issue=None,
+        ready_state="ready" if persisted.get("public_url") and persisted.get("hostname") else "failed",
+        steps=all_steps,
+    )
 
 
 @router.post("/embedding/download")
@@ -970,6 +1302,8 @@ async def _agent_stream_generator(
     speed_mode: Optional[str] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
+    friend_target_id: Optional[str] = None,
+    friend_target_name: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """
     Wrap the Deep Agent `.stream()` generator into Server‑Sent Events (SSE) lines.
@@ -1006,6 +1340,8 @@ async def _agent_stream_generator(
                     speed_mode=speed_mode,
                     client_timezone=client_timezone,
                     client_local_datetime_iso=client_local_datetime_iso,
+                    friend_target_id=friend_target_id,
+                    friend_target_name=friend_target_name,
                 ):
                     # Check for interrupt in the chunk
                     if "__interrupt__" in chunk:
@@ -1129,6 +1465,8 @@ async def _agent_stream_generator_with_save(
     speed_mode: Optional[str] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
+    friend_target_id: Optional[str] = None,
+    friend_target_name: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """
     Wraps the stream generator to accumulate and save the assistant's response.
@@ -1146,6 +1484,8 @@ async def _agent_stream_generator_with_save(
         speed_mode,
         client_timezone,
         client_local_datetime_iso,
+        friend_target_id,
+        friend_target_name,
     ):
         yield chunk
         # Parse chunk to extract content
@@ -1196,6 +1536,8 @@ async def chat_stream_post(
     clipboard_text = chat_message.clipboard_text
     chat_mode = chat_message.chat_mode
     speed_mode = chat_message.speed_mode
+    friend_target_id = chat_message.friend_target_id
+    friend_target_name = chat_message.friend_target_name
 
     # If clipboard text is provided, append it to the message
     if clipboard_text:
@@ -1225,6 +1567,8 @@ async def chat_stream_post(
             speed_mode=speed_mode,
             client_timezone=chat_message.client_timezone,
             client_local_datetime_iso=chat_message.client_local_datetime_iso,
+            friend_target_id=friend_target_id,
+            friend_target_name=friend_target_name,
         ),
         media_type="text/event-stream",
     )

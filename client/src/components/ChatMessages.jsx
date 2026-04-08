@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Info, RotateCw } from 'lucide-react';
+import { GitBranch, Info, RotateCw } from 'lucide-react';
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ToolChip } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
@@ -15,6 +15,7 @@ export function ChatMessages({
   onActionDecision,
   onDeleteMessage,
   onSend,
+  onOpenInNewChat,
 }) {
   return (
     <main className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden bg-neutral-900/70 py-4 min-h-0">
@@ -37,8 +38,20 @@ export function ChatMessages({
               className={`flex flex-col ${m.from === "user" ? "items-end" : "items-start"} w-full group`}
             >
               <div className={`flex items-end gap-2 min-w-0 max-w-[95%] ${m.from === 'user' ? 'justify-end' : ''}`}>
-                {m.from === 'user' && m.error && (
+                {m.from === 'user' && (
                   <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenInNewChat?.(m);
+                      }}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors"
+                      title="Open in new chat"
+                    >
+                      <GitBranch size={14} />
+                    </button>
+                    {m.error && (
+                      <>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -58,6 +71,8 @@ export function ChatMessages({
                         {m.errorMessage}
                       </div>
                     </div>
+                      </>
+                    )}
                   </div>
                 )}
                 <div className={`min-w-0 max-w-full break-words overflow-x-auto rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>

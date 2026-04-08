@@ -110,6 +110,8 @@ def get_external_tools(configs: List[Dict[str, Any]]) -> List[StructuredTool]:
     tools = []
     for config in configs:
         try:
+            if isinstance(config, dict) and config.get("enabled", True) is False:
+                continue
             tools.append(create_external_tool(config))
         except Exception as e:
             logger.error(f"Failed to create external tool {config.get('name')}: {e}")
