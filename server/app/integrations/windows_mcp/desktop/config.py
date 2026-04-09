@@ -3,7 +3,10 @@ from typing import Set
 BROWSER_NAMES=set([
     'msedge.exe',
     'chrome.exe',
-    'firefox.exe'
+    'firefox.exe',
+    'brave.exe',
+    'opera.exe',
+    'arc.exe'
 ])
 
 AVOIDED_APPS:Set[str]=set([

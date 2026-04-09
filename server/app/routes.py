@@ -32,6 +32,7 @@ from app.database import (
     get_threads,
     get_thread_messages,
     delete_thread,
+    delete_last_message,
     vacuum_checkpoint_db,
     get_unread_schedule_notifications,
     mark_schedule_notification_read,
@@ -923,7 +924,12 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
 
     # Content / text
     if hasattr(msg, "content"):
-        data["content"] = getattr(msg, "content")
+        content = getattr(msg, "content")
+        if isinstance(content, list):
+            # Pass through the list of content blocks
+            data["content"] = content
+        else:
+            data["content"] = content
     elif hasattr(msg, "text"):
         data["content"] = getattr(msg, "text")
 

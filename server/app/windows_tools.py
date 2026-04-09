@@ -9,6 +9,8 @@ from typing import Literal, Optional, List
 from textwrap import dedent
 import pyautogui as pg
 import pythoncom
+import base64
+import io
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -46,7 +48,7 @@ class PowershellToolInput(BaseModel):
     command: str = Field(..., description="PowerShell command to execute")
 
 class StateToolInput(BaseModel):
-    use_vision: bool = Field(False, description="Include screenshot in state")
+    use_vision: bool = Field(False, description="Include screenshot in state. ONLY use this for complex problems, troubleshooting, or when textual info is insufficient.")
     use_dom: bool = Field(False, description="Extract browser DOM content")
 
 class ClickToolInput(BaseModel):
@@ -119,7 +121,6 @@ async def terminal_tool(command: str, config: RunnableConfig = None) -> str:
         # Instead of executing synchronously with desktop.execute_command
         # We spawn a child process to stream outputs.
         # Wrap command so progress streams do not serialize as CLIXML on stderr.
-        import base64
         ps_command = wrap_for_capture(command)
         encoded = base64.b64encode(ps_command.encode("utf-16le")).decode("ascii")
         
@@ -246,7 +247,19 @@ def state_tool(use_vision: bool = False, use_dom: bool = False):
         ''')
         
         if use_vision and desktop_state.screenshot:
-            return f"{result_text}\n[Screenshot captured and available for vision analysis]"
+            # If screenshot is bytes (as_bytes=True in get_state), encode it
+            if isinstance(desktop_state.screenshot, bytes):
+                base64_img = base64.b64encode(desktop_state.screenshot).decode('utf-8')
+            else:
+                # Fallback if it's still a PIL Image (shouldn't happen with as_bytes=True)
+                buffered = io.BytesIO()
+                desktop_state.screenshot.save(buffered, format="PNG")
+                base64_img = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                
+            return [
+                {"type": "text", "text": result_text},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_img}"}}
+            ]
         
         return result_text
     finally:
