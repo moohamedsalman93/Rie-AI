@@ -32,6 +32,7 @@ from app.database import (
     get_threads,
     get_thread_messages,
     delete_thread,
+    delete_last_message,
     vacuum_checkpoint_db,
     get_unread_schedule_notifications,
     mark_schedule_notification_read,
@@ -473,6 +474,7 @@ async def get_settings():
         speed_mode=settings.SPEED_MODE,
         agent_orchestration_mode=settings.AGENT_ORCHESTRATION_MODE,
         hitl_enabled=settings.HITL_ENABLED,
+        hitl_mode=settings.HITL_MODE,
         
         langsmith_tracing=settings.LANGSMITH_TRACING,
         langsmith_api_key=mask_key(settings.LANGSMITH_API_KEY),
@@ -505,7 +507,7 @@ async def update_settings(data: SettingsUpdate):
         "VERTEX_PROJECT", "VERTEX_LOCATION", "VERTEX_CREDENTIALS_PATH",
         "LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
-        "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED",
+        "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
         "VOICE_REPLY", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
         "OLLAMA_MODEL", "OLLAMA_API_URL", "OLLAMA_API_KEY", "EXTERNAL_APIS",
@@ -520,6 +522,11 @@ async def update_settings(data: SettingsUpdate):
         mode = (data.value or "").strip().lower()
         if mode not in {"solo", "team"}:
             raise HTTPException(status_code=400, detail="AGENT_ORCHESTRATION_MODE must be 'solo' or 'team'")
+        value_to_store = mode
+    elif data.key == "HITL_MODE":
+        mode = (data.value or "").strip().lower()
+        if mode not in {"disable", "always", "let_decide"}:
+            raise HTTPException(status_code=400, detail="HITL_MODE must be 'disable', 'always' or 'let_decide'")
         value_to_store = mode
     else:
         value_to_store = data.value
@@ -923,7 +930,12 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
 
     # Content / text
     if hasattr(msg, "content"):
-        data["content"] = getattr(msg, "content")
+        content = getattr(msg, "content")
+        if isinstance(content, list):
+            # Pass through the list of content blocks
+            data["content"] = content
+        else:
+            data["content"] = content
     elif hasattr(msg, "text"):
         data["content"] = getattr(msg, "text")
 
