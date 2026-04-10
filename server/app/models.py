@@ -155,6 +155,7 @@ class SettingsResponse(BaseModel):
     chat_mode: str = "agent"
     speed_mode: str = "thinking"
     hitl_enabled: bool = True
+    hitl_mode: str = "always"
 
     # Ollama Settings
     ollama_model: Optional[str] = None

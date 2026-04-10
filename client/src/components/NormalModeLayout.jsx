@@ -106,6 +106,15 @@ export function NormalModeLayout({
         setSlashIndex(0);
     };
 
+    const attachImageFile = (file) => {
+        if (!file || !file.type?.startsWith("image/")) return;
+        const reader = new FileReader();
+        reader.onload = (re) => {
+            setAttachedImage(re.target?.result || null);
+        };
+        reader.readAsDataURL(file);
+    };
+
     const terminalScrollRef = useRef(null);
     const terminalBottomRef = useRef(null);
 
@@ -530,7 +539,7 @@ export function NormalModeLayout({
                             if (files && files.length > 0) {
                                 const file = files[0];
                                 if (file.type.startsWith("image/")) {
-                                    onFileDrop(file);
+                                    attachImageFile(file);
                                 }
                             }
                         }}
@@ -738,6 +747,20 @@ export function NormalModeLayout({
                                             if (e.key === 'Enter' && !e.shiftKey) {
                                                 e.preventDefault();
                                                 onSend();
+                                            }
+                                        }}
+                                        onPaste={(e) => {
+                                            if (isLoading) return;
+                                            const items = e.clipboardData?.items || [];
+                                            for (const item of items) {
+                                                if (item.kind === "file" && item.type.startsWith("image/")) {
+                                                    const file = item.getAsFile();
+                                                    if (file) {
+                                                        e.preventDefault();
+                                                        attachImageFile(file);
+                                                    }
+                                                    break;
+                                                }
                                             }
                                         }}
                                         placeholder={isRecording ? 'Listening...' : 'Type a message...'}

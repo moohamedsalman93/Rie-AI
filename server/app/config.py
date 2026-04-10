@@ -292,14 +292,24 @@ class Settings:
     @property
     def CONNECTIVITY_CLOUDFLARE_NAMED_ONLY(self) -> bool:
         return self._get("CONNECTIVITY_CLOUDFLARE_NAMED_ONLY", "true").lower() == "true"
+    def HITL_MODE(self) -> str:
+        """
+        Human‑in‑the‑Loop (HITL) mode: 'disable', 'always', or 'let_decide'.
+        When 'disable', tool calls run without explicit human approval prompts.
+        When 'always', tool calls require human approval.
+        When 'let_decide', the LLM decides if approval is needed.
+        """
+        mode = (self._get("HITL_MODE", "always") or "always").strip().lower()
+        if mode not in {"disable", "always", "let_decide"}:
+            return "always"
+        return mode
 
     @property
     def HITL_ENABLED(self) -> bool:
         """
-        Whether Human‑in‑the‑Loop (HITL) middleware is enabled.
-        When disabled, tool calls run without explicit human approval prompts.
+        Derived property for backward compatibility.
         """
-        return self._get("HITL_ENABLED", "true").lower() == "true"
+        return self.HITL_MODE != "disable"
 
     @property
     def VOICE_REPLY(self) -> bool:
