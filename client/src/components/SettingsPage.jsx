@@ -1104,7 +1104,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       Protect your system by blacklisting dangerous keywords. The agent will be unable to run any command that contains these strings.
                     </p>
 
-                    <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
+                    <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
                         <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
                           <Info size={16} />
@@ -1112,19 +1112,21 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <div>
                           <h4 className="text-sm font-bold text-neutral-200">Human-in-the-Loop (HITL)</h4>
                           <p className="text-[11px] text-neutral-500 max-w-xs">
-                            Terminal commands require manual approval before execution for maximum safety.
+                            Choose how approvals are handled for potentially risky tool calls.
                           </p>
                         </div>
                       </div>
-                      <div
-                        onClick={() => handleSaveSetting('HITL_ENABLED', String(!(settings.hitl_enabled)))}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-all duration-300 ${settings.hitl_enabled ? 'bg-emerald-500' : 'bg-neutral-800 border border-white/10'
-                          }`}
-                      >
-                        <motion.span
-                          animate={{ x: settings.hitl_enabled ? 24 : 4 }}
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-lg`}
-                        />
+                      <div className=" max-w-xs">
+                        <select
+                          value={settings.hitl_mode || (settings.hitl_enabled ? 'always' : 'disable')}
+                          onChange={(e) => handleSaveSetting('HITL_MODE', e.target.value)}
+                          disabled={savingKey === "HITL_MODE"}
+                          className="w-full rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-200 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-70 disabled:cursor-not-allowed"
+                        >
+                          <option value="disable">Disable</option>
+                          <option value="always">Always ask</option>
+                          <option value="let_decide">Let AI decide</option>
+                        </select>
                       </div>
                     </div>
                   </div>

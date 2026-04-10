@@ -20,7 +20,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.outputs import ChatResult, ChatGenerationChunk
-from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware, HumanInTheLoopMiddleware, InterruptOnConfig
+from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware, HumanInTheLoopMiddleware
 from deepagents.middleware.subagents import SubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
@@ -750,18 +750,55 @@ class AgentManager:
                 )
             )
 
-            # Optionally add Human‑in‑the‑Loop middleware based on settings
+            # Human‑in‑the‑Loop middleware based on settings
             from app.config import settings as _settings
-            if _settings.HITL_ENABLED:
-                # Only require human approval for terminal commands.
-                # Other tools (app control, mouse/keyboard, etc.) will run without HITL prompts.
-                middleware_stack.append(
-                    HumanInTheLoopMiddleware(
-                        interrupt_on={
-                            "run_terminal_command": True,
-                        }
+            hitl_mode = _settings.HITL_MODE
+            
+            if hitl_mode != "disable":
+                if hitl_mode == "always":
+                    # For "Always Ask", we interrupt on all tools except safe/read-only ones.
+                    safe_tools = {
+                        "internet_search", "get_desktop_state", "list_dir", "read_file", 
+                        "get_ltm_context", "search_ltm", "list_mcp_servers", "get_mcp_tool_info",
+                        "schedule_chat_task"
+                    }
+                    interrupt_on = {}
+                    for tool in tools_to_use:
+                        tool_name = getattr(tool, "name", None)
+                        if tool_name and tool_name not in safe_tools:
+                            interrupt_on[tool_name] = True
+                    
+                    if not interrupt_on:
+                        # Fallback if no specific tools found but mode is always
+                        interrupt_on = {"run_terminal_command": True}
+                        
+                    middleware_stack.append(
+                        HumanInTheLoopMiddleware(interrupt_on=interrupt_on)
                     )
-                )
+                    print(f"DEBUG: HITL enabled in 'always' mode for {len(interrupt_on)} tools")
+                
+                elif hitl_mode == "let_decide":
+                    # NOTE: InterruptOnConfig is a config TypedDict, not middleware.
+                    # Build a regular HITL middleware map to avoid passing raw dicts
+                    # into create_agent(..., middleware=[...]), which crashes.
+                    safe_tools = {
+                        "internet_search", "get_desktop_state", "list_dir", "read_file",
+                        "get_ltm_context", "search_ltm", "list_mcp_servers", "get_mcp_tool_info",
+                        "schedule_chat_task"
+                    }
+                    interrupt_on = {}
+                    for tool in tools_to_use:
+                        tool_name = getattr(tool, "name", None)
+                        if tool_name:
+                            interrupt_on[tool_name] = tool_name not in safe_tools
+
+                    middleware_stack.append(
+                        HumanInTheLoopMiddleware(interrupt_on=interrupt_on)
+                    )
+                    print(
+                        "DEBUG: HITL enabled in 'let_decide' mode "
+                        "(safe tools auto-approved, others require approval)"
+                    )
 
             self._agent = create_agent(
                 model=self._llm,
