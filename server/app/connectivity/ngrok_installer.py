@@ -1,0 +1,202 @@
+import json
+import os
+import shutil
+import subprocess
+import threading
+import time
+import zipfile
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.request import urlopen
+
+
+NGROK_DOWNLOAD_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
+_tunnel_process: Optional[subprocess.Popen] = None
+_tunnel_pid: Optional[int] = None
+_tunnel_url: Optional[str] = None
+_tunnel_lock = threading.Lock()
+
+
+def _install_dir() -> Path:
+    base = Path(os.getenv("LOCALAPPDATA", str(Path.home())))
+    path = base / "Rie-AI" / "ngrok"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _binary_path() -> Path:
+    return _install_dir() / "ngrok.exe"
+
+
+def _runtime_config_path(auth_token: str) -> Path:
+    """
+    Build a minimal runtime config to avoid failures from invalid user ngrok.yml.
+    """
+    path = _install_dir() / "ngrok.runtime.yml"
+    content = (
+        'version: "3"\n'
+        "agent:\n"
+        f"  authtoken: {auth_token.strip()}\n"
+    )
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _run_version(exe_path: str) -> Optional[str]:
+    try:
+        proc = subprocess.run([exe_path, "version"], capture_output=True, text=True, timeout=10, check=False)
+        if proc.returncode == 0:
+            return (proc.stdout or proc.stderr).strip()
+    except Exception:
+        return None
+    return None
+
+
+def detect_existing_ngrok() -> Dict[str, Any]:
+    path_in_system = shutil.which("ngrok")
+    if path_in_system:
+        version = _run_version(path_in_system)
+        return {"installed": True, "path": path_in_system, "version": version, "source": "path"}
+
+    local = _binary_path()
+    if local.exists():
+        version = _run_version(str(local))
+        if version:
+            return {"installed": True, "path": str(local), "version": version, "source": "localappdata"}
+
+    return {"installed": False, "path": None, "version": None, "source": None}
+
+
+def install_ngrok_windows() -> Dict[str, Any]:
+    steps: List[Dict[str, Any]] = []
+    existing = detect_existing_ngrok()
+    if existing["installed"]:
+        steps.append({"step": "detect_existing", "ok": True, "message": f"Found existing ngrok at {existing['path']}"})
+        return {"ok": True, "installed": True, "path": existing["path"], "version": existing["version"], "steps": steps}
+
+    target_path = _binary_path()
+    steps.append({"step": "prepare_directory", "ok": True, "message": f"Using install directory: {target_path.parent}"})
+
+    try:
+        with urlopen(NGROK_DOWNLOAD_URL, timeout=30) as resp:
+            zip_bytes = resp.read()
+        with zipfile.ZipFile(BytesIO(zip_bytes)) as zf:
+            zf.extract("ngrok.exe", path=target_path.parent)
+        steps.append({"step": "download_extract", "ok": True, "message": f"Downloaded ngrok to {target_path}"})
+    except Exception as exc:
+        steps.append({"step": "download_extract", "ok": False, "message": f"Download failed: {exc}"})
+        return {"ok": False, "installed": False, "path": None, "version": None, "steps": steps}
+
+    version = _run_version(str(target_path))
+    if not version:
+        steps.append({"step": "verify", "ok": False, "message": "Installed binary failed version check"})
+        return {"ok": False, "installed": False, "path": str(target_path), "version": None, "steps": steps}
+
+    steps.append({"step": "verify", "ok": True, "message": version})
+    return {"ok": True, "installed": True, "path": str(target_path), "version": version, "steps": steps}
+
+
+def _is_running(proc: Optional[subprocess.Popen]) -> bool:
+    return bool(proc and proc.poll() is None)
+
+
+def _discover_tunnel_url() -> Optional[str]:
+    try:
+        with urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        tunnels = data.get("tunnels") if isinstance(data, dict) else []
+        if not isinstance(tunnels, list):
+            return None
+        for tunnel in tunnels:
+            if not isinstance(tunnel, dict):
+                continue
+            public_url = str(tunnel.get("public_url") or "").strip()
+            proto = str(tunnel.get("proto") or "").strip().lower()
+            if proto == "https" and public_url:
+                return public_url
+        for tunnel in tunnels:
+            if not isinstance(tunnel, dict):
+                continue
+            public_url = str(tunnel.get("public_url") or "").strip()
+            if public_url:
+                return public_url
+    except Exception:
+        return None
+    return None
+
+
+def start_tunnel(
+    ngrok_path: str,
+    auth_token: str,
+    domain: Optional[str] = None,
+    backend_port: int = 14300,
+) -> Dict[str, Any]:
+    global _tunnel_process, _tunnel_pid, _tunnel_url
+    with _tunnel_lock:
+        if _is_running(_tunnel_process):
+            return {"ok": True, "running": True, "pid": _tunnel_pid, "public_url": _tunnel_url}
+        if not auth_token or not auth_token.strip():
+            return {"ok": False, "running": False, "pid": None, "public_url": None, "message": "ngrok auth token is required"}
+
+        runtime_config = _runtime_config_path(auth_token)
+        command = [
+            ngrok_path,
+            "http",
+            str(backend_port),
+            "--config",
+            str(runtime_config),
+            "--log",
+            "stdout",
+        ]
+        normalized_domain = (domain or "").strip()
+        if normalized_domain:
+            command.extend(["--domain", normalized_domain])
+
+        proc = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        _tunnel_process = proc
+        _tunnel_pid = proc.pid
+
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                return {
+                    "ok": False,
+                    "running": False,
+                    "pid": proc.pid,
+                    "public_url": None,
+                    "message": "ngrok tunnel exited during startup",
+                }
+            discovered = _discover_tunnel_url()
+            if discovered:
+                _tunnel_url = discovered
+                return {"ok": True, "running": True, "pid": proc.pid, "public_url": discovered}
+            time.sleep(0.3)
+
+        return {
+            "ok": False,
+            "running": True,
+            "pid": proc.pid,
+            "public_url": None,
+            "message": "Timed out waiting for ngrok tunnel startup",
+        }
+
+
+def get_tunnel_runtime_status() -> Dict[str, Any]:
+    with _tunnel_lock:
+        running = _is_running(_tunnel_process)
+        live_url = _discover_tunnel_url() if running else None
+        if live_url:
+            global _tunnel_url
+            _tunnel_url = live_url
+        return {
+            "running": running,
+            "pid": _tunnel_pid if running else None,
+            "public_url": live_url or _tunnel_url,
+        }

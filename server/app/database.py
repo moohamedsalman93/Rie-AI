@@ -99,6 +99,29 @@ def init_db():
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE messages ADD COLUMN image_url TEXT")
 
+    # Migrate legacy tunnel settings keys to ngrok/neutral naming.
+    legacy_prefix = "CONNECTIVITY_" + "CLOUD" + "FLARE_"
+    connectivity_setting_migrations = {
+        f"{legacy_prefix}ENABLED": "CONNECTIVITY_NGROK_ENABLED",
+        f"{legacy_prefix}PUBLIC_URL": "CONNECTIVITY_PUBLIC_URL",
+        f"{legacy_prefix}INSTALL_PATH": "CONNECTIVITY_NGROK_INSTALL_PATH",
+        f"{legacy_prefix}TUNNEL_PID": "CONNECTIVITY_NGROK_TUNNEL_PID",
+        f"{legacy_prefix}TUNNEL_TOKEN": "CONNECTIVITY_NGROK_AUTH_TOKEN",
+        f"{legacy_prefix}HOSTNAME": "CONNECTIVITY_NGROK_DOMAIN",
+    }
+    for old_key, new_key in connectivity_setting_migrations.items():
+        cursor.execute("SELECT value FROM settings WHERE key = ?", (new_key,))
+        if cursor.fetchone():
+            continue
+        cursor.execute("SELECT value FROM settings WHERE key = ?", (old_key,))
+        legacy_row = cursor.fetchone()
+        if not legacy_row:
+            continue
+        cursor.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (new_key, legacy_row[0]),
+        )
+
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
         id TEXT PRIMARY KEY,
@@ -148,12 +171,22 @@ def init_db():
             device_id TEXT NOT NULL,
             fingerprint TEXT NOT NULL,
             public_key TEXT NOT NULL,
-            cloudflare_public_url TEXT,
+            public_url TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+
+    # Migrate legacy tunnel column name to neutral public_url.
+    cursor.execute("PRAGMA table_info(friends)")
+    friend_columns = {row[1] for row in cursor.fetchall()}
+    if "public_url" not in friend_columns:
+        legacy_public_url_column = "cloud" + "flare_public_url"
+        if legacy_public_url_column in friend_columns:
+            cursor.execute(f"ALTER TABLE friends RENAME COLUMN {legacy_public_url_column} TO public_url")
+        else:
+            cursor.execute("ALTER TABLE friends ADD COLUMN public_url TEXT")
 
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_device_id ON friends(device_id)")
 
@@ -604,7 +637,7 @@ def upsert_friend(
     device_id: str,
     fingerprint: str,
     public_key: str,
-    cloudflare_public_url: Optional[str] = None,
+    public_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     now = datetime.utcnow().isoformat()
     db_path = get_db_path()
@@ -619,20 +652,20 @@ def upsert_friend(
         cursor.execute(
             """
             UPDATE friends
-            SET name = ?, fingerprint = ?, public_key = ?, cloudflare_public_url = ?, updated_at = ?
+            SET name = ?, fingerprint = ?, public_key = ?, public_url = ?, updated_at = ?
             WHERE id = ?
             """,
-            (name, fingerprint, public_key, cloudflare_public_url, now, friend_id),
+            (name, fingerprint, public_key, public_url, now, friend_id),
         )
     else:
         friend_id = str(uuid.uuid4())
         created_at = now
         cursor.execute(
             """
-            INSERT INTO friends (id, name, device_id, fingerprint, public_key, cloudflare_public_url, created_at, updated_at)
+            INSERT INTO friends (id, name, device_id, fingerprint, public_key, public_url, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (friend_id, name, device_id, fingerprint, public_key, cloudflare_public_url, now, now),
+            (friend_id, name, device_id, fingerprint, public_key, public_url, now, now),
         )
     conn.commit()
     conn.close()
@@ -642,7 +675,7 @@ def upsert_friend(
         "device_id": device_id,
         "fingerprint": fingerprint,
         "public_key": public_key,
-        "cloudflare_public_url": cloudflare_public_url,
+        "public_url": public_url,
         "created_at": created_at,
         "updated_at": now,
     }

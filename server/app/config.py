@@ -251,12 +251,12 @@ class Settings:
         return mode if mode in {"solo", "team"} else "team"
 
     @property
-    def CONNECTIVITY_CLOUDFLARE_ENABLED(self) -> bool:
-        return self._get("CONNECTIVITY_CLOUDFLARE_ENABLED", "false").lower() == "true"
+    def CONNECTIVITY_NGROK_ENABLED(self) -> bool:
+        return self._get("CONNECTIVITY_NGROK_ENABLED", "false").lower() == "true"
 
     @property
-    def CONNECTIVITY_CLOUDFLARE_PUBLIC_URL(self) -> Optional[str]:
-        value = (self._get("CONNECTIVITY_CLOUDFLARE_PUBLIC_URL") or "").strip()
+    def CONNECTIVITY_PUBLIC_URL(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_PUBLIC_URL") or "").strip()
         return value or None
 
     @property
@@ -265,13 +265,13 @@ class Settings:
         return value or None
 
     @property
-    def CONNECTIVITY_CLOUDFLARE_INSTALL_PATH(self) -> Optional[str]:
-        value = (self._get("CONNECTIVITY_CLOUDFLARE_INSTALL_PATH") or "").strip()
+    def CONNECTIVITY_NGROK_INSTALL_PATH(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_NGROK_INSTALL_PATH") or "").strip()
         return value or None
 
     @property
-    def CONNECTIVITY_CLOUDFLARE_TUNNEL_PID(self) -> Optional[int]:
-        raw = (self._get("CONNECTIVITY_CLOUDFLARE_TUNNEL_PID") or "").strip()
+    def CONNECTIVITY_NGROK_TUNNEL_PID(self) -> Optional[int]:
+        raw = (self._get("CONNECTIVITY_NGROK_TUNNEL_PID") or "").strip()
         if not raw:
             return None
         try:
@@ -280,18 +280,14 @@ class Settings:
             return None
 
     @property
-    def CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN(self) -> Optional[str]:
-        value = (self._get("CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN") or "").strip()
+    def CONNECTIVITY_NGROK_AUTH_TOKEN(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_NGROK_AUTH_TOKEN") or "").strip()
         return value or None
 
     @property
-    def CONNECTIVITY_CLOUDFLARE_HOSTNAME(self) -> Optional[str]:
-        value = (self._get("CONNECTIVITY_CLOUDFLARE_HOSTNAME") or "").strip()
+    def CONNECTIVITY_NGROK_DOMAIN(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_NGROK_DOMAIN") or "").strip()
         return value or None
-
-    @property
-    def CONNECTIVITY_CLOUDFLARE_NAMED_ONLY(self) -> bool:
-        return self._get("CONNECTIVITY_CLOUDFLARE_NAMED_ONLY", "true").lower() == "true"
     @property
     def HITL_MODE(self) -> str:
         """

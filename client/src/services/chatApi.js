@@ -460,31 +460,27 @@ export async function checkFriendStatus(friendId) {
   return response.json();
 }
 
-export async function getCloudflareStatus() {
-  const response = await fetch(`${API_BASE_URL}/connectivity/cloudflare/status`, {
+export async function getNgrokStatus() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/ngrok/status`, {
     method: "GET",
     headers: getHeaders(),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to get Cloudflare status");
+    await throwHttpError(response, "Failed to get ngrok status");
   }
   return response.json();
 }
 
-export async function installCloudflare(tunnelToken) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/cloudflare/install`, {
+export async function installNgrok(authToken, domain = null) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/ngrok/install`, {
     method: "POST",
     headers: getHeaders(),
-    body: JSON.stringify({ confirmed: true, tunnel_token: tunnelToken }),
+    body: JSON.stringify({ confirmed: true, auth_token: authToken, domain }),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to install Cloudflare");
+    await throwHttpError(response, "Failed to install ngrok");
   }
   return response.json();
-}
-
-export async function installCloudflareNamedTunnel(tunnelToken) {
-  return installCloudflare(tunnelToken);
 }
 
 export async function getFriendApproval(friendId, threadId) {

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, getFriends, checkFriendStatus, getCloudflareStatus, installCloudflareNamedTunnel } from '../services/chatApi';
+import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import {
   MessageSquare,
@@ -103,18 +103,23 @@ export function SettingsPage({ onClose }) {
   const [friends, setFriends] = useState([]);
   const [pairingToken, setPairingToken] = useState('');
   const [pairingPayload, setPairingPayload] = useState('');
-  const [cloudflareStatus, setCloudflareStatus] = useState(null);
-  const [cloudflareInstallResult, setCloudflareInstallResult] = useState(null);
-  const [cloudflareInstalling, setCloudflareInstalling] = useState(false);
-  const [cloudflareConfirmOpen, setCloudflareConfirmOpen] = useState(false);
-  const [cloudflareReadyState, setCloudflareReadyState] = useState('idle');
-  const [cloudflareTokenInput, setCloudflareTokenInput] = useState('');
+  const [incomingPairToken, setIncomingPairToken] = useState('');
+  const [receiverPayload, setReceiverPayload] = useState('');
+  const [pairingMode, setPairingMode] = useState('sender');
+  const [ngrokStatus, setNgrokStatus] = useState(null);
+  const [ngrokInstallResult, setNgrokInstallResult] = useState(null);
+  const [ngrokInstalling, setNgrokInstalling] = useState(false);
+  const [ngrokConfirmOpen, setNgrokConfirmOpen] = useState(false);
+  const [ngrokReadyState, setNgrokReadyState] = useState('idle');
+  const [ngrokTokenInput, setNgrokTokenInput] = useState('');
+  const [ngrokDomainInput, setNgrokDomainInput] = useState('');
   const [connectivityConfigOpen, setConnectivityConfigOpen] = useState(false);
   const [pairModalOpen, setPairModalOpen] = useState(false);
   const [friendStatusById, setFriendStatusById] = useState({});
   const [checkingFriendId, setCheckingFriendId] = useState(null);
   const [connectivityRefreshing, setConnectivityRefreshing] = useState(false);
   const [pairTokenCopied, setPairTokenCopied] = useState(false);
+  const [pairPayloadCopied, setPairPayloadCopied] = useState(false);
 
   // Rie Auth State
   // Rie Auth State
@@ -358,15 +363,15 @@ export function SettingsPage({ onClose }) {
 
   const loadConnectivityData = async () => {
     try {
-      const [identityData, friendsData, cfStatus] = await Promise.all([
+      const [identityData, friendsData, tunnelStatus] = await Promise.all([
         getConnectivityIdentity(),
         getFriends(),
-        getCloudflareStatus(),
+        getNgrokStatus(),
       ]);
       setConnectivityIdentity(identityData);
       setFriends(Array.isArray(friendsData) ? friendsData : []);
-      setCloudflareStatus(cfStatus);
-      setCloudflareReadyState(cfStatus?.ready_state || 'not_ready');
+      setNgrokStatus(tunnelStatus);
+      setNgrokReadyState(tunnelStatus?.ready_state || 'not_ready');
     } catch (err) {
       console.error('Failed to load connectivity data:', err);
     }
@@ -447,6 +452,36 @@ export function SettingsPage({ onClose }) {
     }
   };
 
+  const handleGeneratePairingPayload = async () => {
+    try {
+      const token = incomingPairToken.trim();
+      if (!token) {
+        setError('Paste a pairing token first.');
+        return;
+      }
+      let identity = connectivityIdentity;
+      if (!identity?.device_id || !identity?.fingerprint || !identity?.public_key) {
+        identity = await getConnectivityIdentity();
+        setConnectivityIdentity(identity);
+      }
+      if (!identity?.device_id || !identity?.fingerprint || !identity?.public_key) {
+        throw new Error('Unable to load local identity. Refresh Connectivity and try again.');
+      }
+      const payload = {
+        pairing_token: token,
+        peer_name: (identity?.name || settings.connectivity_device_name || 'My Rie').trim(),
+        peer_device_id: identity.device_id,
+        peer_fingerprint: identity.fingerprint,
+        peer_public_key: identity.public_key,
+        peer_public_url: identity.public_url || null,
+      };
+      setReceiverPayload(JSON.stringify(payload, null, 2));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to generate pairing payload: ${err.message}`);
+    }
+  };
+
   const handleConfirmPairing = async () => {
     try {
       const parsed = JSON.parse(pairingPayload || '{}');
@@ -456,6 +491,13 @@ export function SettingsPage({ onClose }) {
     } catch (err) {
       setError(`Failed to confirm pairing: ${err.message}`);
     }
+  };
+
+  const handleOpenPairModal = () => {
+    setPairModalOpen(true);
+    setPairingMode('sender');
+    setPairTokenCopied(false);
+    setPairPayloadCopied(false);
   };
 
   const handleCheckFriendStatus = async (friendId) => {
@@ -473,24 +515,24 @@ export function SettingsPage({ onClose }) {
     }
   };
 
-  const handleInstallCloudflare = async () => {
+  const handleInstallNgrok = async () => {
     try {
-      if (!cloudflareTokenInput.trim()) {
-        setError('Cloudflare named tunnel token is required.');
+      if (!ngrokTokenInput.trim()) {
+        setError('ngrok auth token is required.');
         return;
       }
-      setCloudflareInstalling(true);
-      setCloudflareInstallResult(null);
-      setCloudflareReadyState('starting');
-      const result = await installCloudflareNamedTunnel(cloudflareTokenInput.trim());
-      setCloudflareInstallResult(result);
-      setCloudflareReadyState(result?.ready_state || (result?.ok ? 'ready' : 'failed'));
+      setNgrokInstalling(true);
+      setNgrokInstallResult(null);
+      setNgrokReadyState('starting');
+      const result = await installNgrok(ngrokTokenInput.trim(), ngrokDomainInput.trim() || null);
+      setNgrokInstallResult(result);
+      setNgrokReadyState(result?.ready_state || (result?.ok ? 'ready' : 'failed'));
       await loadSettings();
     } catch (err) {
-      setCloudflareInstallResult({ ok: false, steps: [{ step: 'install', ok: false, message: err.message }] });
-      setCloudflareReadyState('failed');
+      setNgrokInstallResult({ ok: false, steps: [{ step: 'install', ok: false, message: err.message }] });
+      setNgrokReadyState('failed');
     } finally {
-      setCloudflareInstalling(false);
+      setNgrokInstalling(false);
     }
   };
 
@@ -542,9 +584,9 @@ export function SettingsPage({ onClose }) {
   };
 
   const connectivityChipState = (() => {
-    if (!cloudflareStatus?.installed) return 'not install';
-    const needsConfig = !cloudflareStatus?.hostname || !cloudflareStatus?.public_url || !!cloudflareStatus?.compliance_issue;
-    if (needsConfig || !cloudflareStatus?.tunnel_running) return 'config needed';
+    if (!ngrokStatus?.installed) return 'not install';
+    const needsConfig = !ngrokStatus?.public_url;
+    if (needsConfig || !ngrokStatus?.tunnel_running) return 'config needed';
     return 'running';
   })();
 
@@ -1219,7 +1261,7 @@ key2,
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <h4 className="text-base font-semibold text-white">Cloudflare Tunnel</h4>
+                          <h4 className="text-base font-semibold text-white">ngrok Tunnel</h4>
                           <span className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
                             connectivityChipState === 'running'
                               ? 'text-emerald-200 bg-emerald-500/20 border-emerald-500/40'
@@ -1238,14 +1280,14 @@ key2,
                       <div className="flex items-center gap-3">
                         <span className="text-xs text-neutral-400">Enable</span>
                         <button
-                          onClick={() => handleSaveSetting('CONNECTIVITY_CLOUDFLARE_ENABLED', String(!settings.connectivity_cloudflare_enabled))}
+                          onClick={() => handleSaveSetting('CONNECTIVITY_NGROK_ENABLED', String(!settings.connectivity_ngrok_enabled))}
                           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all duration-300 ${
-                            settings.connectivity_cloudflare_enabled ? 'bg-emerald-500' : 'bg-neutral-800 border border-neutral-700'
+                            settings.connectivity_ngrok_enabled ? 'bg-emerald-500' : 'bg-neutral-800 border border-neutral-700'
                           }`}
                           aria-label="Toggle connectivity"
                         >
                           <motion.span
-                            animate={{ x: settings.connectivity_cloudflare_enabled ? 24 : 4 }}
+                            animate={{ x: settings.connectivity_ngrok_enabled ? 24 : 4 }}
                             className="inline-block h-4 w-4 transform rounded-full bg-white shadow-lg"
                           />
                         </button>
@@ -1255,11 +1297,11 @@ key2,
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-4">
                         <div className="text-[10px] uppercase tracking-wider text-neutral-500">Ready State</div>
-                        <div className="mt-2 text-sm font-semibold text-white">{cloudflareReadyState || 'unknown'}</div>
+                        <div className="mt-2 text-sm font-semibold text-white">{ngrokReadyState || 'unknown'}</div>
                       </div>
                       <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-4">
                         <div className="text-[10px] uppercase tracking-wider text-neutral-500">Public Endpoint</div>
-                        <div className="mt-2 text-xs text-neutral-300 break-all">{cloudflareStatus?.public_url || 'Not available yet'}</div>
+                        <div className="mt-2 text-xs text-neutral-300 break-all">{ngrokStatus?.public_url || 'Not available yet'}</div>
                       </div>
                       <div className="rounded-xl border border-white/10 bg-neutral-900/40 p-4">
                         <div className="text-[10px] uppercase tracking-wider text-neutral-500">Paired Friends</div>
@@ -1272,7 +1314,7 @@ key2,
                         <Settings size={14} />
                         Tunnel Config
                       </motion.button>
-                      <motion.button whileTap={{ scale: 0.97 }} onClick={() => setPairModalOpen(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors">
+                      <motion.button whileTap={{ scale: 0.97 }} onClick={handleOpenPairModal} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors">
                         <Plus size={14} />
                         Add Pair
                       </motion.button>
@@ -1324,7 +1366,7 @@ key2,
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                   <div className="text-sm font-semibold text-white truncate">{friend.name || 'Unnamed friend'}</div>
-                                  <div className="text-[11px] text-neutral-500 break-all mt-1">{friend.cloudflare_public_url || 'No endpoint'}</div>
+                                  <div className="text-[11px] text-neutral-500 break-all mt-1">{friend.public_url || 'No endpoint'}</div>
                                 </div>
                                 <span className={`px-2 py-1 rounded-full text-[10px] font-semibold border ${
                                   !hasStatus
@@ -1993,11 +2035,11 @@ Separate keywords by commas. Commands containing these words will be blocked."
         )}
       </AnimatePresence>
       <ConfirmationModal
-        isOpen={cloudflareConfirmOpen}
-        onClose={() => setCloudflareConfirmOpen(false)}
-        onConfirm={handleInstallCloudflare}
-        title="Install Cloudflare Tunnel?"
-        message="Rie will download cloudflared if needed, then start a named tunnel using your token and save the stable hostname endpoint."
+        isOpen={ngrokConfirmOpen}
+        onClose={() => setNgrokConfirmOpen(false)}
+        onConfirm={handleInstallNgrok}
+        title="Install ngrok Tunnel?"
+        message="Rie will download ngrok if needed, then start a tunnel using your token and save the public endpoint."
         confirmText="Install"
         cancelText="Cancel"
         type="warning"
@@ -2017,19 +2059,26 @@ Separate keywords by commas. Commands containing these words will be blocked."
               </div>
               <input
                 type="password"
-                value={cloudflareTokenInput}
-                onChange={(e) => setCloudflareTokenInput(e.target.value)}
+                value={ngrokTokenInput}
+                onChange={(e) => setNgrokTokenInput(e.target.value)}
                 className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200"
-                placeholder="Paste named tunnel token"
+                placeholder="Paste ngrok auth token"
+              />
+              <input
+                type="text"
+                value={ngrokDomainInput}
+                onChange={(e) => setNgrokDomainInput(e.target.value)}
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200"
+                placeholder="Optional reserved domain (leave empty for random)"
               />
               <div className="flex items-center gap-2">
                 <motion.button
                   whileTap={{ scale: 0.97 }}
-                  onClick={() => setCloudflareConfirmOpen(true)}
-                  disabled={cloudflareInstalling || !cloudflareTokenInput.trim()}
+                  onClick={() => setNgrokConfirmOpen(true)}
+                  disabled={ngrokInstalling || !ngrokTokenInput.trim()}
                   className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
                 >
-                  {cloudflareInstalling ? 'Setting up...' : 'Run Setup'}
+                  {ngrokInstalling ? 'Setting up...' : 'Run Setup'}
                 </motion.button>
                 <button onClick={handleRefreshConnectivity} disabled={connectivityRefreshing} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer disabled:opacity-60">
                   <RefreshCw size={14} className={connectivityRefreshing ? "animate-spin" : ""} />
@@ -2053,43 +2102,139 @@ Separate keywords by commas. Commands containing these words will be blocked."
                 <h4 className="text-sm font-bold text-white">New Pair</h4>
                 <button onClick={() => setPairModalOpen(false)} className="text-neutral-400 hover:text-white text-xs cursor-pointer">Close</button>
               </div>
-              <p className="text-xs text-neutral-400">Step 1: create token and share it. Step 2: paste friend payload and confirm.</p>
-              <div className="flex gap-2">
-                <motion.button whileTap={{ scale: 0.97 }} onClick={handleInitPairing} className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors">Create Pair Token</motion.button>
-                {pairingToken && (
+              <p className="text-xs text-neutral-400">Choose your role, then follow the stepper.</p>
+              <div className="inline-flex rounded-lg border border-neutral-700 overflow-hidden">
+                <button
+                  onClick={() => setPairingMode('sender')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${pairingMode === 'sender' ? 'bg-emerald-600 text-white' : 'bg-neutral-900 text-neutral-300'}`}
+                >
+                  This is Device A (sender)
+                </button>
+                <button
+                  onClick={() => setPairingMode('receiver')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${pairingMode === 'receiver' ? 'bg-indigo-600 text-white' : 'bg-neutral-900 text-neutral-300'}`}
+                >
+                  This is Device B (receiver)
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(() => {
+                  const labels = [
+                    pairingMode === 'sender' ? 'Create token' : 'Paste token',
+                    pairingMode === 'sender' ? 'Share token' : 'Generate payload',
+                    pairingMode === 'sender' ? 'Confirm pairing' : 'Send payload back',
+                  ];
+                  const currentStep = pairingMode === 'sender'
+                    ? (pairingToken ? (pairingPayload.trim() ? 3 : 2) : 1)
+                    : (incomingPairToken.trim() ? (receiverPayload.trim() ? 3 : 2) : 1);
+
+                  return labels.map((label, idx) => {
+                    const stepNum = idx + 1;
+                    const isCurrent = stepNum === currentStep;
+                    const isDone = stepNum < currentStep;
+
+                    return (
+                      <div
+                        key={label}
+                        className={`rounded-xl border px-3 py-3 text-xs transition-colors ${isCurrent
+                          ? 'border-emerald-500/80 bg-emerald-500/15 text-emerald-100'
+                          : isDone
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                            : 'border-neutral-700 bg-neutral-900/60 text-neutral-400'
+                          }`}
+                      >
+                        <div className="font-bold">Step {stepNum}</div>
+                        <div className="mt-0.5">{label}</div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {pairingMode === 'sender' ? (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <motion.button whileTap={{ scale: 0.97 }} onClick={handleInitPairing} className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors">Create Pair Token</motion.button>
+                    {pairingToken && (
+                      <motion.button
+                        whileTap={{ scale: 0.97 }}
+                        onClick={async () => {
+                          await navigator.clipboard.writeText(pairingToken);
+                          setPairTokenCopied(true);
+                          setTimeout(() => setPairTokenCopied(false), 1200);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-200 text-xs cursor-pointer hover:border-neutral-500 transition-colors"
+                      >
+                        {pairTokenCopied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                        {pairTokenCopied ? 'Copied' : 'Copy Token'}
+                      </motion.button>
+                    )}
+                  </div>
+                  {pairingToken && <div className="p-2 rounded border border-neutral-700 bg-neutral-900 text-xs text-neutral-200 break-all">{pairingToken}</div>}
+                  <textarea
+                    value={pairingPayload}
+                    onChange={(e) => setPairingPayload(e.target.value)}
+                    className="w-full h-32 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
+                    placeholder='Paste payload JSON from Device B, then click "Confirm Pairing"'
+                  />
+                </div>
+              ) : (
+                <div className="rounded-lg border border-neutral-700 bg-neutral-900/50 p-3 space-y-2">
+                  <div className="text-xs font-semibold text-neutral-200">Paste token from Device A</div>
+                  <input
+                    value={incomingPairToken}
+                    onChange={(e) => setIncomingPairToken(e.target.value)}
+                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
+                    placeholder="Paste token here, then click Generate Payload"
+                  />
+                  <div className="flex gap-2">
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
+                      onClick={handleGeneratePairingPayload}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer transition-colors"
+                    >
+                      Generate Payload
+                    </motion.button>
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
+                      onClick={async () => {
+                        if (!receiverPayload.trim()) return;
+                        await navigator.clipboard.writeText(receiverPayload);
+                        setPairPayloadCopied(true);
+                        setTimeout(() => setPairPayloadCopied(false), 1200);
+                      }}
+                      disabled={!receiverPayload.trim()}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-200 text-xs cursor-pointer hover:border-neutral-500 transition-colors disabled:opacity-60"
+                    >
+                      {pairPayloadCopied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
+                      {pairPayloadCopied ? 'Copied Payload' : 'Copy Payload'}
+                    </motion.button>
+                  </div>
+                  <textarea
+                    value={receiverPayload}
+                    onChange={(e) => setReceiverPayload(e.target.value)}
+                    className="w-full h-32 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
+                    placeholder='Generated payload appears here. Send this JSON to Device A.'
+                  />
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setPairModalOpen(false)} className="px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer">Cancel</button>
+                {pairingMode === 'sender' ? (
                   <motion.button
                     whileTap={{ scale: 0.97 }}
                     onClick={async () => {
-                      await navigator.clipboard.writeText(pairingToken);
-                      setPairTokenCopied(true);
-                      setTimeout(() => setPairTokenCopied(false), 1200);
+                      await handleConfirmPairing();
+                      setPairModalOpen(false);
                     }}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-200 text-xs cursor-pointer hover:border-neutral-500 transition-colors"
+                    disabled={!pairingPayload.trim()}
+                    className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
                   >
-                    {pairTokenCopied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
-                    {pairTokenCopied ? 'Copied' : 'Copy Token'}
+                    Confirm Pairing
                   </motion.button>
+                ) : (
+                  <button onClick={() => setPairModalOpen(false)} className="px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs cursor-pointer">Done (Send JSON to Device A)</button>
                 )}
-              </div>
-              {pairingToken && <div className="p-2 rounded border border-neutral-700 bg-neutral-900 text-xs text-neutral-200 break-all">{pairingToken}</div>}
-              <textarea
-                value={pairingPayload}
-                onChange={(e) => setPairingPayload(e.target.value)}
-                className="w-full h-32 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
-                placeholder='Paste friend pairing JSON and click "Confirm Pairing"'
-              />
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setPairModalOpen(false)} className="px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer">Cancel</button>
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  onClick={async () => {
-                    await handleConfirmPairing();
-                    setPairModalOpen(false);
-                  }}
-                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold cursor-pointer transition-colors"
-                >
-                  Confirm Pairing
-                </motion.button>
               </div>
             </motion.div>
           </div>

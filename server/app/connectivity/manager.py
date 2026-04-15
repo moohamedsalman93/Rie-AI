@@ -1,12 +1,12 @@
 from typing import Dict, List
 
 from app.connectivity.base import ConnectivityPlugin
-from app.connectivity.cloudflare import CloudflarePlugin
+from app.connectivity.ngrok import NgrokPlugin
 
 
 class ConnectivityManager:
     def __init__(self) -> None:
-        self._plugins: List[ConnectivityPlugin] = [CloudflarePlugin()]
+        self._plugins: List[ConnectivityPlugin] = [NgrokPlugin()]
 
     def resolve_peer(self, peer: Dict[str, str]) -> str:
         for plugin in self._plugins:

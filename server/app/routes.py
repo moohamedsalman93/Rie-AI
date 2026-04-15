@@ -20,7 +20,7 @@ from app.models import (
     SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
     DeviceIdentity, FriendRecord, PairingRequest, PairingInitResponse, PairingConfirmRequest, PeerAskRequest, PeerReceiveRequest, PeerAskResponse,
     FriendStatusResponse,
-    CloudflareInstallRequest, CloudflareInstallResponse, CloudflareStatusResponse,
+    NgrokInstallRequest, NgrokInstallResponse, NgrokStatusResponse,
     FriendApprovalRequest,
 )
 from app.agent import agent_manager
@@ -55,14 +55,13 @@ from app.database import (
     approve_friend_for_thread,
 )
 from app.connectivity.manager import connectivity_manager
-from app.connectivity.cloudflare_installer import (
-    detect_existing_cloudflared,
-    install_cloudflared_windows,
-    start_named_tunnel,
+from app.connectivity.ngrok_installer import (
+    detect_existing_ngrok,
+    install_ngrok_windows,
+    start_tunnel,
     get_tunnel_runtime_status,
-    infer_hostname_from_token,
 )
-from app.connectivity.cloudflare_setup import persist_cloudflare_setup
+from app.connectivity.ngrok_setup import persist_ngrok_setup
 from fastapi.concurrency import run_in_threadpool
 import io
 import base64
@@ -522,12 +521,11 @@ async def get_settings():
         external_apis=settings.EXTERNAL_APIS,
         subagents_config=settings.SUBAGENTS_CONFIG,
         subagent_planner_graph=settings.SUBAGENT_PLANNER_GRAPH,
-        connectivity_cloudflare_enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
-        connectivity_cloudflare_public_url=settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+        connectivity_ngrok_enabled=settings.CONNECTIVITY_NGROK_ENABLED,
+        connectivity_public_url=settings.CONNECTIVITY_PUBLIC_URL,
         connectivity_device_name=settings.CONNECTIVITY_DEVICE_NAME,
-        connectivity_cloudflare_install_path=settings.CONNECTIVITY_CLOUDFLARE_INSTALL_PATH,
-        connectivity_cloudflare_hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
-        connectivity_cloudflare_named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
+        connectivity_ngrok_install_path=settings.CONNECTIVITY_NGROK_INSTALL_PATH,
+        connectivity_ngrok_domain=settings.CONNECTIVITY_NGROK_DOMAIN,
     )
 
 
@@ -550,13 +548,12 @@ async def update_settings(data: SettingsUpdate):
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
         "SUBAGENTS_CONFIG",
         "SUBAGENT_PLANNER_GRAPH",
-        "CONNECTIVITY_CLOUDFLARE_ENABLED",
-        "CONNECTIVITY_CLOUDFLARE_PUBLIC_URL",
+        "CONNECTIVITY_NGROK_ENABLED",
+        "CONNECTIVITY_PUBLIC_URL",
         "CONNECTIVITY_DEVICE_NAME",
-        "CONNECTIVITY_CLOUDFLARE_INSTALL_PATH",
-        "CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN",
-        "CONNECTIVITY_CLOUDFLARE_HOSTNAME",
-        "CONNECTIVITY_CLOUDFLARE_NAMED_ONLY",
+        "CONNECTIVITY_NGROK_INSTALL_PATH",
+        "CONNECTIVITY_NGROK_AUTH_TOKEN",
+        "CONNECTIVITY_NGROK_DOMAIN",
     }
     
     if data.key not in ALLOWED_KEYS:
@@ -623,7 +620,7 @@ def _identity_payload() -> Dict[str, Any]:
         "name": identity["name"],
         "public_key": identity["public_key"],
         "fingerprint": identity["fingerprint"],
-        "cloudflare_public_url": settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+        "public_url": settings.CONNECTIVITY_PUBLIC_URL,
     }
 
 
@@ -653,7 +650,7 @@ async def connectivity_pair_confirm(data: PairingConfirmRequest):
         device_id=data.peer_device_id.strip(),
         fingerprint=data.peer_fingerprint.strip(),
         public_key=data.peer_public_key.strip(),
-        cloudflare_public_url=(data.peer_public_url or "").strip() or None,
+        public_url=(data.peer_public_url or "").strip() or None,
     )
     return FriendRecord(**friend)
 
@@ -795,96 +792,84 @@ async def connectivity_friend_approval_set(friend_id: str, data: FriendApprovalR
     return {"status": "success", "approved": True}
 
 
-@router.get("/connectivity/cloudflare/status", response_model=CloudflareStatusResponse)
-async def connectivity_cloudflare_status():
-    detected = detect_existing_cloudflared()
+@router.get("/connectivity/ngrok/status", response_model=NgrokStatusResponse)
+async def connectivity_ngrok_status():
+    detected = detect_existing_ngrok()
     runtime = get_tunnel_runtime_status()
-    public_url = runtime.get("public_url") or settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL
-    compliance_issue = None
-    if settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY and public_url and public_url.endswith(".trycloudflare.com"):
-        compliance_issue = "Legacy quick tunnel URL detected; named tunnel setup required"
-    ready_state = "ready" if (detected.get("installed") and settings.CONNECTIVITY_CLOUDFLARE_ENABLED and runtime.get("running") and public_url and not compliance_issue) else "not_ready"
-    return CloudflareStatusResponse(
+    public_url = runtime.get("public_url") or settings.CONNECTIVITY_PUBLIC_URL
+    ready_state = "ready" if (detected.get("installed") and settings.CONNECTIVITY_NGROK_ENABLED and runtime.get("running") and public_url) else "not_ready"
+    return NgrokStatusResponse(
         installed=bool(detected.get("installed")),
-        path=detected.get("path") or settings.CONNECTIVITY_CLOUDFLARE_INSTALL_PATH,
+        path=detected.get("path") or settings.CONNECTIVITY_NGROK_INSTALL_PATH,
         version=detected.get("version"),
-        enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
+        enabled=settings.CONNECTIVITY_NGROK_ENABLED,
         public_url=public_url,
         tunnel_running=bool(runtime.get("running")),
         tunnel_pid=runtime.get("pid"),
-        hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
-        named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
-        compliance_issue=compliance_issue,
+        domain=settings.CONNECTIVITY_NGROK_DOMAIN,
         ready_state=ready_state,
     )
 
 
-@router.post("/connectivity/cloudflare/install", response_model=CloudflareInstallResponse)
-async def connectivity_cloudflare_install(data: CloudflareInstallRequest):
+@router.post("/connectivity/ngrok/install", response_model=NgrokInstallResponse)
+async def connectivity_ngrok_install(data: NgrokInstallRequest):
     if not data.confirmed:
         raise HTTPException(status_code=400, detail="Installation confirmation required")
-    token_value = (data.tunnel_token or settings.CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN or "").strip()
+    token_value = (data.auth_token or settings.CONNECTIVITY_NGROK_AUTH_TOKEN or "").strip()
     if not token_value:
-        raise HTTPException(status_code=400, detail="Tunnel token is required for named tunnel mode")
-    inferred_hostname = infer_hostname_from_token(token_value)
-    if not inferred_hostname:
-        raise HTTPException(status_code=400, detail="Could not infer stable hostname from token metadata")
-    update_setting("CONNECTIVITY_CLOUDFLARE_TUNNEL_TOKEN", token_value)
-    update_setting("CONNECTIVITY_CLOUDFLARE_HOSTNAME", inferred_hostname)
-    update_setting("CONNECTIVITY_CLOUDFLARE_NAMED_ONLY", "true")
+        raise HTTPException(status_code=400, detail="ngrok auth token is required")
+    domain_value = (data.domain or settings.CONNECTIVITY_NGROK_DOMAIN or "").strip() or None
+    update_setting("CONNECTIVITY_NGROK_AUTH_TOKEN", token_value)
+    update_setting("CONNECTIVITY_NGROK_DOMAIN", domain_value or "")
     settings.reload()
-    result = await run_in_threadpool(install_cloudflared_windows)
+    result = await run_in_threadpool(install_ngrok_windows)
     if not result.get("ok"):
-        return CloudflareInstallResponse(
+        return NgrokInstallResponse(
             ok=False,
             installed=False,
             path=result.get("path"),
             version=result.get("version"),
-            enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
-            public_url=settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+            enabled=settings.CONNECTIVITY_NGROK_ENABLED,
+            public_url=settings.CONNECTIVITY_PUBLIC_URL,
             tunnel_running=False,
             tunnel_pid=None,
-            hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
-            named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
-            compliance_issue=None,
+            domain=settings.CONNECTIVITY_NGROK_DOMAIN,
             ready_state="failed",
             steps=result.get("steps") or [],
         )
 
-    tunnel = await run_in_threadpool(start_named_tunnel, result.get("path") or "", token_value, inferred_hostname)
+    tunnel = await run_in_threadpool(start_tunnel, result.get("path") or "", token_value, domain_value)
     all_steps = list(result.get("steps") or [])
     all_steps.append(
         {
             "step": "launch_tunnel",
             "ok": bool(tunnel.get("ok")),
-            "message": tunnel.get("public_url") or tunnel.get("message") or "Quick tunnel launched",
+            "message": tunnel.get("public_url") or tunnel.get("message") or "ngrok tunnel launched",
         }
     )
     if not tunnel.get("ok"):
-        return CloudflareInstallResponse(
+        return NgrokInstallResponse(
             ok=False,
             installed=True,
             path=result.get("path"),
             version=result.get("version"),
-            enabled=settings.CONNECTIVITY_CLOUDFLARE_ENABLED,
-            public_url=settings.CONNECTIVITY_CLOUDFLARE_PUBLIC_URL,
+            enabled=settings.CONNECTIVITY_NGROK_ENABLED,
+            public_url=settings.CONNECTIVITY_PUBLIC_URL,
             tunnel_running=bool(tunnel.get("running")),
             tunnel_pid=tunnel.get("pid"),
-            hostname=settings.CONNECTIVITY_CLOUDFLARE_HOSTNAME,
-            named_only=settings.CONNECTIVITY_CLOUDFLARE_NAMED_ONLY,
-            compliance_issue=None,
+            domain=settings.CONNECTIVITY_NGROK_DOMAIN,
             ready_state="failed",
             steps=all_steps,
         )
 
     persisted = await run_in_threadpool(
-        persist_cloudflare_setup,
+        persist_ngrok_setup,
         result.get("path") or "",
-        f"https://{inferred_hostname}",
+        tunnel.get("public_url"),
         tunnel.get("pid"),
-        inferred_hostname,
+        domain_value,
     )
-    return CloudflareInstallResponse(
+    return NgrokInstallResponse(
         ok=True,
         installed=True,
         path=result.get("path"),
@@ -893,10 +878,8 @@ async def connectivity_cloudflare_install(data: CloudflareInstallRequest):
         public_url=persisted.get("public_url"),
         tunnel_running=bool(tunnel.get("running")),
         tunnel_pid=tunnel.get("pid"),
-        hostname=persisted.get("hostname"),
-        named_only=True,
-        compliance_issue=None,
-        ready_state="ready" if persisted.get("public_url") and persisted.get("hostname") else "failed",
+        domain=persisted.get("domain"),
+        ready_state="ready" if persisted.get("public_url") else "failed",
         steps=all_steps,
     )
 

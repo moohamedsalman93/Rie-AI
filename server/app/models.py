@@ -182,12 +182,11 @@ class SettingsResponse(BaseModel):
     subagents_config: Optional[List[SubAgentConfig]] = None
     subagent_planner_graph: Optional[PlannerGraphConfig] = None
     agent_orchestration_mode: str = "team"
-    connectivity_cloudflare_enabled: bool = False
-    connectivity_cloudflare_public_url: Optional[str] = None
+    connectivity_ngrok_enabled: bool = False
+    connectivity_public_url: Optional[str] = None
     connectivity_device_name: Optional[str] = None
-    connectivity_cloudflare_install_path: Optional[str] = None
-    connectivity_cloudflare_hostname: Optional[str] = None
-    connectivity_cloudflare_named_only: bool = True
+    connectivity_ngrok_install_path: Optional[str] = None
+    connectivity_ngrok_domain: Optional[str] = None
 
 
 class ActionRequest(BaseModel):
@@ -261,7 +260,7 @@ class DeviceIdentity(BaseModel):
     name: str
     public_key: str
     fingerprint: str
-    cloudflare_public_url: Optional[str] = None
+    public_url: Optional[str] = None
 
 
 class FriendRecord(BaseModel):
@@ -270,7 +269,7 @@ class FriendRecord(BaseModel):
     device_id: str
     fingerprint: str
     public_key: str
-    cloudflare_public_url: Optional[str] = None
+    public_url: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -323,12 +322,13 @@ class FriendApprovalRequest(BaseModel):
     thread_id: str
 
 
-class CloudflareInstallRequest(BaseModel):
+class NgrokInstallRequest(BaseModel):
     confirmed: bool = False
-    tunnel_token: Optional[str] = None
+    auth_token: Optional[str] = None
+    domain: Optional[str] = None
 
 
-class CloudflareInstallResponse(BaseModel):
+class NgrokInstallResponse(BaseModel):
     ok: bool
     installed: bool
     path: Optional[str] = None
@@ -337,14 +337,12 @@ class CloudflareInstallResponse(BaseModel):
     public_url: Optional[str] = None
     tunnel_running: bool = False
     tunnel_pid: Optional[int] = None
-    hostname: Optional[str] = None
-    named_only: bool = True
-    compliance_issue: Optional[str] = None
+    domain: Optional[str] = None
     ready_state: str = "failed"
     steps: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-class CloudflareStatusResponse(BaseModel):
+class NgrokStatusResponse(BaseModel):
     installed: bool
     path: Optional[str] = None
     version: Optional[str] = None
@@ -352,9 +350,7 @@ class CloudflareStatusResponse(BaseModel):
     public_url: Optional[str] = None
     tunnel_running: bool = False
     tunnel_pid: Optional[int] = None
-    hostname: Optional[str] = None
-    named_only: bool = True
-    compliance_issue: Optional[str] = None
+    domain: Optional[str] = None
     ready_state: str = "not_ready"
 
 
