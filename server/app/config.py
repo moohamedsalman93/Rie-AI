@@ -292,6 +292,7 @@ class Settings:
     @property
     def CONNECTIVITY_CLOUDFLARE_NAMED_ONLY(self) -> bool:
         return self._get("CONNECTIVITY_CLOUDFLARE_NAMED_ONLY", "true").lower() == "true"
+    @property
     def HITL_MODE(self) -> str:
         """
         Human‑in‑the‑Loop (HITL) mode: 'disable', 'always', or 'let_decide'.
