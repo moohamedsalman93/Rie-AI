@@ -426,6 +426,18 @@ export async function confirmPairing(payload) {
   return response.json();
 }
 
+export async function finalizePairing(payload) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/pair/finalize`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to finalize pairing");
+  }
+  return response.json();
+}
+
 export async function getFriends() {
   const response = await fetch(`${API_BASE_URL}/connectivity/friends`, {
     method: "GET",
@@ -433,6 +445,17 @@ export async function getFriends() {
   });
   if (!response.ok) {
     await throwHttpError(response, "Failed to fetch friends");
+  }
+  return response.json();
+}
+
+export async function removeFriend(friendId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to remove paired friend");
   }
   return response.json();
 }
@@ -456,6 +479,18 @@ export async function checkFriendStatus(friendId) {
   });
   if (!response.ok) {
     await throwHttpError(response, "Failed to check friend status");
+  }
+  return response.json();
+}
+
+export async function updateFriendEndpoint(friendId, publicUrl) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/endpoint`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ public_url: publicUrl }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to update friend endpoint");
   }
   return response.json();
 }

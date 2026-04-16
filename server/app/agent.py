@@ -9,6 +9,8 @@ from itertools import cycle
 from typing import Any, List, Optional, Iterator, AsyncIterator
 from collections.abc import Generator
 
+import httpx
+from openai import APIConnectionError
 
 from langchain.agents import create_agent
 from langchain_groq import ChatGroq
@@ -263,6 +265,7 @@ class AgentManager:
         self._current_stream: Optional[Generator] = None
         self._checkpointer: Optional[AsyncSqliteSaver] = None
         self._checkpointer_cm : Optional[Any] = None
+        self._init_lock = asyncio.Lock()
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._store: Optional[Any] = None
         self._current_chat_mode: Optional[str] = None
@@ -853,15 +856,21 @@ class AgentManager:
         if self._agent is not None:
             return True
 
-        # If we don't even have the necessary configuration, do not attempt
-        # a full init here – callers can still inspect is_configured.
-        if not self.is_configured:
-            return False
+        # Serialize initialization to avoid concurrent heavy inits from
+        # parallel health checks right after reload/startup.
+        async with self._init_lock:
+            if self._agent is not None:
+                return True
 
-        # Attempt initialization; any internal failures are handled by the
-        # existing _initialize_agent_async logic.
-        await self._initialize_agent_async()
-        return self._agent is not None
+            # If we don't even have the necessary configuration, do not attempt
+            # a full init here – callers can still inspect is_configured.
+            if not self.is_configured:
+                return False
+
+            # Attempt initialization; any internal failures are handled by the
+            # existing _initialize_agent_async logic.
+            await self._initialize_agent_async()
+            return self._agent is not None
     
     async def get_pending_interrupt(self, thread_id: str) -> Optional[dict]:
         """Fetch pending interrupt for a thread if it exists"""
@@ -1125,6 +1134,12 @@ class AgentManager:
         except asyncio.CancelledError:
             logger.info(f"Stream for thread_id={thread_id} was cancelled")
             raise
+        except APIConnectionError as e:
+            logger.warning("Model provider connection failed for thread_id=%s: %s", thread_id, e)
+            raise RuntimeError("upstream_connection_error") from e
+        except httpx.ConnectError as e:
+            logger.warning("HTTP connection failed for thread_id=%s: %s", thread_id, e)
+            raise RuntimeError("upstream_connection_error") from e
         except Exception as e:
             logger.error(f"Error in agent stream: {e}", exc_info=True)
             raise

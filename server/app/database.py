@@ -714,6 +714,18 @@ def get_friend_by_device_id(device_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def delete_friend(friend_id: str) -> bool:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM friend_thread_approvals WHERE friend_id = ?", (friend_id,))
+    cursor.execute("DELETE FROM friends WHERE id = ?", (friend_id,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
 def has_friend_thread_approval(thread_id: str, friend_id: str) -> bool:
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
@@ -742,3 +754,21 @@ def approve_friend_for_thread(thread_id: str, friend_id: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def update_friend_public_url(friend_id: str, public_url: Optional[str]) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    normalized_url = (public_url or "").strip() or None
+    cursor.execute(
+        "UPDATE friends SET public_url = ?, updated_at = ? WHERE id = ?",
+        (normalized_url, now, friend_id),
+    )
+    conn.commit()
+    cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None

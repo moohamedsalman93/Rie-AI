@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, askFriend } from "./services/chatApi";
 import { saveThreadId, getStoredThreadId } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
@@ -612,6 +612,17 @@ function MainApp() {
     const performSend = async (imageToUse = imageToUseFromState) => {
       const threadId = threadIdRef.current;
       lastTurnWasVoiceRef.current = isVoice;
+      const friendTarget = selectedFriendByThread[threadId] || null;
+      const escapedFriendName = friendTarget?.name
+        ? friendTarget.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        : "";
+      const friendCommandRegex = escapedFriendName
+        ? new RegExp(`^\\s*\\/${escapedFriendName}\\b\\s*(.*)$`, "i")
+        : null;
+      const friendCommandMatch = friendCommandRegex ? trimmed.match(friendCommandRegex) : null;
+      const friendDirectQuery = friendCommandMatch?.[1]?.trim() || "";
+      const isDirectFriendAsk = Boolean(friendTarget?.id && friendCommandMatch && friendDirectQuery);
+
       const userMessage = {
         id: Date.now(),
         from: "user",
@@ -655,6 +666,13 @@ function MainApp() {
       const controller = new AbortController();
       abortControllersRef.current[threadId] = controller;
       const signal = controller.signal;
+      const toConnectivityHint = (message) => {
+        const text = (message || "").toLowerCase();
+        if (text.includes("[auth_failed]")) return "Peer rejected authentication. Re-run pairing or finalize on receiver.";
+        if (text.includes("[timeout]")) return "Peer request timed out. Confirm receiver app is running and endpoint is reachable.";
+        if (text.includes("[unreachable]")) return "Peer endpoint unreachable. Update the friend's endpoint in Connectivity settings.";
+        return message || "Connection failed";
+      };
       const resetFailedTurn = (errorMessage = null) => {
         if (errorMessage) {
           setError(errorMessage);
@@ -673,7 +691,42 @@ function MainApp() {
 
       try {
         const token = localStorage.getItem('rie_token');
-        const friendTarget = selectedFriendByThread[threadId] || null;
+        if (isDirectFriendAsk) {
+          try {
+            const reply = await askFriend(friendTarget.id, friendDirectQuery);
+            const friendMessage = reply?.message?.trim()
+              ? `${friendTarget.name}: ${reply.message}`
+              : `${friendTarget.name}: No response`;
+            setSessions((prev) => {
+              const newSessions = { ...prev };
+              if (newSessions[threadId]) {
+                newSessions[threadId] = newSessions[threadId].map((m) => {
+                  if (m.id === botMessageId) {
+                    return {
+                      ...m,
+                      text: friendMessage,
+                      blocks: [{ type: "text", text: friendMessage }],
+                    };
+                  }
+                  return m;
+                });
+              }
+              return newSessions;
+            });
+            setStreamingThreads(prev => {
+              const next = new Set(prev);
+              next.delete(threadId);
+              return next;
+            });
+            setCurrentTool(null);
+            delete abortControllersRef.current[threadId];
+            return;
+          } catch (friendErr) {
+            resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
+            return;
+          }
+        }
+
         if (friendTarget?.id) {
           const approval = await getFriendApproval(friendTarget.id, threadId);
           if (!approval?.approved) {
@@ -706,7 +759,7 @@ function MainApp() {
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
           },
           (err) => {
-            setError(err.message || "Connection failed");
+            setError(toConnectivityHint(err.message));
             setStreamingThreads(prev => {
               const next = new Set(prev);
               next.delete(threadId);
@@ -727,7 +780,7 @@ function MainApp() {
         );
       } catch (err) {
         console.error("Chat error:", err);
-        resetFailedTurn(err?.message || "Connection failed");
+        resetFailedTurn(toConnectivityHint(err?.message));
       } finally {
         setIsCapturing(false);
       }

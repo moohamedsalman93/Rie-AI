@@ -292,6 +292,24 @@ class PairingConfirmRequest(BaseModel):
     peer_public_url: Optional[str] = None
 
 
+class PairingFinalizeRequest(BaseModel):
+    peer_name: str
+    peer_device_id: str
+    peer_fingerprint: str
+    peer_public_key: str
+    peer_public_url: Optional[str] = None
+
+
+class PairingConfirmResponse(BaseModel):
+    friend: FriendRecord
+    reciprocal_synced: bool = False
+    reciprocal_status: str = "not_attempted"
+    reciprocal_code: Optional[str] = None
+    reciprocal_message: Optional[str] = None
+    finalize_endpoint: Optional[str] = None
+    finalize_payload: Optional[PairingFinalizeRequest] = None
+
+
 class PeerAskRequest(BaseModel):
     friend_id: str
     query: str
@@ -307,6 +325,7 @@ class PeerAskResponse(BaseModel):
     status: str
     message: str
     responder_device_id: Optional[str] = None
+    responder_public_url: Optional[str] = None
 
 
 class FriendStatusResponse(BaseModel):
@@ -316,10 +335,16 @@ class FriendStatusResponse(BaseModel):
     latency_ms: Optional[int] = None
     message: str
     checked_at: str
+    failure_code: Optional[str] = None
+    failure_stage: Optional[str] = None
 
 
 class FriendApprovalRequest(BaseModel):
     thread_id: str
+
+
+class FriendEndpointUpdateRequest(BaseModel):
+    public_url: str
 
 
 class NgrokInstallRequest(BaseModel):

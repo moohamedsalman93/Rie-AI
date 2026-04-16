@@ -72,8 +72,18 @@ async def startup_event():
 async def shutdown_event():
     """Clean up MCP sessions and scheduler on app shutdown"""
     logger.info("Shutting down, cleaning up...")
-    await mcp_manager.cleanup()
-    scheduler_manager.shutdown()
+    # Avoid hanging uvicorn reload if a cleanup routine blocks.
+    try:
+        await asyncio.wait_for(mcp_manager.cleanup(), timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("Timed out while cleaning up MCP sessions during shutdown.")
+    except Exception:
+        logger.exception("Unexpected error while cleaning up MCP sessions.")
+
+    try:
+        scheduler_manager.shutdown()
+    except Exception:
+        logger.exception("Unexpected error while shutting down scheduler.")
 
 # Configure CORS middleware
 app.add_middleware(

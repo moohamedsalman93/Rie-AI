@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok } from '../services/chatApi';
+import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, updateFriendEndpoint, removeFriend } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import {
   MessageSquare,
@@ -117,9 +117,14 @@ export function SettingsPage({ onClose }) {
   const [pairModalOpen, setPairModalOpen] = useState(false);
   const [friendStatusById, setFriendStatusById] = useState({});
   const [checkingFriendId, setCheckingFriendId] = useState(null);
+  const [removingFriendId, setRemovingFriendId] = useState(null);
   const [connectivityRefreshing, setConnectivityRefreshing] = useState(false);
   const [pairTokenCopied, setPairTokenCopied] = useState(false);
   const [pairPayloadCopied, setPairPayloadCopied] = useState(false);
+  const [pairConfirmResult, setPairConfirmResult] = useState(null);
+  const [receiverFinalizePayload, setReceiverFinalizePayload] = useState('');
+  const [editingFriendEndpointId, setEditingFriendEndpointId] = useState(null);
+  const [friendEndpointDraftById, setFriendEndpointDraftById] = useState({});
 
   // Rie Auth State
   // Rie Auth State
@@ -370,6 +375,9 @@ export function SettingsPage({ onClose }) {
       ]);
       setConnectivityIdentity(identityData);
       setFriends(Array.isArray(friendsData) ? friendsData : []);
+      setFriendEndpointDraftById(
+        Object.fromEntries((Array.isArray(friendsData) ? friendsData : []).map((item) => [item.id, item.public_url || '']))
+      );
       setNgrokStatus(tunnelStatus);
       setNgrokReadyState(tunnelStatus?.ready_state || 'not_ready');
     } catch (err) {
@@ -444,6 +452,7 @@ export function SettingsPage({ onClose }) {
 
   const handleInitPairing = async () => {
     try {
+      setPairConfirmResult(null);
       const result = await initPairing(settings.connectivity_device_name || connectivityIdentity?.name || null);
       setPairingToken(result.pairing_token || '');
       setConnectivityIdentity(result.identity || null);
@@ -485,11 +494,24 @@ export function SettingsPage({ onClose }) {
   const handleConfirmPairing = async () => {
     try {
       const parsed = JSON.parse(pairingPayload || '{}');
-      await confirmPairing(parsed);
-      setPairingPayload('');
+      const result = await confirmPairing(parsed);
+      setPairConfirmResult(result || null);
+      setPairingPayload(result?.reciprocal_synced ? '' : pairingPayload);
       await loadConnectivityData();
     } catch (err) {
       setError(`Failed to confirm pairing: ${err.message}`);
+    }
+  };
+
+  const handleReceiverFinalize = async () => {
+    try {
+      const parsed = JSON.parse(receiverFinalizePayload || '{}');
+      await finalizePairing(parsed);
+      setReceiverFinalizePayload('');
+      await loadConnectivityData();
+      setPairModalOpen(false);
+    } catch (err) {
+      setError(`Failed to finalize pairing on this device: ${err.message}`);
     }
   };
 
@@ -498,6 +520,8 @@ export function SettingsPage({ onClose }) {
     setPairingMode('sender');
     setPairTokenCopied(false);
     setPairPayloadCopied(false);
+    setPairConfirmResult(null);
+    setReceiverFinalizePayload('');
   };
 
   const handleCheckFriendStatus = async (friendId) => {
@@ -512,6 +536,50 @@ export function SettingsPage({ onClose }) {
       }));
     } finally {
       setCheckingFriendId(null);
+    }
+  };
+
+  const handleUpdateFriendEndpoint = async (friendId) => {
+    const draft = (friendEndpointDraftById[friendId] || '').trim();
+    if (!draft) {
+      setError('Endpoint URL cannot be empty.');
+      return;
+    }
+    try {
+      setEditingFriendEndpointId(friendId);
+      await updateFriendEndpoint(friendId, draft);
+      await loadConnectivityData();
+      setFriendStatusById((prev) => ({ ...prev, [friendId]: undefined }));
+    } catch (err) {
+      setError(`Failed to update endpoint: ${err.message}`);
+    } finally {
+      setEditingFriendEndpointId(null);
+    }
+  };
+
+  const handleRemoveFriend = async (friendId, friendName) => {
+    const displayName = (friendName || "this paired device").trim() || "this paired device";
+    const confirmed = window.confirm(`Remove pairing with ${displayName}?`);
+    if (!confirmed) return;
+
+    try {
+      setRemovingFriendId(friendId);
+      await removeFriend(friendId);
+      setFriendStatusById((prev) => {
+        const next = { ...prev };
+        delete next[friendId];
+        return next;
+      });
+      setFriendEndpointDraftById((prev) => {
+        const next = { ...prev };
+        delete next[friendId];
+        return next;
+      });
+      await loadConnectivityData();
+    } catch (err) {
+      setError(`Failed to remove pairing: ${err.message}`);
+    } finally {
+      setRemovingFriendId(null);
     }
   };
 
@@ -1389,12 +1457,45 @@ key2,
                                   <div className="text-neutral-200">{statusRow?.checked_at ? new Date(statusRow.checked_at).toLocaleString() : '-'}</div>
                                 </div>
                               </div>
+                              {statusRow?.failure_code && (
+                                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-100">
+                                  <span className="font-semibold">Issue:</span> {statusRow.failure_code}
+                                  {statusRow?.failure_stage ? ` (${statusRow.failure_stage})` : ''}
+                                </div>
+                              )}
+                              <div className="space-y-2">
+                                <div className="text-[11px] text-neutral-500">Endpoint Override</div>
+                                <div className="flex gap-2">
+                                  <input
+                                    value={friendEndpointDraftById[friend.id] || ''}
+                                    onChange={(e) => setFriendEndpointDraftById((prev) => ({ ...prev, [friend.id]: e.target.value }))}
+                                    className="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-1.5 text-[11px] text-neutral-200"
+                                    placeholder="https://your-peer-url.ngrok-free.app"
+                                  />
+                                  <button
+                                    onClick={() => handleUpdateFriendEndpoint(friend.id)}
+                                    disabled={editingFriendEndpointId === friend.id}
+                                    className="px-2 py-1.5 rounded-lg border border-neutral-700 text-[11px] text-neutral-200 hover:border-neutral-500 disabled:opacity-60 cursor-pointer"
+                                  >
+                                    {editingFriendEndpointId === friend.id ? 'Saving...' : 'Save'}
+                                  </button>
+                                </div>
+                              </div>
 
-                              <div className="flex justify-end">
+                              <div className="flex justify-end gap-2">
+                                <motion.button
+                                  whileTap={{ scale: 0.97 }}
+                                  onClick={() => handleRemoveFriend(friend.id, friend.name)}
+                                  disabled={removingFriendId === friend.id}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white text-xs font-medium cursor-pointer transition-colors"
+                                >
+                                  <Trash2 size={13} />
+                                  {removingFriendId === friend.id ? 'Removing...' : 'Remove Pair'}
+                                </motion.button>
                                 <motion.button
                                   whileTap={{ scale: 0.97 }}
                                   onClick={() => handleCheckFriendStatus(friend.id)}
-                                  disabled={checkingFriendId === friend.id}
+                                  disabled={checkingFriendId === friend.id || removingFriendId === friend.id}
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-xs font-medium cursor-pointer transition-colors"
                                 >
                                   <RefreshCw size={13} className={checkingFriendId === friend.id ? "animate-spin" : ""} />
@@ -2177,6 +2278,28 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     className="w-full h-32 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
                     placeholder='Paste payload JSON from Device B, then click "Confirm Pairing"'
                   />
+                  {pairConfirmResult && (
+                    <div className={`rounded-lg border px-3 py-2 text-xs ${
+                      pairConfirmResult.reciprocal_synced
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
+                        : 'border-amber-500/40 bg-amber-500/10 text-amber-100'
+                    }`}>
+                      <div className="font-semibold">
+                        {pairConfirmResult.reciprocal_synced ? 'Paired on both devices' : 'Only local pairing saved'}
+                      </div>
+                      <div className="mt-1">{pairConfirmResult.reciprocal_message || 'No message available.'}</div>
+                      {!pairConfirmResult.reciprocal_synced && pairConfirmResult.finalize_payload && (
+                        <div className="mt-2 space-y-2">
+                          <div className="text-[11px] text-amber-200">Send this finalize payload to Device B and import it there:</div>
+                          <textarea
+                            readOnly
+                            value={JSON.stringify(pairConfirmResult.finalize_payload, null, 2)}
+                            className="w-full h-28 bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-2 text-[11px] text-neutral-200"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-lg border border-neutral-700 bg-neutral-900/50 p-3 space-y-2">
@@ -2216,6 +2339,22 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     className="w-full h-32 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
                     placeholder='Generated payload appears here. Send this JSON to Device A.'
                   />
+                  <div className="pt-2 border-t border-neutral-700/70 space-y-2">
+                    <div className="text-xs font-semibold text-neutral-200">Manual Finalize (fallback)</div>
+                    <textarea
+                      value={receiverFinalizePayload}
+                      onChange={(e) => setReceiverFinalizePayload(e.target.value)}
+                      className="w-full h-28 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
+                      placeholder='If Device A reports reciprocal sync failed, paste finalize payload JSON here and click Finalize on this Device B.'
+                    />
+                    <button
+                      onClick={handleReceiverFinalize}
+                      disabled={!receiverFinalizePayload.trim()}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
+                    >
+                      Finalize On This Device
+                    </button>
+                  </div>
                 </div>
               )}
               <div className="flex justify-end gap-2">
@@ -2223,10 +2362,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                 {pairingMode === 'sender' ? (
                   <motion.button
                     whileTap={{ scale: 0.97 }}
-                    onClick={async () => {
-                      await handleConfirmPairing();
-                      setPairModalOpen(false);
-                    }}
+                    onClick={handleConfirmPairing}
                     disabled={!pairingPayload.trim()}
                     className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
                   >

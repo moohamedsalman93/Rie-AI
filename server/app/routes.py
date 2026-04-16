@@ -18,10 +18,11 @@ from app.models import (
     CancelRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
     ScheduleTaskRequest, ScheduledTaskResponse, ScheduleNotificationItem,
     SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
-    DeviceIdentity, FriendRecord, PairingRequest, PairingInitResponse, PairingConfirmRequest, PeerAskRequest, PeerReceiveRequest, PeerAskResponse,
+    DeviceIdentity, FriendRecord, PairingRequest, PairingInitResponse, PairingConfirmRequest, PairingConfirmResponse, PeerAskRequest, PeerReceiveRequest, PeerAskResponse,
+    PairingFinalizeRequest,
     FriendStatusResponse,
     NgrokInstallRequest, NgrokInstallResponse, NgrokStatusResponse,
-    FriendApprovalRequest,
+    FriendApprovalRequest, FriendEndpointUpdateRequest,
 )
 from app.agent import agent_manager
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
@@ -51,8 +52,10 @@ from app.database import (
     list_friends,
     get_friend_by_id,
     get_friend_by_device_id,
+    delete_friend,
     has_friend_thread_approval,
     approve_friend_for_thread,
+    update_friend_public_url,
 )
 from app.connectivity.manager import connectivity_manager
 from app.connectivity.ngrok_installer import (
@@ -624,6 +627,59 @@ def _identity_payload() -> Dict[str, Any]:
     }
 
 
+def _normalize_public_url(value: Optional[str]) -> Optional[str]:
+    normalized = (value or "").strip()
+    return normalized or None
+
+
+def _peer_error_code(status_code: int) -> str:
+    if status_code in (401, 403):
+        return "auth_failed"
+    if status_code == 404:
+        return "endpoint_not_found"
+    if status_code == 422:
+        return "invalid_payload"
+    if status_code >= 500:
+        return "peer_server_error"
+    return "peer_rejected"
+
+
+def _extract_peer_assistant_text(agent_result: Any) -> str:
+    """
+    Best-effort extraction of assistant text from agent invoke output.
+    """
+    if isinstance(agent_result, str):
+        return agent_result.strip()
+    if not isinstance(agent_result, dict):
+        return ""
+
+    messages = agent_result.get("messages")
+    if not isinstance(messages, list):
+        return ""
+
+    for msg in reversed(messages):
+        if not isinstance(msg, dict):
+            continue
+        msg_type = str(msg.get("type", "")).lower()
+        role = str(msg.get("role", "")).lower()
+        if msg_type not in {"ai", "assistant"} and role not in {"assistant"}:
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        text_parts.append(text.strip())
+            if text_parts:
+                return "\n".join(text_parts)
+
+    return ""
+
+
 @router.get("/connectivity/identity", response_model=DeviceIdentity)
 async def get_connectivity_identity():
     return DeviceIdentity(**_identity_payload())
@@ -641,10 +697,78 @@ async def connectivity_pair_init(data: PairingRequest):
     )
 
 
-@router.post("/connectivity/pair/confirm", response_model=FriendRecord)
+@router.post("/connectivity/pair/confirm", response_model=PairingConfirmResponse)
 async def connectivity_pair_confirm(data: PairingConfirmRequest):
     if not consume_pairing_token(data.pairing_token):
         raise HTTPException(status_code=400, detail="Invalid or expired pairing token")
+    peer_public_url = _normalize_public_url(data.peer_public_url)
+    friend = upsert_friend(
+        name=data.peer_name.strip(),
+        device_id=data.peer_device_id.strip(),
+        fingerprint=data.peer_fingerprint.strip(),
+        public_key=data.peer_public_key.strip(),
+        public_url=peer_public_url,
+    )
+    local_identity = _identity_payload()
+    finalize_payload = PairingFinalizeRequest(
+        peer_name=local_identity["name"],
+        peer_device_id=local_identity["device_id"],
+        peer_fingerprint=local_identity["fingerprint"],
+        peer_public_key=local_identity["public_key"],
+        peer_public_url=local_identity.get("public_url"),
+    )
+    finalize_endpoint = f"{peer_public_url.rstrip('/')}/connectivity/pair/finalize" if peer_public_url else None
+
+    reciprocal_synced = False
+    reciprocal_status = "not_attempted"
+    reciprocal_code: Optional[str] = None
+    reciprocal_message: Optional[str] = None
+
+    if not peer_public_url:
+        reciprocal_status = "skipped"
+        reciprocal_code = "missing_peer_public_url"
+        reciprocal_message = "Peer public URL is missing; open Receiver and import finalize payload manually."
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    finalize_endpoint,
+                    json=finalize_payload.model_dump(),
+                )
+            if response.status_code >= 400:
+                reciprocal_status = "failed"
+                reciprocal_code = _peer_error_code(response.status_code)
+                reciprocal_message = f"Peer finalize failed ({response.status_code})"
+            else:
+                reciprocal_synced = True
+                reciprocal_status = "synced"
+                reciprocal_message = "Friend saved on both devices."
+        except httpx.TimeoutException:
+            reciprocal_status = "failed"
+            reciprocal_code = "timeout"
+            reciprocal_message = "Timed out reaching peer finalize endpoint."
+        except httpx.ConnectError:
+            reciprocal_status = "failed"
+            reciprocal_code = "unreachable"
+            reciprocal_message = "Could not connect to peer finalize endpoint."
+        except Exception as exc:
+            reciprocal_status = "failed"
+            reciprocal_code = "network_error"
+            reciprocal_message = f"Peer finalize failed: {exc}"
+
+    return PairingConfirmResponse(
+        friend=FriendRecord(**friend),
+        reciprocal_synced=reciprocal_synced,
+        reciprocal_status=reciprocal_status,
+        reciprocal_code=reciprocal_code,
+        reciprocal_message=reciprocal_message,
+        finalize_endpoint=finalize_endpoint,
+        finalize_payload=finalize_payload,
+    )
+
+
+@router.post("/connectivity/pair/finalize", response_model=FriendRecord)
+async def connectivity_pair_finalize(data: PairingFinalizeRequest):
     friend = upsert_friend(
         name=data.peer_name.strip(),
         device_id=data.peer_device_id.strip(),
@@ -658,6 +782,17 @@ async def connectivity_pair_confirm(data: PairingConfirmRequest):
 @router.get("/connectivity/friends", response_model=List[FriendRecord])
 async def connectivity_friends():
     return [FriendRecord(**item) for item in list_friends()]
+
+
+@router.delete("/connectivity/friends/{friend_id}")
+async def connectivity_friend_delete(friend_id: str):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    deleted = delete_friend(friend_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    return {"status": "success", "friend_id": friend_id}
 
 
 @router.post("/connectivity/friends/{friend_id}/ask", response_model=PeerAskResponse)
@@ -682,22 +817,24 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     }
 
     try:
-        request_headers: Dict[str, str] = {}
-        if settings.RIE_ACCESS_TOKEN:
-            request_headers["X-Rie-App-Token"] = settings.RIE_ACCESS_TOKEN
         async with httpx.AsyncClient(timeout=12.0) as client:
-            response = await client.post(
-                endpoint,
-                json=payload,
-                headers=request_headers,
-            )
+            response = await client.post(endpoint, json=payload)
             if response.status_code >= 400:
-                raise HTTPException(status_code=502, detail=f"Peer call failed ({response.status_code})")
+                detail = f"Peer ask failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                raise HTTPException(status_code=502, detail=detail)
             body = response.json()
     except HTTPException:
         raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=502, detail="Peer ask timed out [timeout]") from exc
+    except httpx.ConnectError as exc:
+        raise HTTPException(status_code=502, detail="Peer ask endpoint unreachable [unreachable]") from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to reach peer: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Failed to reach peer [network_error]: {exc}") from exc
+
+    responder_url = _normalize_public_url(str(body.get("responder_public_url") or ""))
+    if responder_url and responder_url != friend.get("public_url"):
+        update_friend_public_url(friend_id, responder_url)
 
     return PeerAskResponse(
         status=str(body.get("status", "online")),
@@ -722,6 +859,8 @@ async def connectivity_friend_status(friend_id: str):
             latency_ms=None,
             message=str(exc),
             checked_at=checked_at,
+            failure_code="resolve_failed",
+            failure_stage="resolve_peer",
         )
 
     source_identity = _identity_payload()
@@ -731,23 +870,26 @@ async def connectivity_friend_status(friend_id: str):
         "from_fingerprint": source_identity["fingerprint"],
         "query": "status_ping",
     }
-    headers: Dict[str, str] = {}
-    if settings.RIE_ACCESS_TOKEN:
-        headers["X-Rie-App-Token"] = settings.RIE_ACCESS_TOKEN
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.post(endpoint, json=payload, headers=headers)
+            response = await client.post(endpoint, json=payload)
             if response.status_code >= 400:
+                code = _peer_error_code(response.status_code)
                 return FriendStatusResponse(
                     friend_id=friend_id,
                     reachable=False,
                     status="offline",
                     latency_ms=int((time.perf_counter() - started) * 1000),
-                    message=f"Peer call failed ({response.status_code})",
+                    message=f"Peer call failed ({response.status_code}) [{code}]",
                     checked_at=checked_at,
+                    failure_code=code,
+                    failure_stage="peer_receive",
                 )
             body = response.json()
+        responder_url = _normalize_public_url(str(body.get("responder_public_url") or ""))
+        if responder_url and responder_url != friend.get("public_url"):
+            update_friend_public_url(friend_id, responder_url)
         return FriendStatusResponse(
             friend_id=friend_id,
             reachable=True,
@@ -755,6 +897,30 @@ async def connectivity_friend_status(friend_id: str):
             latency_ms=int((time.perf_counter() - started) * 1000),
             message=str(body.get("message", "reachable")),
             checked_at=checked_at,
+            failure_code=None,
+            failure_stage=None,
+        )
+    except httpx.TimeoutException:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message="Peer call timed out",
+            checked_at=checked_at,
+            failure_code="timeout",
+            failure_stage="network",
+        )
+    except httpx.ConnectError:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message="Peer endpoint unreachable",
+            checked_at=checked_at,
+            failure_code="unreachable",
+            failure_stage="network",
         )
     except Exception as exc:
         return FriendStatusResponse(
@@ -764,6 +930,8 @@ async def connectivity_friend_status(friend_id: str):
             latency_ms=int((time.perf_counter() - started) * 1000),
             message=f"Failed to reach peer: {exc}",
             checked_at=checked_at,
+            failure_code="network_error",
+            failure_stage="network",
         )
 
 
@@ -774,11 +942,65 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
         raise HTTPException(status_code=403, detail="Unknown peer")
     if friend["fingerprint"] != data.from_fingerprint:
         raise HTTPException(status_code=403, detail="Fingerprint mismatch")
+    identity = _identity_payload()
+    query = (data.query or "").strip()
+
+    # Keep status checks lightweight: do not route health probes through model inference.
+    if query == "status_ping":
+        return PeerAskResponse(
+            status="online",
+            message="reachable",
+            responder_device_id=identity["device_id"],
+            responder_public_url=identity.get("public_url"),
+        )
+
+    # Run a local lightweight generation so peer chat returns an actual answer.
+    local_thread_id = f"peer:{data.from_device_id}"
+    peer_query = query
+    if not peer_query:
+        peer_query = "Hello"
+
+    try:
+        if not agent_manager.is_configured:
+            raise HTTPException(status_code=503, detail="Receiver agent is not configured")
+
+        agent_result = await agent_manager.invoke(
+            messages=[{"role": "user", "content": peer_query}],
+            thread_id=local_thread_id,
+            chat_mode="chat",
+            speed_mode="flash",
+        )
+        reply_text = _extract_peer_assistant_text(agent_result) or "I received your message but could not generate a reply."
+    except HTTPException:
+        raise
+    except httpx.ConnectError as exc:
+        raise HTTPException(status_code=503, detail=f"Receiver model provider is unreachable [unreachable]: {exc}") from exc
+    except Exception as exc:
+        detail = str(exc).lower()
+        if "upstream_connection_error" in detail or "connection error" in detail:
+            raise HTTPException(status_code=503, detail="Receiver model provider is unreachable [unreachable]") from exc
+        if "agent not configured" in detail:
+            raise HTTPException(status_code=503, detail="Receiver agent is not configured") from exc
+        logging.error(f"Peer receive generation failed: {exc}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Receiver failed to generate response [peer_server_error]: {exc}") from exc
+
     return PeerAskResponse(
         status="online",
-        message=f"Received query: {data.query}",
-        responder_device_id=_identity_payload()["device_id"],
+        message=reply_text,
+        responder_device_id=identity["device_id"],
+        responder_public_url=identity.get("public_url"),
     )
+
+
+@router.post("/connectivity/friends/{friend_id}/endpoint", response_model=FriendRecord)
+async def connectivity_friend_endpoint_update(friend_id: str, data: FriendEndpointUpdateRequest):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    updated = update_friend_public_url(friend_id, data.public_url)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    return FriendRecord(**updated)
 
 
 @router.get("/connectivity/friends/{friend_id}/approval")
@@ -935,23 +1157,17 @@ async def root():
     """
     Root endpoint - health check and configuration status
     """
-    agent_ready = False
+    agent_ready = agent_manager.agent is not None
+    agent_configured = agent_manager.is_configured
 
-    # Eagerly initialize the agent when the backend is probed for health.
-    # This avoids the situation where the very first /chat/stream call in
-    # a fresh process has to pay the full initialization cost (and may
-    # appear to "do nothing" on the client) even though the health check
-    # has already succeeded.
-    try:
-        if agent_manager.is_configured:
-            agent_ready = await agent_manager.ensure_initialized()
-    except Exception as e:
-        logging.error(f"Agent initialization during health check failed: {e}")
-        agent_ready = False
+    # Keep health checks fast/non-blocking so uvicorn reload is never held up
+    # by expensive agent initialization under heavy frontend polling.
+    if agent_configured and not agent_ready:
+        asyncio.create_task(agent_manager.ensure_initialized())
 
     return HealthResponse(
         message="Welcome to Rie BE Chat API",
-        agent_configured=agent_ready,
+        agent_configured=agent_configured,
         tavily_configured=settings.has_tavily_key
     )
 
@@ -1308,6 +1524,22 @@ async def _agent_stream_generator(
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Stream generator started for thread_id={thread_id}")
+
+    def _classify_stream_error(exc: Exception) -> tuple[str, str]:
+        message = str(exc) or "unknown_error"
+        lowered = message.lower()
+        if "upstream_connection_error" in lowered:
+            return (
+                "upstream_connection_error",
+                "Cannot reach the configured model provider. Check internet, base URL, and provider service status.",
+            )
+        if "connect" in lowered and "error" in lowered:
+            return (
+                "upstream_connection_error",
+                "Network connection to the model provider failed. Please retry.",
+            )
+        return ("internal_stream_error", message)
+
     try:
         from app.terminal_stream import streamer
         term_queue = streamer.get_queue(thread_id)
@@ -1408,9 +1640,13 @@ async def _agent_stream_generator(
             except asyncio.CancelledError:
                 logger.info("Agent consumption cancelled")
             except Exception as e:
-                logger.error(f"Stream generator crashed: {e}", exc_info=True)
+                code, details = _classify_stream_error(e)
+                if code == "upstream_connection_error":
+                    logger.warning(f"Stream generator upstream connection issue: {e}")
+                else:
+                    logger.error(f"Stream generator crashed: {e}", exc_info=True)
                 # Attempt to yield error to client if possible
-                err_payload = {"error": "Internal stream error", "details": str(e)}
+                err_payload = {"error": code, "details": details}
                 await sse_queue.put(f"data: {json.dumps(err_payload, default=str)}\n\n")
             finally:
                 await sse_queue.put(None) # Signal completion
@@ -1439,8 +1675,12 @@ async def _agent_stream_generator(
         logger.info("Stream generator cancelled by client")
         raise
     except Exception as e:
-        logger.error(f"Outer stream generator crashed: {e}", exc_info=True)
-        err_payload = {"error": "Internal stream error", "details": str(e)}
+        code, details = _classify_stream_error(e)
+        if code == "upstream_connection_error":
+            logger.warning(f"Outer stream generator upstream connection issue: {e}")
+        else:
+            logger.error(f"Outer stream generator crashed: {e}", exc_info=True)
+        err_payload = {"error": code, "details": details}
         yield f"data: {json.dumps(err_payload, default=str)}\n\n"
     finally:
         agent_task.cancel()
