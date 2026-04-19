@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -50,6 +51,15 @@ function parseTodoContent(raw) {
 export const ToolChip = ({ name, content }) => {
     const [showPopup, setShowPopup] = useState(false);
     const hideTimeoutRef = useRef(null);
+    const triggerRef = useRef(null);
+    const [popupPos, setPopupPos] = useState({ top: 0, left: 0 });
+
+    const updatePopupPosition = useCallback(() => {
+        const el = triggerRef.current;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        setPopupPos({ top: r.bottom + 4, left: r.left });
+    }, []);
 
     const show = () => {
         if (hideTimeoutRef.current) {
@@ -62,6 +72,22 @@ export const ToolChip = ({ name, content }) => {
     const hide = () => {
         hideTimeoutRef.current = setTimeout(() => setShowPopup(false), HOVER_DELAY_MS);
     };
+
+    useLayoutEffect(() => {
+        if (!showPopup) return;
+        updatePopupPosition();
+    }, [showPopup, updatePopupPosition]);
+
+    useEffect(() => {
+        if (!showPopup) return;
+        const onScrollOrResize = () => updatePopupPosition();
+        window.addEventListener("scroll", onScrollOrResize, true);
+        window.addEventListener("resize", onScrollOrResize);
+        return () => {
+            window.removeEventListener("scroll", onScrollOrResize, true);
+            window.removeEventListener("resize", onScrollOrResize);
+        };
+    }, [showPopup, updatePopupPosition]);
 
     // Helper to format the tool name
     const formatToolName = (name) => {
@@ -76,12 +102,69 @@ export const ToolChip = ({ name, content }) => {
     const isWriteTodos = name && (name.toLowerCase() === "write_todos" || name.toLowerCase() === "write todos");
     const todoItems = isWriteTodos ? parseTodoContent(content) : null;
 
+    const popupNode = (
+        <AnimatePresence>
+            {showPopup && (
+                <motion.div
+                    initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                    transition={{ duration: 0.15 }}
+                    style={{ top: popupPos.top, left: popupPos.left }}
+                    className="fixed z-[1000] min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-64 overflow-y-auto"
+                    onMouseEnter={show}
+                    onMouseLeave={hide}
+                >
+                    {todoItems ? (
+                        <div>
+                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-neutral-700/50">
+                                <svg className="shrink-0 text-neutral-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="8" y1="6" x2="21" y2="6" />
+                                    <line x1="8" y1="12" x2="21" y2="12" />
+                                    <line x1="8" y1="18" x2="21" y2="18" />
+                                    <circle cx="4" cy="6" r="1.5" fill="currentColor" />
+                                    <circle cx="4" cy="12" r="1.5" fill="currentColor" />
+                                    <circle cx="4" cy="18" r="1.5" fill="currentColor" />
+                                </svg>
+                                <span className="text-xs font-medium text-neutral-400">To-dos {todoItems.length}</span>
+                            </div>
+                            <ul className="space-y-1.5 list-none p-0 m-0">
+                                {todoItems.map((item, i) => (
+                                    <li key={i} className="flex items-start gap-2">
+                                        <span className="shrink-0 mt-0.5 text-neutral-500">
+                                            {item.status === "completed" ? (
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                    <circle cx="12" cy="12" r="10" />
+                                                    <path d="M8 12l3 3 5-6" />
+                                                </svg>
+                                            ) : (
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                    <circle cx="12" cy="12" r="10" />
+                                                    <line x1="15" y1="9" x2="9" y2="15" />
+                                                    <line x1="9" y1="9" x2="15" y2="15" />
+                                                </svg>
+                                            )}
+                                        </span>
+                                        <span className="text-[11px] text-neutral-500/90 leading-snug">{item.content}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    ) : (
+                        <MarkdownMessage content={content} />
+                    )}
+                </motion.div>
+            )}
+        </AnimatePresence>
+    );
+
     return (
-        <div className="relative inline-flex flex-col my-1">
+        <div className="inline-flex flex-col my-1">
             <span
+                ref={triggerRef}
                 onMouseEnter={show}
                 onMouseLeave={hide}
-                className="group relative inline-flex items-center gap-1.5 cursor-default"
+                className="group inline-flex items-center gap-1.5 cursor-default"
             >
                 <span className="text-[10px] font-medium text-neutral-500/70 tracking-wide truncate">
                     {formatToolName(name)}
@@ -105,58 +188,7 @@ export const ToolChip = ({ name, content }) => {
                 </span>
             </span>
 
-            <AnimatePresence>
-                {showPopup && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -4, scale: 0.96 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                        transition={{ duration: 0.15 }}
-                        className="absolute left-0 top-full z-50 mt-1 min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-48 overflow-y-auto"
-                        onMouseEnter={show}
-                        onMouseLeave={hide}
-                    >
-                        {todoItems ? (
-                            <div>
-                                <div className="flex items-center gap-2 mb-2 pb-2 border-b border-neutral-700/50">
-                                    <svg className="shrink-0 text-neutral-500" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <line x1="8" y1="6" x2="21" y2="6" />
-                                        <line x1="8" y1="12" x2="21" y2="12" />
-                                        <line x1="8" y1="18" x2="21" y2="18" />
-                                        <circle cx="4" cy="6" r="1.5" fill="currentColor" />
-                                        <circle cx="4" cy="12" r="1.5" fill="currentColor" />
-                                        <circle cx="4" cy="18" r="1.5" fill="currentColor" />
-                                    </svg>
-                                    <span className="text-xs font-medium text-neutral-400">To-dos {todoItems.length}</span>
-                                </div>
-                                <ul className="space-y-1.5 list-none p-0 m-0">
-                                    {todoItems.map((item, i) => (
-                                        <li key={i} className="flex items-start gap-2">
-                                            <span className="shrink-0 mt-0.5 text-neutral-500">
-                                                {item.status === "completed" ? (
-                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                                        <circle cx="12" cy="12" r="10" />
-                                                        <path d="M8 12l3 3 5-6" />
-                                                    </svg>
-                                                ) : (
-                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                                        <circle cx="12" cy="12" r="10" />
-                                                        <line x1="15" y1="9" x2="9" y2="15" />
-                                                        <line x1="9" y1="9" x2="15" y2="15" />
-                                                    </svg>
-                                                )}
-                                            </span>
-                                            <span className="text-[11px] text-neutral-500/90 leading-snug">{item.content}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-                        ) : (
-                            <MarkdownMessage content={content} />
-                        )}
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {typeof document !== "undefined" ? createPortal(popupNode, document.body) : null}
         </div>
     );
 };

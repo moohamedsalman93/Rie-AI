@@ -852,8 +852,10 @@ export function SettingsPage({ onClose }) {
             Connectivity
           </SidebarButton>
 
-          <div className="mt-auto pt-1 px-3 absolute bottom-0 w-full left-0 bg-neutral-950/50">
-            <div className="p-4 rounded-2xlborder border-white/5">
+          
+
+          <div className="mt-auto pt-1 px-3 border-t border-white/5  w-full bg-neutral-950/50">
+            <div className=" rounded-2xlborder border-white/5">
               <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1">Version</div>
               <div className="text-xs font-semibold text-white">Rie-AI v{appVersion}</div>
             </div>

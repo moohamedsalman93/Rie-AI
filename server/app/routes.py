@@ -1760,6 +1760,7 @@ async def chat_resume(data: ResumeChatRequest):
             client_local_datetime_iso=data.client_local_datetime_iso,
         ),
         media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
     )
 
 
@@ -1767,6 +1768,13 @@ async def chat_resume(data: ResumeChatRequest):
 
 
 LTM_TOOL_NAMES = ["save_memory", "get_memory", "search_memory"]
+
+_SSE_CHAT_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
 
 def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
     """
@@ -1796,6 +1804,10 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
             data["content"] = content
     elif hasattr(msg, "text"):
         data["content"] = getattr(msg, "text")
+
+    # Streaming chunks report AIMessageChunk — normalize so the UI treats them like "ai"
+    if data.get("type") == "AIMessageChunk":
+        data["type"] = "ai"
 
     # Tool calls for AIMessage
     if hasattr(msg, "tool_calls") and getattr(msg, "tool_calls"):
@@ -1883,6 +1895,8 @@ async def _agent_stream_generator(
                         await sse_queue.put(f"data: {json.dumps({'step': 'interrupt', 'hitl': pending}, default=str)}\n\n")
                         return
 
+                seen_token_stream = False
+
                 async for chunk in agent_manager.stream(
                     messages=messages, 
                     thread_id=thread_id, 
@@ -1897,6 +1911,21 @@ async def _agent_stream_generator(
                     friend_target_id=friend_target_id,
                     friend_target_name=friend_target_name,
                 ):
+                    # Token-level LLM chunks (LangGraph stream_mode includes "messages")
+                    if "__lg_messages__" in chunk:
+                        pair = chunk["__lg_messages__"]
+                        llm_chunk = pair[0] if isinstance(pair, tuple) and len(pair) >= 1 else pair
+                        serialized = _serialize_message(llm_chunk)
+                        if serialized is None:
+                            continue
+                        # UI "model" channel is assistant tokens only (not tool/human messages)
+                        if serialized.get("type") not in ("ai", "assistant"):
+                            continue
+                        seen_token_stream = True
+                        payload = {"step": "model", "message": serialized}
+                        await sse_queue.put(f"data: {json.dumps(payload, default=str)}\n\n")
+                        continue
+
                     # Check for interrupt in the chunk
                     if "__interrupt__" in chunk:
                         interrupt_data = chunk["__interrupt__"]
@@ -1937,6 +1966,21 @@ async def _agent_stream_generator(
                             serialized = _serialize_message(last_msg)
                             if serialized is None:
                                 continue
+
+                            # Avoid sending the full assistant reply again after token streaming
+                            # (LangGraph emits both "messages" tokens and an "updates" node completion).
+                            # Apply for any graph node name — sub-agents may use steps other than "model".
+                            if (
+                                seen_token_stream
+                                and serialized.get("type") in ("ai", "assistant")
+                            ):
+                                content = serialized.get("content", "")
+                                has_text = isinstance(content, str) and bool(content.strip())
+                                has_tools = bool(serialized.get("tool_calls"))
+                                if has_tools and isinstance(content, str) and content.strip():
+                                    serialized = {**serialized, "content": ""}
+                                elif not has_tools and has_text:
+                                    continue
 
                             payload = {
                                 "step": step,
@@ -2133,5 +2177,6 @@ async def chat_stream_post(
             friend_target_name=friend_target_name,
         ),
         media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
     )
 

@@ -1306,18 +1306,22 @@ class AgentManager:
         user_id = "default_user"
         context = Context(user_id=user_id)
 
+        # "updates" yields graph-node completions (tools, interrupts).
+        # "messages" yields LLM tokens as AIMessageChunk tuples — required for token streaming UI.
+        stream_modes = ["updates", "messages"]
+
         if config:
             stream_gen = self._agent.astream(
                 input_data,
                 config=config,
                 context=context,
-                stream_mode="updates",
+                stream_mode=stream_modes,
             )
         else:
             stream_gen = self._agent.astream(
                 input_data,
                 context=context,
-                stream_mode="updates",
+                stream_mode=stream_modes,
             )
 
         # Track this stream if a thread_id is provided
@@ -1335,8 +1339,50 @@ class AgentManager:
         )
         try:
             async for chunk in stream_gen:
-                logger.debug(f"Agent stream chunk keys: {list(chunk.keys())}")
-                if "__interrupt__" in chunk:
+                # Multiple stream modes:
+                # - default: (mode, payload)
+                # - subgraph streaming: (namespace, mode, payload) — see LangGraph streaming docs
+                if isinstance(chunk, tuple):
+                    if len(chunk) == 3:
+                        _stream_ns, mode, payload = chunk
+                    elif len(chunk) == 2:
+                        mode, payload = chunk
+                    else:
+                        logger.warning(
+                            "Unexpected LangGraph stream tuple length %s; skipping",
+                            len(chunk),
+                        )
+                        continue
+
+                    if mode == "updates":
+                        if not isinstance(payload, dict):
+                            logger.warning(
+                                "updates stream payload is %s; expected dict",
+                                type(payload),
+                            )
+                            continue
+                        logger.debug(
+                            "Agent stream (updates) keys: %s",
+                            list(payload.keys()),
+                        )
+                        if "__interrupt__" in payload:
+                            logger.debug(
+                                "Chunk contains interrupt: %s",
+                                payload["__interrupt__"],
+                            )
+                        yield payload
+                    elif mode == "messages":
+                        # LangGraph: payload is normally (token_chunk, metadata)
+                        yield {"__lg_messages__": payload}
+                    else:
+                        logger.warning("Unknown LangGraph stream mode: %s", mode)
+                    continue
+
+                logger.debug(
+                    "Agent stream chunk keys: %s",
+                    list(chunk.keys()) if isinstance(chunk, dict) else type(chunk),
+                )
+                if isinstance(chunk, dict) and "__interrupt__" in chunk:
                     logger.debug(f"Chunk contains interrupt: {chunk['__interrupt__']}")
                 yield chunk
         except asyncio.CancelledError:

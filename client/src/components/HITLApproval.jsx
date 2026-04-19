@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
 const HOVER_DELAY_MS = 120;
@@ -8,11 +9,15 @@ export const HITLApproval = ({ hitl, onDecision }) => {
     const [showPopup, setShowPopup] = useState(false);
     const [editedArgs, setEditedArgs] = useState({});
     const hideTimeoutRef = useRef(null);
+    const triggerRef = useRef(null);
+    const [popupPos, setPopupPos] = useState({ top: 0, left: 0 });
 
-    if (!hitl || !hitl.action_requests || hitl.action_requests.length === 0) return null;
-
-    const action = hitl.action_requests[0];
-    const config = hitl.review_configs[0];
+    const updatePopupPosition = useCallback(() => {
+        const el = triggerRef.current;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        setPopupPos({ top: r.bottom + 4, left: r.left });
+    }, []);
 
     const show = () => {
         if (hideTimeoutRef.current) {
@@ -25,6 +30,27 @@ export const HITLApproval = ({ hitl, onDecision }) => {
     const hide = () => {
         hideTimeoutRef.current = setTimeout(() => setShowPopup(false), HOVER_DELAY_MS);
     };
+
+    useLayoutEffect(() => {
+        if (!showPopup) return;
+        updatePopupPosition();
+    }, [showPopup, updatePopupPosition]);
+
+    useEffect(() => {
+        if (!showPopup) return;
+        const onScrollOrResize = () => updatePopupPosition();
+        window.addEventListener("scroll", onScrollOrResize, true);
+        window.addEventListener("resize", onScrollOrResize);
+        return () => {
+            window.removeEventListener("scroll", onScrollOrResize, true);
+            window.removeEventListener("resize", onScrollOrResize);
+        };
+    }, [showPopup, updatePopupPosition]);
+
+    if (!hitl || !hitl.action_requests || hitl.action_requests.length === 0) return null;
+
+    const action = hitl.action_requests[0];
+    const config = hitl.review_configs[0];
 
     const handleApprove = (e) => {
         e.stopPropagation();
@@ -62,10 +88,71 @@ export const HITLApproval = ({ hitl, onDecision }) => {
             .toUpperCase();
     };
 
+    const popupNode = (
+        <AnimatePresence>
+            {showPopup && (
+                <motion.div
+                    initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                    transition={{ duration: 0.15 }}
+                    onMouseEnter={show}
+                    onMouseLeave={hide}
+                    style={{ top: popupPos.top, left: popupPos.left }}
+                    className="fixed z-[1000] min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-64 overflow-y-auto"
+                >
+                    <div className="space-y-3">
+                        {action.description && (
+                            <p className="text-[11px] text-neutral-400 leading-relaxed italic">
+                                {action.description}
+                            </p>
+                        )}
+
+                        {isEditing ? (
+                            <div className="space-y-2.5 pt-1 border-t border-neutral-800 mt-2">
+                                <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest block font-mono">Edit Parameters</span>
+                                {Object.entries(action.args).map(([key, value]) => (
+                                    <div key={key} className="flex flex-col gap-1">
+                                        <label className="text-[10px] text-neutral-500 font-mono ml-0.5">{key}</label>
+                                        <input
+                                            type="text"
+                                            defaultValue={typeof value === 'string' ? value : JSON.stringify(value)}
+                                            onChange={(e) => handleArgChange(key, e.target.value)}
+                                            className="w-full bg-black/40 border border-neutral-800 rounded px-2 py-1.5 text-[11px] text-neutral-200 focus:outline-none focus:border-amber-500/40"
+                                        />
+                                    </div>
+                                ))}
+                                <div className="flex gap-2 pt-1">
+                                    <button
+                                        onClick={handleEditSave}
+                                        className="flex-1 bg-amber-500 hover:bg-amber-400 text-black text-[10px] font-bold py-1.5 rounded transition-all"
+                                    >
+                                        SAVE & APPROVE
+                                    </button>
+                                    <button
+                                        onClick={() => setIsEditing(false)}
+                                        className="px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold py-1.5 rounded"
+                                    >
+                                        CANCEL
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="pt-1 border-t border-neutral-800 mt-2 text-[10px] text-neutral-500 font-mono">
+                                Hover over the icons to take action.
+                            </div>
+                        )}
+                    </div>
+                </motion.div>
+            )}
+        </AnimatePresence>
+    );
+
     return (
-        <div className="relative inline-flex flex-col my-1">
+        <div className="inline-flex flex-col my-1">
             <div className="flex items-center gap-1.5 group cursor-default">
                 <span
+                    ref={triggerRef}
                     onMouseEnter={show}
                     onMouseLeave={hide}
                     className="inline-flex items-center gap-1.5"
@@ -142,62 +229,7 @@ export const HITLApproval = ({ hitl, onDecision }) => {
                 </div>
             </div>
 
-            <AnimatePresence>
-                {showPopup && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -4, scale: 0.96 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                        transition={{ duration: 0.15 }}
-                        onMouseEnter={show}
-                        onMouseLeave={hide}
-                        className="absolute left-0 top-full z-50 mt-1 min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-64 overflow-y-auto"
-                    >
-                        <div className="space-y-3">
-                            {action.description && (
-                                <p className="text-[11px] text-neutral-400 leading-relaxed italic">
-                                    {action.description}
-                                </p>
-                            )}
-
-                            {isEditing ? (
-                                <div className="space-y-2.5 pt-1 border-t border-neutral-800 mt-2">
-                                    <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest block font-mono">Edit Parameters</span>
-                                    {Object.entries(action.args).map(([key, value]) => (
-                                        <div key={key} className="flex flex-col gap-1">
-                                            <label className="text-[10px] text-neutral-500 font-mono ml-0.5">{key}</label>
-                                            <input
-                                                type="text"
-                                                defaultValue={typeof value === 'string' ? value : JSON.stringify(value)}
-                                                onChange={(e) => handleArgChange(key, e.target.value)}
-                                                className="w-full bg-black/40 border border-neutral-800 rounded px-2 py-1.5 text-[11px] text-neutral-200 focus:outline-none focus:border-amber-500/40"
-                                            />
-                                        </div>
-                                    ))}
-                                    <div className="flex gap-2 pt-1">
-                                        <button
-                                            onClick={handleEditSave}
-                                            className="flex-1 bg-amber-500 hover:bg-amber-400 text-black text-[10px] font-bold py-1.5 rounded transition-all"
-                                        >
-                                            SAVE & APPROVE
-                                        </button>
-                                        <button
-                                            onClick={() => setIsEditing(false)}
-                                            className="px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-[10px] font-bold py-1.5 rounded"
-                                        >
-                                            CANCEL
-                                        </button>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="pt-1 border-t border-neutral-800 mt-2 text-[10px] text-neutral-500 font-mono">
-                                    Hover over the icons to take action.
-                                </div>
-                            )}
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
+            {typeof document !== "undefined" ? createPortal(popupNode, document.body) : null}
         </div>
     );
 };
