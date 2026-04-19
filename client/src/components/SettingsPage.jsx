@@ -28,6 +28,7 @@ import {
   X,
   Pencil,
   Info,
+  AlertTriangle,
   Volume2,
   Copy,
   Check,
@@ -84,7 +85,7 @@ const DEFAULT_SUBAGENTS = [
   },
 ];
 
-export function SettingsPage({ onClose }) {
+function SettingsPage({ onClose }) {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1428,6 +1429,21 @@ key2,
                         Ready:{' '}
                         <span className="font-mono text-[10px] font-semibold uppercase text-neutral-100">{ngrokReadyState || '—'}</span>
                       </span>
+                    </div>
+                  </div>
+
+                  <div className="relative mt-5 rounded-2xl border border-amber-500/30 bg-amber-950/20 p-4 sm:p-5">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-400/30 bg-amber-500/10">
+                        <AlertTriangle className="h-4 w-4 text-amber-300" aria-hidden />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-semibold text-amber-200">Warning before using connectivity</h4>
+                        <p className="mt-1 text-xs leading-relaxed text-amber-100/85">
+                          Opening remote connectivity can expose your local agent to the internet. This may lead to
+                          unauthorized access or data leakage if you share endpoints with untrusted devices.
+                        </p>
+                      </div>
                     </div>
                   </div>
 
@@ -2792,6 +2808,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
     </div>
   );
 }
+
+export { SettingsPage };
+export default SettingsPage;
 
 function McpServersManager({ servers, onSave, isSaving }) {
   const [isAdding, setIsAdding] = useState(false);

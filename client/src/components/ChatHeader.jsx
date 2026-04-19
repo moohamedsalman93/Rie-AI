@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Users } from "lucide-react";
 import { ModeToggle } from "./ModeToggle";
 import { ScheduleNotificationsBell } from "./ScheduleNotificationsBell";
 import logo from "../assets/logo.png";
@@ -29,6 +29,7 @@ export function ChatHeader({
   onScheduleOpenChat = () => {},
   /** Floating mode: opens full schedule sheet from ⋮ menu */
   onOpenSchedule = null,
+  onToggleFriends = null,
 }) {
   return (
     <header
@@ -109,6 +110,20 @@ export function ChatHeader({
                   >
                     <CalendarClock className="h-3.5 w-3.5 shrink-0 text-neutral-300" />
                     <span>Schedule</span>
+                  </button>
+                )}
+                {windowMode === "floating" && typeof onToggleFriends === "function" && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFriends();
+                      setIsMenuOpen(false);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-neutral-300 transition-colors hover:bg-neutral-700/50 hover:text-white"
+                  >
+                    <Users className="h-3.5 w-3.5 shrink-0 text-neutral-300" />
+                    <span>Friends</span>
                   </button>
                 )}
 

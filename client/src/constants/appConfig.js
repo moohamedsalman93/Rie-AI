@@ -1,6 +1,3 @@
-/** Virtual thread: appears in chat history; main area shows peer query log (not a real LLM thread). */
-export const PEER_QUERY_HISTORY_THREAD_ID = "__rie_peer_query_history__";
-
 // Window sizes (logical pixels)
 export const WINDOW_SIZES = {
   CHAT: { width: 360, height: 520 },

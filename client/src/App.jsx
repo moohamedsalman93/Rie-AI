@@ -7,8 +7,8 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, askFriend } from "./services/chatApi";
-import { saveThreadId, getStoredThreadId } from "./services/historyService";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, askFriend, deleteThread } from "./services/chatApi";
+import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -21,7 +21,6 @@ import { FloatingChatWindow } from "./components/FloatingChatWindow";
 import { HITLApproval } from "./components/HITLApproval";
 import {
   WINDOW_SIZES,
-  PEER_QUERY_HISTORY_THREAD_ID,
   getToolDisplayName,
   initialMessages,
 } from "./constants/appConfig";
@@ -64,6 +63,23 @@ function playScheduleAlertSound() {
   }
 }
 
+function normalizeFriendMetaMap(metaMap) {
+  const source = metaMap && typeof metaMap === "object" ? metaMap : {};
+  const normalized = {};
+  Object.entries(source).forEach(([threadId, meta]) => {
+    if (!meta || typeof meta !== "object") return;
+    const friendId = meta.friendId || meta.friend_id || null;
+    const friendName = meta.friendName || meta.friend_name || "Friend";
+    if (!friendId) return;
+    normalized[String(threadId)] = {
+      friendId,
+      friendName,
+      isFriendChat: true,
+    };
+  });
+  return normalized;
+}
+
 function MainApp() {
   //#region State
   const [isOpen, setIsOpen] = useState(true);
@@ -95,8 +111,9 @@ function MainApp() {
   const [scheduleNotifications, setScheduleNotifications] = useState([]);
   const [scheduleNotificationLog, setScheduleNotificationLog] = useState([]);
   const [isFloatingScheduleOpen, setIsFloatingScheduleOpen] = useState(false);
+  const [isFloatingFriendsOpen, setIsFloatingFriendsOpen] = useState(false);
   const [friends, setFriends] = useState([]);
-  const [selectedFriendByThread, setSelectedFriendByThread] = useState({});
+  const [friendThreadMeta, setFriendThreadMeta] = useState({});
   const scheduleNotifInitializedRef = useRef(false);
   const scheduleNotifSeenIdsRef = useRef(new Set());
   const prevThreadScheduleNotifIdsRef = useRef(new Set());
@@ -200,11 +217,38 @@ function MainApp() {
     }
   }, []);
 
-  const handleSelectFriendTarget = useCallback((friend) => {
-    const threadId = threadIdRef.current;
-    if (!threadId || !friend) return;
-    setSelectedFriendByThread(prev => ({ ...prev, [threadId]: friend }));
+  const persistFriendMeta = useCallback((updater) => {
+    setFriendThreadMeta((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveFriendThreadMeta(next);
+      return next;
+    });
   }, []);
+
+  const handleAssignFriendToThread = useCallback((threadId, friend) => {
+    if (!threadId || !friend?.id) return;
+    persistFriendMeta((prev) => ({
+      ...prev,
+      [String(threadId)]: {
+        friendId: friend.id,
+        friendName: friend.name || "Friend",
+        isFriendChat: true,
+      },
+    }));
+  }, [persistFriendMeta]);
+
+  const handleStartFriendChat = useCallback((friend) => {
+    if (!friend?.id) return;
+    const newThreadId = crypto.randomUUID();
+    setSessions((prev) => ({ ...prev, [newThreadId]: initialMessages }));
+    setActiveThreadId(newThreadId);
+    saveThreadId(newThreadId);
+    threadIdRef.current = newThreadId;
+    handleAssignFriendToThread(newThreadId, friend);
+    setAttachedImage(null);
+    setInput("");
+    setIsMenuOpen(false);
+  }, [handleAssignFriendToThread]);
 
   const handleToggleWindowMode = useCallback(async () => {
     const newMode = windowMode === "floating" ? "normal" : "floating";
@@ -582,10 +626,44 @@ function MainApp() {
       console.error("Stream processing error:", err);
     }
   }, [windowMode, queueSentence, handleOpen, minimizeToBottomCenter]);
-  const handleSend = useCallback(async (overrideText = null, isVoice = false, overrideImage = null) => {
-    if (threadIdRef.current === PEER_QUERY_HISTORY_THREAD_ID) {
-      return;
+
+  const handleRekeyThread = useCallback((fromThreadId, toThreadId) => {
+    const fromKey = String(fromThreadId || "");
+    const toKey = String(toThreadId || "");
+    if (!fromKey || !toKey || fromKey === toKey) return;
+
+    setSessions((prev) => {
+      if (!prev[fromKey]) return prev;
+      const next = { ...prev };
+      next[toKey] = next[toKey] ? [...next[toKey], ...next[fromKey]] : next[fromKey];
+      delete next[fromKey];
+      return next;
+    });
+    persistFriendMeta((prev) => {
+      if (!prev[fromKey]) return prev;
+      const next = { ...prev };
+      next[toKey] = prev[fromKey];
+      delete next[fromKey];
+      return next;
+    });
+    if (threadIdRef.current === fromKey) {
+      threadIdRef.current = toKey;
     }
+    if (String(activeThreadId || "") === fromKey) {
+      setActiveThreadId(toKey);
+      saveThreadId(toKey);
+    }
+    if (lastTurnIdsRef.current[fromKey]) {
+      lastTurnIdsRef.current[toKey] = lastTurnIdsRef.current[fromKey];
+      delete lastTurnIdsRef.current[fromKey];
+    }
+    if (lastSentInputsRef.current[fromKey]) {
+      lastSentInputsRef.current[toKey] = lastSentInputsRef.current[fromKey];
+      delete lastSentInputsRef.current[fromKey];
+    }
+  }, [activeThreadId, persistFriendMeta]);
+
+  const handleSend = useCallback(async (overrideText = null, isVoice = false, overrideImage = null) => {
     const textToSend = (typeof overrideText === 'string') ? overrideText : input;
     const trimmed = textToSend.trim();
     const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage;
@@ -616,16 +694,10 @@ function MainApp() {
     const performSend = async (imageToUse = imageToUseFromState) => {
       const threadId = threadIdRef.current;
       lastTurnWasVoiceRef.current = isVoice;
-      const friendTarget = selectedFriendByThread[threadId] || null;
-      const escapedFriendName = friendTarget?.name
-        ? friendTarget.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        : "";
-      const friendCommandRegex = escapedFriendName
-        ? new RegExp(`^\\s*\\/${escapedFriendName}\\b\\s*(.*)$`, "i")
+      const friendMeta = friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
+      const friendTarget = friendMeta?.friendId
+        ? { id: friendMeta.friendId, name: friendMeta.friendName || "Friend" }
         : null;
-      const friendCommandMatch = friendCommandRegex ? trimmed.match(friendCommandRegex) : null;
-      const friendDirectQuery = friendCommandMatch?.[1]?.trim() || "";
-      const isDirectFriendAsk = Boolean(friendTarget?.id && friendCommandMatch && friendDirectQuery);
 
       const userMessage = {
         id: Date.now(),
@@ -695,16 +767,35 @@ function MainApp() {
 
       try {
         const token = localStorage.getItem('rie_token');
-        if (isDirectFriendAsk) {
+        if (friendTarget?.id) {
+          const approval = await getFriendApproval(friendTarget.id, threadId);
+          if (!approval?.approved) {
+            const yes = window.confirm(`Allow asking ${friendTarget.name} in this chat? This is required only once per chat.`);
+            if (!yes) {
+              resetFailedTurn("Friend ask canceled by user");
+              return;
+            }
+            try {
+              await approveFriendForThread(friendTarget.id, threadId);
+            } catch (approvalErr) {
+              resetFailedTurn(approvalErr?.message || "Failed to save friend approval");
+              return;
+            }
+          }
           try {
-            const reply = await askFriend(friendTarget.id, friendDirectQuery);
+            const reply = await askFriend(friendTarget.id, trimmed, threadId);
+            const canonicalThreadId = String(reply?.thread_id || threadId);
+            if (canonicalThreadId !== String(threadId)) {
+              handleRekeyThread(threadId, canonicalThreadId);
+            }
             const friendMessage = reply?.message?.trim()
               ? `${friendTarget.name}: ${reply.message}`
               : `${friendTarget.name}: No response`;
             setSessions((prev) => {
               const newSessions = { ...prev };
-              if (newSessions[threadId]) {
-                newSessions[threadId] = newSessions[threadId].map((m) => {
+              const targetThreadId = newSessions[canonicalThreadId] ? canonicalThreadId : String(threadId);
+              if (newSessions[targetThreadId]) {
+                newSessions[targetThreadId] = newSessions[targetThreadId].map((m) => {
                   if (m.id === botMessageId) {
                     return {
                       ...m,
@@ -724,27 +815,13 @@ function MainApp() {
             });
             setCurrentTool(null);
             delete abortControllersRef.current[threadId];
+            if (canonicalThreadId !== String(threadId)) {
+              delete abortControllersRef.current[canonicalThreadId];
+            }
             return;
           } catch (friendErr) {
             resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
             return;
-          }
-        }
-
-        if (friendTarget?.id) {
-          const approval = await getFriendApproval(friendTarget.id, threadId);
-          if (!approval?.approved) {
-            const yes = window.confirm(`Allow asking ${friendTarget.name} in this chat? This is required only once per chat.`);
-            if (!yes) {
-              resetFailedTurn("Friend ask canceled by user");
-              return;
-            }
-            try {
-              await approveFriendForThread(friendTarget.id, threadId);
-            } catch (approvalErr) {
-              resetFailedTurn(approvalErr?.message || "Failed to save friend approval");
-              return;
-            }
           }
         }
         await streamChat(
@@ -780,7 +857,7 @@ function MainApp() {
           clipboardToUse,
           chatMode,
           speedMode,
-          friendTarget
+          friendTarget || undefined
         );
       } catch (err) {
         console.error("Chat error:", err);
@@ -813,7 +890,7 @@ function MainApp() {
     } else {
       await performSend();
     }
-  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, selectedFriendByThread]);
+  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -1050,10 +1127,6 @@ function MainApp() {
     setActiveThreadId(threadId);
     threadIdRef.current = threadId;
 
-    if (threadId === PEER_QUERY_HISTORY_THREAD_ID) {
-      return;
-    }
-
     saveThreadId(threadId);
 
     // If session already exists in memory and not empty, don't refetch
@@ -1089,6 +1162,38 @@ function MainApp() {
       });
     }
   }, [sessions]);
+
+  const handleDeleteThread = useCallback(async (threadId) => {
+    if (!threadId) return;
+    try {
+      await deleteThread(threadId);
+    } catch (err) {
+      // Local-only threads will not exist in backend history.
+      console.warn("Backend delete skipped/failed, removing local thread:", err?.message || err);
+    } finally {
+      setSessions((prev) => {
+        const next = { ...prev };
+        delete next[threadId];
+        delete next[String(threadId)];
+        return next;
+      });
+      persistFriendMeta((prev) => {
+        const next = { ...prev };
+        delete next[threadId];
+        delete next[String(threadId)];
+        return next;
+      });
+      if (threadIdRef.current === threadId || activeThreadId === threadId) {
+        handleNewChat();
+      }
+    }
+  }, [activeThreadId, handleNewChat, persistFriendMeta]);
+
+  const handleSelectFriendChat = useCallback(async (threadId, friend) => {
+    if (!threadId || !friend) return;
+    handleAssignFriendToThread(threadId, friend);
+    await handleSelectThread(threadId);
+  }, [handleAssignFriendToThread, handleSelectThread]);
 
   const handleScheduleMarkRead = useCallback(async (id) => {
     if (!id) return;
@@ -1131,7 +1236,10 @@ function MainApp() {
   }, [isOpen]);
 
   useEffect(() => {
-    if (windowMode !== "floating") setIsFloatingScheduleOpen(false);
+    if (windowMode !== "floating") {
+      setIsFloatingScheduleOpen(false);
+      setIsFloatingFriendsOpen(false);
+    }
   }, [windowMode]);
 
   useEffect(() => {
@@ -1414,10 +1522,10 @@ function MainApp() {
   // Load history and thread ID on mount
   useEffect(() => {
     const initChat = async () => {
+      const normalizedMeta = normalizeFriendMetaMap(getFriendThreadMeta());
+      setFriendThreadMeta(normalizedMeta);
+      saveFriendThreadMeta(normalizedMeta);
       let storedThreadId = getStoredThreadId();
-      if (storedThreadId === PEER_QUERY_HISTORY_THREAD_ID) {
-        storedThreadId = null;
-      }
       if (storedThreadId) {
         try {
           const msgs = await getThreadMessages(storedThreadId);
@@ -1867,6 +1975,7 @@ function MainApp() {
               ) : (
               <NormalModeLayout
                   messages={sessions[activeThreadId] || initialMessages}
+                  sessionsByThread={sessions}
                   input={input}
                   setInput={setInput}
                   isLoading={isLoading}
@@ -1874,6 +1983,7 @@ function MainApp() {
                   onSend={handleSend}
                   onCancel={handleCancelRequest}
                   onSelectThread={handleSelectThread}
+                  onDeleteThread={handleDeleteThread}
                   onNewChat={handleNewChat}
                   currentThreadId={activeThreadId}
                   onOpenSettings={handleOpenSettingsWindow}
@@ -1923,8 +2033,10 @@ function MainApp() {
                   onScheduleMarkAllRead={handleScheduleMarkAllRead}
                   onScheduleOpenChat={handleScheduleOpenChat}
                   friends={friends}
-                  selectedFriend={selectedFriendByThread[activeThreadId] || null}
-                  onSelectFriendTarget={handleSelectFriendTarget}
+                  friendThreadMeta={friendThreadMeta}
+                  activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+                  onSelectFriendChat={handleSelectFriendChat}
+                  onStartFriendChat={handleStartFriendChat}
                 />
               )}
             </motion.div>
@@ -1964,9 +2076,11 @@ function MainApp() {
               isHistoryOpen={isHistoryOpen}
               onCloseHistory={() => setIsHistoryOpen(false)}
               onSelectThread={handleSelectThread}
+              onDeleteThread={handleDeleteThread}
               activeThreadId={activeThreadId}
               streamingThreads={streamingThreads}
               messages={messages}
+              sessionsByThread={sessions}
               isLoading={isLoading}
               streamingBotMessageId={isLoading ? lastTurnIdsRef.current[activeThreadId]?.botMessageId : null}
               typesWrite={typesWrite}
@@ -2014,9 +2128,13 @@ function MainApp() {
               isScheduleSheetOpen={isFloatingScheduleOpen}
               onCloseScheduleSheet={() => setIsFloatingScheduleOpen(false)}
               onOpenScheduleSheet={() => setIsFloatingScheduleOpen(true)}
+              isFriendsQuickOpen={isFloatingFriendsOpen}
+              onToggleFriendsQuick={() => setIsFloatingFriendsOpen((prev) => !prev)}
               friends={friends}
-              selectedFriend={selectedFriendByThread[activeThreadId] || null}
-              onSelectFriendTarget={handleSelectFriendTarget}
+              friendThreadMeta={friendThreadMeta}
+              activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+              onSelectFriendChat={handleSelectFriendChat}
+              onStartFriendChat={handleStartFriendChat}
             />
           )}
         </AnimatePresence>

@@ -6,6 +6,7 @@ import json
 import queue
 import threading
 import time
+import uuid
 from typing import Any, Dict, Iterable, List, Optional, AsyncIterator
 import logging
 import httpx
@@ -927,8 +928,10 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
         raise HTTPException(status_code=404, detail="Friend not found")
 
     q_log = (data.query or "").strip()
+    thread_id = (data.thread_id or "").strip() or str(uuid.uuid4())
     fid = friend["id"]
     fname = friend["name"]
+    await run_in_threadpool(save_message, thread_id, "user", q_log or "(empty)")
 
     try:
         target_url = connectivity_manager.resolve_peer(friend)
@@ -951,6 +954,7 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
         "from_device_id": source_identity["device_id"],
         "from_fingerprint": source_identity["fingerprint"],
         "query": data.query,
+        "thread_id": thread_id,
     }
 
     try:
@@ -1016,6 +1020,8 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
         update_friend_public_url(friend_id, responder_url)
 
     msg_preview = str(body.get("message", ""))
+    responder_thread_id = str(body.get("thread_id") or thread_id)
+    await run_in_threadpool(save_message, responder_thread_id, "assistant", msg_preview)
     await run_in_threadpool(
         append_peer_query_event,
         "outbound",
@@ -1030,6 +1036,7 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     return PeerAskResponse(
         status=str(body.get("status", "online")),
         message=msg_preview,
+        thread_id=responder_thread_id,
         responder_device_id=str(body.get("responder_device_id", friend["device_id"])),
     )
 
@@ -1132,6 +1139,7 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
     identity = _identity_payload()
     query = (data.query or "").strip()
     peer_query = query if query else "Hello"
+    thread_id = (data.thread_id or "").strip() or f"peer:{data.from_device_id}"
     fid: Optional[str] = friend["id"] if friend else None
     fname: Optional[str] = friend["name"] if friend else None
 
@@ -1165,12 +1173,13 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
         return PeerAskResponse(
             status="online",
             message="reachable",
+            thread_id=thread_id,
             responder_device_id=identity["device_id"],
             responder_public_url=identity.get("public_url"),
         )
 
     # Run a local generation respecting per-friend inbound access policy.
-    local_thread_id = f"peer:{data.from_device_id}"
+    await run_in_threadpool(save_message, thread_id, "user", peer_query)
 
     policy = friend_row_peer_policy(friend)
     full_catalog = _get_runtime_tool_catalog_ids()
@@ -1185,12 +1194,13 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
 
         agent_result = await agent_manager.invoke_peer_inbound(
             messages=[{"role": "user", "content": peer_query}],
-            thread_id=local_thread_id,
+            thread_id=thread_id,
             receive_profile=policy.receive_profile,
             effective_tool_ids=effective_ids,
             memory_user_id=memory_user_id,
         )
         reply_text = _extract_peer_assistant_text(agent_result) or "I received your message but could not generate a reply."
+        await run_in_threadpool(save_message, thread_id, "assistant", reply_text)
     except HTTPException as exc:
         await run_in_threadpool(
             append_peer_query_event,
@@ -1300,6 +1310,7 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
     return PeerAskResponse(
         status="online",
         message=reply_text,
+        thread_id=thread_id,
         responder_device_id=identity["device_id"],
         responder_public_url=identity.get("public_url"),
     )

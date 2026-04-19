@@ -338,17 +338,20 @@ class PairingConfirmResponse(BaseModel):
 class PeerAskRequest(BaseModel):
     friend_id: str
     query: str
+    thread_id: Optional[str] = None
 
 
 class PeerReceiveRequest(BaseModel):
     from_device_id: str
     from_fingerprint: str
     query: str
+    thread_id: Optional[str] = None
 
 
 class PeerAskResponse(BaseModel):
     status: str
     message: str
+    thread_id: Optional[str] = None
     responder_device_id: Optional[str] = None
     responder_public_url: Optional[str] = None
 

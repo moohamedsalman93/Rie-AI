@@ -1,6 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useMemo, useState } from "react";
-import { ModeToggle } from './ModeToggle';
+import { useState } from "react";
 
 export function ChatInputArea({
   input,
@@ -29,36 +28,10 @@ export function ChatInputArea({
   textareaRef,
   isWindowDraggingFile,
   chatMode,
-  friends = [],
-  selectedFriend = null,
-  onSelectFriendTarget = () => {},
-  peerQueryReadOnly = false,
 }) {
   const [dragCounter, setDragCounter] = useState(0);
-  const [slashOpen, setSlashOpen] = useState(false);
-  const [slashIndex, setSlashIndex] = useState(0);
   const isDragging = dragCounter > 0;
   const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot;
-  const slashQuery = useMemo(() => {
-    const idx = input.lastIndexOf("/");
-    if (idx < 0) return "";
-    return input.slice(idx + 1).trim().toLowerCase();
-  }, [input]);
-  const filteredFriends = useMemo(() => {
-    if (!slashQuery) return friends.slice(0, 8);
-    return friends.filter((f) => (f.name || "").toLowerCase().includes(slashQuery)).slice(0, 8);
-  }, [friends, slashQuery]);
-
-  const selectFriend = (friend) => {
-    if (!friend) return;
-    const idx = input.lastIndexOf("/");
-    const replacement = `/${friend.name} `;
-    const next = idx >= 0 ? `${input.slice(0, idx)}${replacement}` : `${input}${replacement}`;
-    setInput(next);
-    onSelectFriendTarget(friend);
-    setSlashOpen(false);
-    setSlashIndex(0);
-  };
 
   const attachImageFile = (file) => {
     if (!file || !file.type?.startsWith("image/")) return;
@@ -68,16 +41,6 @@ export function ChatInputArea({
     };
     reader.readAsDataURL(file);
   };
-
-  if (peerQueryReadOnly) {
-    return (
-      <footer className="shrink-0 border-t border-neutral-800 bg-neutral-950 px-3 py-2.5 text-center">
-        <p className="text-xs text-neutral-500">
-          Peer query history is read-only. Open a chat from the list to send messages.
-        </p>
-      </footer>
-    );
-  }
 
   return (
     <footer
@@ -332,37 +295,9 @@ export function ChatInputArea({
               rows={1}
               value={input}
               onChange={(e) => {
-                const v = e.target.value;
-                setInput(v);
-                if (v.includes("/")) {
-                  setSlashOpen(true);
-                } else {
-                  setSlashOpen(false);
-                }
+                setInput(e.target.value);
               }}
               onKeyDown={(e) => {
-                if (slashOpen && filteredFriends.length > 0) {
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    setSlashIndex((prev) => (prev + 1) % filteredFriends.length);
-                    return;
-                  }
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    setSlashIndex((prev) => (prev - 1 + filteredFriends.length) % filteredFriends.length);
-                    return;
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setSlashOpen(false);
-                    return;
-                  }
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    selectFriend(filteredFriends[slashIndex] || filteredFriends[0]);
-                    return;
-                  }
-                }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   onSend();
@@ -386,19 +321,6 @@ export function ChatInputArea({
               className={`custom-scrollbar w-full resize-none rounded-2xl border bg-neutral-800/80 px-3 py-2 text-[13px] text-neutral-100 placeholder-neutral-500 shadow-sm outline-none transition-all placeholder:transition-opacity ${isRecording ? "border-emerald-500 ring-2 ring-emerald-500/20" : `border-white/10 focus:bg-neutral-800 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'}`} disabled:opacity-50 max-h-[280px]`}
               disabled={isLoading}
             />
-            {slashOpen && filteredFriends.length > 0 && (
-              <div className="absolute bottom-full mb-2 left-0 w-full rounded-xl border border-white/10 bg-neutral-800/95 z-[120] p-1 max-h-48 overflow-y-auto custom-scrollbar">
-                {filteredFriends.map((friend, idx) => (
-                  <button
-                    key={friend.id}
-                    onClick={() => selectFriend(friend)}
-                    className={`w-full text-left px-2 py-1.5 rounded-lg text-xs ${idx === slashIndex ? "bg-emerald-500/20 text-emerald-200" : "text-neutral-300 hover:bg-white/5"}`}
-                  >
-                    /{friend.name}
-                  </button>
-                ))}
-              </div>
-            )}
             <AnimatePresence>
               {isRecording && (
                 <motion.div
@@ -413,9 +335,6 @@ export function ChatInputArea({
               )}
             </AnimatePresence>
           </div>
-          {selectedFriend && (
-            <div className="text-[10px] text-emerald-300 whitespace-nowrap">target: {selectedFriend.name}</div>
-          )}
           <button
             onClick={isLoading ? () => onCancelRequest() : onSend}
             disabled={!isLoading && !hasContent}

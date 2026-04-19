@@ -4,7 +4,6 @@ import { FloatingScheduleSheet } from "./FloatingScheduleSheet";
 import { ChatMessages } from "./ChatMessages";
 import { ChatInputArea } from "./ChatInputArea";
 import { HistorySidebar } from "./HistorySidebar";
-import { PEER_QUERY_HISTORY_THREAD_ID } from "../constants/appConfig";
 import { Terminal } from "./Terminal";
 import { WelcomeScreen } from "./WelcomeScreen";
 import { SettingsPage } from "./SettingsPage";
@@ -30,9 +29,11 @@ export function FloatingChatWindow({
   isHistoryOpen,
   onCloseHistory,
   onSelectThread,
+  onDeleteThread,
   activeThreadId,
   streamingThreads,
   messages,
+  sessionsByThread = {},
   isLoading,
   streamingBotMessageId,
   typesWrite,
@@ -81,8 +82,12 @@ export function FloatingChatWindow({
   onCloseScheduleSheet = () => {},
   onOpenScheduleSheet = () => {},
   friends = [],
-  selectedFriend = null,
-  onSelectFriendTarget = () => {},
+  friendThreadMeta = {},
+  activeFriendMeta = null,
+  onSelectFriendChat = () => {},
+  onStartFriendChat = () => {},
+  isFriendsQuickOpen = false,
+  onToggleFriendsQuick = () => {},
 }) {
   return (
     <motion.section
@@ -127,6 +132,7 @@ export function FloatingChatWindow({
         onScheduleMarkAllRead={onScheduleMarkAllRead}
         onScheduleOpenChat={onScheduleOpenChat}
         onOpenSchedule={onOpenScheduleSheet}
+        onToggleFriends={onToggleFriendsQuick}
       />
 
       {showWelcome ? (
@@ -152,12 +158,37 @@ export function FloatingChatWindow({
               isOpen={isHistoryOpen}
               onClose={onCloseHistory}
               onSelectThread={onSelectThread}
+              onDeleteThread={onDeleteThread}
               onNewChat={onNewChat}
               currentThreadId={activeThreadId}
               streamingThreads={streamingThreads}
               windowMode={windowMode}
+              friends={friends}
+              friendThreadMeta={friendThreadMeta}
+              onSelectFriendChat={onSelectFriendChat}
+              onStartFriendChat={onStartFriendChat}
+              sessionsByThread={sessionsByThread}
             />
             <div className="flex-1 flex flex-col relative min-w-0 h-full min-h-0">
+              {isFriendsQuickOpen && (
+                <div className="absolute left-3 top-12 z-30 max-h-72 w-72 overflow-y-auto rounded-xl border border-white/10 bg-neutral-900/95 p-2 shadow-xl backdrop-blur">
+                  <div className="mb-1 px-1 text-[11px] font-semibold text-neutral-300">Friends</div>
+                  {friends.length === 0 ? (
+                    <div className="px-2 py-2 text-xs text-neutral-500">No connections.</div>
+                  ) : (
+                    friends.map((friend) => {
+                      return (
+                        <div key={friend.id} className="mb-1 rounded-lg border border-white/10 bg-neutral-900/60 p-1.5">
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="truncate text-xs text-neutral-200">{friend.name || "Friend"}</span>
+                            <button onClick={() => onStartFriendChat(friend)} className="text-[10px] text-emerald-300 hover:text-emerald-200">Chat</button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
               <ChatMessages
                 messages={messages}
                 isLoading={isLoading}
@@ -170,7 +201,7 @@ export function FloatingChatWindow({
                 onDeleteMessage={onDeleteMessage}
                 onSend={onSend}
                 onOpenInNewChat={onOpenMessageInNewChat}
-                activeThreadId={activeThreadId}
+                activeFriendMeta={activeFriendMeta}
               />
             </div>
           </div>
@@ -178,7 +209,6 @@ export function FloatingChatWindow({
           <ChatInputArea
             input={input}
             setInput={setInput}
-            peerQueryReadOnly={activeThreadId === PEER_QUERY_HISTORY_THREAD_ID}
             isLoading={isLoading}
             isRecording={isRecording}
             isCapturing={isCapturing}
@@ -202,9 +232,6 @@ export function FloatingChatWindow({
             onCancelRequest={onCancelRequest}
             textareaRef={textareaRef}
             isWindowDraggingFile={isWindowDraggingFile}
-            friends={friends}
-            selectedFriend={selectedFriend}
-            onSelectFriendTarget={onSelectFriendTarget}
           />
 
           <Terminal

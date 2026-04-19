@@ -21,6 +21,10 @@ async def verify_app_token(request: Request, api_key: str = Security(api_key_hea
     Verify the RIE_APP_TOKEN from environment matches the request header.
     If RIE_APP_TOKEN is not set, we allow the request (for dev/local run without tauri).
     """
+    # Browser CORS preflight must be allowed through so CORSMiddleware can respond.
+    if request.method == "OPTIONS":
+        return None
+
     path = request.url.path
     if path in PEER_AUTH_EXEMPT_PATHS:
         return None

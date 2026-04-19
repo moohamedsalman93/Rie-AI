@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GitBranch, Info, RotateCw, MessageSquare } from 'lucide-react';
-import { getHistory, deleteThread } from '../services/chatApi';
+import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
 import { ToolChip } from './ToolChip';
@@ -10,11 +10,10 @@ import { ModeToggle } from './ModeToggle';
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
 import logo from '../assets/logo.png';
-import { PEER_QUERY_HISTORY_THREAD_ID } from '../constants/appConfig';
-import { PeerQueryHistoryPanel } from './PeerQueryHistoryPanel';
 
 export function NormalModeLayout({
     messages,
+    sessionsByThread = {},
     input,
     setInput,
     isLoading,
@@ -22,6 +21,7 @@ export function NormalModeLayout({
     onSend,
     onCancel,
     onSelectThread,
+    onDeleteThread = () => {},
     onNewChat,
     currentThreadId,
     onOpenSettings,
@@ -71,8 +71,10 @@ export function NormalModeLayout({
     onScheduleMarkAllRead = () => {},
     onScheduleOpenChat = () => {},
     friends = [],
-    selectedFriend = null,
-    onSelectFriendTarget = () => {},
+    friendThreadMeta = {},
+    activeFriendMeta = null,
+    onSelectFriendChat = () => {},
+    onStartFriendChat = () => {},
 }) {
     // Sidebar state
     const [threads, setThreads] = useState([]);
@@ -83,30 +85,9 @@ export function NormalModeLayout({
     const [dragCounter, setDragCounter] = useState(0);
     const [isHistoryVisible, setIsHistoryVisible] = useState(true);
     const [showExitConfirm, setShowExitConfirm] = useState(false);
-    const [slashOpen, setSlashOpen] = useState(false);
-    const [slashIndex, setSlashIndex] = useState(0);
+    const [friendsOpen, setFriendsOpen] = useState(true);
     const isDragging = dragCounter > 0;
     const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot;
-    const slashQuery = useMemo(() => {
-        const idx = input.lastIndexOf('/');
-        if (idx < 0) return '';
-        return input.slice(idx + 1).trim().toLowerCase();
-    }, [input]);
-    const filteredFriends = useMemo(() => {
-        if (!slashQuery) return friends.slice(0, 8);
-        return friends.filter((f) => (f.name || '').toLowerCase().includes(slashQuery)).slice(0, 8);
-    }, [friends, slashQuery]);
-
-    const selectFriend = (friend) => {
-        if (!friend) return;
-        const idx = input.lastIndexOf('/');
-        const replacement = `/${friend.name} `;
-        const next = idx >= 0 ? `${input.slice(0, idx)}${replacement}` : `${input}${replacement}`;
-        setInput(next);
-        onSelectFriendTarget(friend);
-        setSlashOpen(false);
-        setSlashIndex(0);
-    };
 
     const attachImageFile = (file) => {
         if (!file || !file.type?.startsWith("image/")) return;
@@ -154,11 +135,8 @@ export function NormalModeLayout({
     const confirmDelete = async () => {
         if (!threadToDelete) return;
         try {
-            await deleteThread(threadToDelete);
+            await onDeleteThread(threadToDelete);
             setThreads(prev => prev.filter(t => t.id !== threadToDelete));
-            if (threadToDelete === currentThreadId) {
-                onNewChat();
-            }
         } catch (err) {
             console.error('Failed to delete thread:', err);
         } finally {
@@ -176,14 +154,30 @@ export function NormalModeLayout({
         return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     };
 
-    const filteredThreads = threads.filter(t =>
+    const mergedThreads = useMemo(() => {
+        const known = new Set((threads || []).map((t) => String(t.id)));
+        const localOnly = Object.keys(sessionsByThread || {})
+            .filter((threadId) => !known.has(String(threadId)))
+            .map((threadId) => {
+                const list = sessionsByThread[threadId] || [];
+                const firstUser = list.find((m) => m?.from === "user" && m?.text?.trim());
+                return {
+                    id: threadId,
+                    title: firstUser?.text?.slice(0, 42) || "Untitled Chat",
+                    created_at: null,
+                    updated_at: null,
+                };
+            });
+        return [...localOnly, ...(threads || [])];
+    }, [threads, sessionsByThread]);
+
+    const filteredThreads = mergedThreads.filter(t =>
         (t.title || 'Untitled Chat').toLowerCase().includes(searchTerm.toLowerCase())
     );
-
-    const isPeerHistoryView = currentThreadId === PEER_QUERY_HISTORY_THREAD_ID;
-    const peerRowMatches =
-        !searchTerm.trim() ||
-        /peer|queries|query|friend|history|inbound|outbound|link/i.test(searchTerm);
+    const getThreadFriendMeta = (threadId) => {
+        if (!friendThreadMeta) return null;
+        return friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
+    };
 
     return (
         <div className="w-full h-full flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
@@ -347,22 +341,38 @@ export function NormalModeLayout({
 
                             {/* Thread List */}
                             <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-0.5">
-                                {peerRowMatches ? (
+                                <div className="mb-2 rounded-lg border border-white/5 bg-neutral-900/50">
                                     <button
                                         type="button"
-                                        onClick={() => onSelectThread(PEER_QUERY_HISTORY_THREAD_ID)}
-                                        className={`mb-1.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${currentThreadId === PEER_QUERY_HISTORY_THREAD_ID
-                                            ? 'bg-gradient-to-r from-violet-950/50 to-sky-950/40 text-neutral-100 ring-1 ring-white/10'
-                                            : 'border border-white/5 bg-neutral-900/40 text-neutral-300 hover:bg-neutral-800/60 hover:text-neutral-100'
-                                            }`}
+                                        onClick={() => setFriendsOpen((prev) => !prev)}
+                                        className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-semibold text-neutral-200"
                                     >
-                                        <MessageSquare size={14} className="shrink-0 text-neutral-400" aria-hidden />
-                                        <div className="min-w-0 flex-1">
-                                            <div className="text-xs font-medium truncate">Peer queries</div>
-                                            <div className="text-[9px] text-neutral-500">Friend traffic log</div>
-                                        </div>
+                                        <span className="inline-flex items-center gap-1.5"><Users size={13} /> Friends</span>
+                                        {friendsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                                     </button>
-                                ) : null}
+                                    {friendsOpen && (
+                                        <div className="space-y-1 border-t border-white/5 p-1.5">
+                                            {friends.length === 0 ? (
+                                                <div className="px-2 py-1 text-[11px] text-neutral-500">No connections yet.</div>
+                                            ) : (
+                                                friends.map((friend) => {
+                                                    return (
+                                                        <div key={friend.id} className="rounded-md border border-white/5 bg-neutral-900/45">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => onStartFriendChat(friend)}
+                                                                className="flex w-full items-center justify-between px-2 py-1.5 text-left text-xs text-neutral-200"
+                                                            >
+                                                                <span className="truncate">{friend.name || "Friend"}</span>
+                                                                <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">Chat</span>
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                })
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                                 {loading ? (
                                     <div className="flex justify-center py-8">
                                         <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-emerald-500"></div>
@@ -384,6 +394,9 @@ export function NormalModeLayout({
                                             <div className="pr-5">
                                                 <div className="flex items-center gap-1.5">
                                                     <div className="text-xs font-medium truncate">{thread.title || 'Untitled Chat'}</div>
+                                                    {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && (
+                                                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>
+                                                    )}
                                                     {streamingThreads.has(thread.id) && (
                                                         <div className="flex items-center gap-1 shrink-0">
                                                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
@@ -413,10 +426,13 @@ export function NormalModeLayout({
                 {/* Chat Area */}
                 <div className="flex-1 flex flex-col min-w-0 bg-neutral-950">
                     {/* Messages */}
-                    <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} ${isPeerHistoryView ? "flex min-h-0 flex-col overflow-hidden" : "overflow-y-auto overflow-x-hidden custom-scrollbar"}`}>
-                        {isPeerHistoryView ? (
-                            <PeerQueryHistoryPanel className="px-1" />
-                        ) : (
+                    <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+                        {activeFriendMeta?.isFriendChat && (
+                            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                                <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
+                                <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
+                            </div>
+                        )}
                         <AnimatePresence>
                             {messages.map((m) => {
                                 if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
@@ -531,18 +547,16 @@ export function NormalModeLayout({
                                 );
                             })}
                         </AnimatePresence>
-                        )}
-                        {!isPeerHistoryView && pendingAction && (
+                        {pendingAction && (
                             <HITLApproval
                                 hitl={pendingAction}
                                 onDecision={onActionDecision}
                             />
                         )}
-                        {!isPeerHistoryView ? <div ref={messagesEndRef} /> : null}
+                        <div ref={messagesEndRef} />
                     </main>
 
                     {/* Input Area */}
-                    {!isPeerHistoryView ? (
                     <footer
                         onDragEnter={(e) => {
                             e.preventDefault();
@@ -745,33 +759,9 @@ export function NormalModeLayout({
                                         rows={1}
                                         value={input}
                                         onChange={(e) => {
-                                            const v = e.target.value;
-                                            setInput(v);
-                                            setSlashOpen(v.includes('/'));
+                                            setInput(e.target.value);
                                         }}
                                         onKeyDown={(e) => {
-                                            if (slashOpen && filteredFriends.length > 0) {
-                                                if (e.key === 'ArrowDown') {
-                                                    e.preventDefault();
-                                                    setSlashIndex((prev) => (prev + 1) % filteredFriends.length);
-                                                    return;
-                                                }
-                                                if (e.key === 'ArrowUp') {
-                                                    e.preventDefault();
-                                                    setSlashIndex((prev) => (prev - 1 + filteredFriends.length) % filteredFriends.length);
-                                                    return;
-                                                }
-                                                if (e.key === 'Escape') {
-                                                    e.preventDefault();
-                                                    setSlashOpen(false);
-                                                    return;
-                                                }
-                                                if (e.key === 'Enter' && !e.shiftKey) {
-                                                    e.preventDefault();
-                                                    selectFriend(filteredFriends[slashIndex] || filteredFriends[0]);
-                                                    return;
-                                                }
-                                            }
                                             if (e.key === 'Enter' && !e.shiftKey) {
                                                 e.preventDefault();
                                                 onSend();
@@ -795,19 +785,6 @@ export function NormalModeLayout({
                                         className={`w-full resize-none rounded-xl border bg-neutral-800 px-4 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none transition-all max-h-[280px] custom-scrollbar ${isRecording ? 'border-emerald-500 ring-1 ring-emerald-500/20' : `border-neutral-700/50 focus:bg-neutral-800/50 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'}`} disabled:opacity-50`}
                                         disabled={isLoading}
                                     />
-                                    {slashOpen && filteredFriends.length > 0 && (
-                                        <div className="absolute bottom-full mb-2 left-0 w-full rounded-xl border border-neutral-700 bg-neutral-800 p-1 z-50 max-h-44 overflow-y-auto custom-scrollbar">
-                                            {filteredFriends.map((friend, idx) => (
-                                                <button
-                                                    key={friend.id}
-                                                    onClick={() => selectFriend(friend)}
-                                                    className={`w-full text-left px-2 py-1 rounded-md text-xs ${idx === slashIndex ? 'bg-emerald-500/20 text-emerald-200' : 'text-neutral-300 hover:bg-neutral-700'}`}
-                                                >
-                                                    /{friend.name}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
                                     {isRecording && (
                                         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
                                             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -815,10 +792,6 @@ export function NormalModeLayout({
                                         </div>
                                     )}
                                 </div>
-                                {selectedFriend && (
-                                    <div className="text-[10px] text-emerald-300">target: {selectedFriend.name}</div>
-                                )}
-
                                 {/* Send/Cancel button */}
                                 <button
                                     onClick={isLoading ? () => onCancel() : onSend}
@@ -845,15 +818,6 @@ export function NormalModeLayout({
                             </div>
                         </div>
                     </footer>
-                    ) : (
-                    <footer
-                        className={`shrink-0 border-t border-neutral-800 bg-neutral-950 py-3 text-center ${isHistoryVisible ? 'px-6' : 'px-24'}`}
-                    >
-                        <p className="text-xs text-neutral-500">
-                            Peer query history is read-only. Select a chat or start a new one to send messages.
-                        </p>
-                    </footer>
-                    )}
 
                 </div>
 

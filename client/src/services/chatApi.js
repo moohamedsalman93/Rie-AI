@@ -509,11 +509,11 @@ export async function clearPeerQueryHistory() {
   return response.json();
 }
 
-export async function askFriend(friendId, query) {
+export async function askFriend(friendId, query, threadId = null) {
   const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask`, {
     method: "POST",
     headers: getHeaders(),
-    body: JSON.stringify({ friend_id: friendId, query }),
+    body: JSON.stringify({ friend_id: friendId, query, thread_id: threadId }),
   });
   if (!response.ok) {
     await throwHttpError(response, "Failed to ask friend");
