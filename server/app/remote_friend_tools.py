@@ -4,6 +4,7 @@ import httpx
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from app.connectivity.constants import PEER_HTTP_ASK_TIMEOUT
 from app.connectivity.manager import connectivity_manager
 from app.database import (
     get_friend_by_id,
@@ -49,7 +50,7 @@ def _remote_friend_ask(question: str, friend_id: Optional[str] = None) -> str:
     }
     endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
     try:
-        with httpx.Client(timeout=12.0) as client:
+        with httpx.Client(timeout=PEER_HTTP_ASK_TIMEOUT) as client:
             response = client.post(endpoint, json=payload)
             response.raise_for_status()
             body = response.json()

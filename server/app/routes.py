@@ -58,6 +58,7 @@ from app.database import (
     update_friend_public_url,
 )
 from app.connectivity.manager import connectivity_manager
+from app.connectivity.constants import PEER_HTTP_ASK_TIMEOUT
 from app.connectivity.ngrok_installer import (
     detect_existing_ngrok,
     install_ngrok_windows,
@@ -644,6 +645,33 @@ def _peer_error_code(status_code: int) -> str:
     return "peer_rejected"
 
 
+def _extract_peer_http_error_detail(response: httpx.Response, max_len: int = 800) -> Optional[str]:
+    """Best-effort parse of FastAPI / JSON error bodies from peer responses."""
+    try:
+        data = response.json()
+    except Exception:
+        body = response.text.strip()
+        return body[:max_len] + ("..." if len(body) > max_len else "") if body else None
+    detail = data.get("detail") if isinstance(data, dict) else None
+    if isinstance(detail, str) and detail.strip():
+        text = detail.strip()
+    elif isinstance(detail, list) and detail:
+        parts: list[str] = []
+        for item in detail:
+            if isinstance(item, dict):
+                msg = item.get("msg") or item.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    parts.append(msg.strip())
+        text = "; ".join(parts[:5]) if parts else ""
+    else:
+        message = data.get("message") if isinstance(data, dict) else None
+        text = message.strip() if isinstance(message, str) and message.strip() else ""
+
+    if not text:
+        return None
+    return text[:max_len] + ("..." if len(text) > max_len else "")
+
+
 def _extract_peer_assistant_text(agent_result: Any) -> str:
     """
     Best-effort extraction of assistant text from agent invoke output.
@@ -817,10 +845,12 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     }
 
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
+        async with httpx.AsyncClient(timeout=PEER_HTTP_ASK_TIMEOUT) as client:
             response = await client.post(endpoint, json=payload)
             if response.status_code >= 400:
-                detail = f"Peer ask failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                base = f"Peer ask failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                peer_snippet = _extract_peer_http_error_detail(response)
+                detail = f"{base}: {peer_snippet}" if peer_snippet else base
                 raise HTTPException(status_code=502, detail=detail)
             body = response.json()
     except HTTPException:
