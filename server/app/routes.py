@@ -672,9 +672,58 @@ def _extract_peer_http_error_detail(response: httpx.Response, max_len: int = 800
     return text[:max_len] + ("..." if len(text) > max_len else "")
 
 
+def _peer_flatten_message_content(msg: Any) -> str:
+    """Plain text from a LangChain message object or dict."""
+    if isinstance(msg, dict):
+        content: Any = msg.get("content", "")
+    elif hasattr(msg, "content"):
+        content = getattr(msg, "content")
+    else:
+        return ""
+
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str) and part.strip():
+                parts.append(part.strip())
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        return "\n".join(parts)
+    return ""
+
+
+def _peer_message_is_assistant_reply(msg: Any) -> bool:
+    """True for model/user-facing assistant output; false for tools, human, system."""
+    if isinstance(msg, dict):
+        mt = str(msg.get("type", "")).lower()
+        role = str(msg.get("role", "")).lower()
+        if mt == "tool" or role == "tool":
+            return False
+        if mt in {"ai", "assistant"} or role in {"assistant", "ai"}:
+            return True
+        return False
+    cls = getattr(msg.__class__, "__name__", "")
+    if "ToolMessage" in cls or "HumanMessage" in cls or "SystemMessage" in cls:
+        return False
+    if "AIMessage" in cls:
+        return True
+    if hasattr(msg, "type"):
+        t = str(getattr(msg, "type", "")).lower()
+        if t in {"tool", "human", "system"}:
+            return False
+        if t in {"ai", "assistant"}:
+            return True
+    return False
+
+
 def _extract_peer_assistant_text(agent_result: Any) -> str:
     """
     Best-effort extraction of assistant text from agent invoke output.
+    LangGraph returns LangChain message objects (not dicts); we must duck-type them.
     """
     if isinstance(agent_result, str):
         return agent_result.strip()
@@ -686,24 +735,11 @@ def _extract_peer_assistant_text(agent_result: Any) -> str:
         return ""
 
     for msg in reversed(messages):
-        if not isinstance(msg, dict):
+        if not _peer_message_is_assistant_reply(msg):
             continue
-        msg_type = str(msg.get("type", "")).lower()
-        role = str(msg.get("role", "")).lower()
-        if msg_type not in {"ai", "assistant"} and role not in {"assistant"}:
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-        if isinstance(content, list):
-            text_parts: list[str] = []
-            for part in content:
-                if isinstance(part, dict):
-                    text = part.get("text")
-                    if isinstance(text, str) and text.strip():
-                        text_parts.append(text.strip())
-            if text_parts:
-                return "\n".join(text_parts)
+        text = _peer_flatten_message_content(msg)
+        if text:
+            return text
 
     return ""
 
