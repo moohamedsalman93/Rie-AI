@@ -50,6 +50,7 @@ from app.routes import router
 from app.database import init_db
 from app.mcp_client import mcp_manager
 from app.scheduler import scheduler_manager
+from app.connectivity.ngrok_autostart import try_start_ngrok_tunnel_on_startup
 
 # Initialize database
 init_db()
@@ -67,6 +68,7 @@ async def startup_event():
     """Start scheduler on app startup"""
     scheduler_manager.start()
     scheduler_manager.reschedule_pending_from_db()
+    await asyncio.to_thread(try_start_ngrok_tunnel_on_startup)
 
 @app.on_event("shutdown")
 async def shutdown_event():

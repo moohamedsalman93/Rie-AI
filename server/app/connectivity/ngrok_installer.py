@@ -101,6 +101,47 @@ def _is_running(proc: Optional[subprocess.Popen]) -> bool:
     return bool(proc and proc.poll() is None)
 
 
+def _tunnel_config_addr(tunnel: Dict[str, Any]) -> str:
+    cfg = tunnel.get("config")
+    if isinstance(cfg, dict):
+        return str(cfg.get("addr") or cfg.get("Addr") or "")
+    return ""
+
+
+def discover_https_url_for_local_port(backend_port: int = 14300) -> Optional[str]:
+    """
+    If an ngrok agent is listening on 4040 and already exposes this backend port,
+    return its https public URL. Used on startup to avoid spawning a duplicate agent.
+    """
+    port_fragment = f":{backend_port}"
+    try:
+        with urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        tunnels = data.get("tunnels") if isinstance(data, dict) else []
+        if not isinstance(tunnels, list):
+            return None
+        candidates: List[Dict[str, str]] = []
+        for tunnel in tunnels:
+            if not isinstance(tunnel, dict):
+                continue
+            addr = _tunnel_config_addr(tunnel)
+            # Match ":14300" only — avoid false positives like port 214300 (endswith "14300").
+            if port_fragment not in addr:
+                continue
+            public_url = str(tunnel.get("public_url") or "").strip()
+            proto = str(tunnel.get("proto") or "").strip().lower()
+            if not public_url:
+                continue
+            candidates.append({"url": public_url, "proto": proto})
+        for pref in ("https",):
+            for c in candidates:
+                if c["proto"] == pref:
+                    return c["url"]
+        return candidates[0]["url"] if candidates else None
+    except Exception:
+        return None
+
+
 def _discover_tunnel_url() -> Optional[str]:
     try:
         with urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as resp:
