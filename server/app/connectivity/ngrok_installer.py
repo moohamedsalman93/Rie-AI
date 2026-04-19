@@ -229,15 +229,30 @@ def start_tunnel(
         }
 
 
-def get_tunnel_runtime_status() -> Dict[str, Any]:
+def get_tunnel_runtime_status(backend_port: int = 14300) -> Dict[str, Any]:
+    """
+    Tunnel is considered running if either this process spawned ngrok, or the local
+    ngrok agent (4040) already forwards to backend_port — e.g. after uvicorn reload
+    or autostart that only persisted the URL without attaching in-memory state.
+    """
     with _tunnel_lock:
-        running = _is_running(_tunnel_process)
-        live_url = _discover_tunnel_url() if running else None
-        if live_url:
-            global _tunnel_url
-            _tunnel_url = live_url
+        subprocess_running = _is_running(_tunnel_process)
+        discovered_port = discover_https_url_for_local_port(backend_port)
+
+        live_url: Optional[str] = None
+        if subprocess_running:
+            live_url = _discover_tunnel_url()
+        if not live_url and discovered_port:
+            live_url = discovered_port
+
+        global _tunnel_url
+        effective_running = subprocess_running or bool(discovered_port)
+        effective_url = live_url or _tunnel_url or discovered_port
+        if effective_url:
+            _tunnel_url = effective_url
+
         return {
-            "running": running,
-            "pid": _tunnel_pid if running else None,
-            "public_url": live_url or _tunnel_url,
+            "running": effective_running,
+            "pid": _tunnel_pid if subprocess_running else None,
+            "public_url": effective_url,
         }
