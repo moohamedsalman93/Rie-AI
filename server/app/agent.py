@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import re
+from collections import OrderedDict
 from itertools import cycle
 from typing import Any, List, Optional, Iterator, AsyncIterator
 from collections.abc import Generator
@@ -270,6 +271,213 @@ class AgentManager:
         self._store: Optional[Any] = None
         self._current_chat_mode: Optional[str] = None
         self._current_speed_mode: Optional[str] = None
+        self._peer_inbound_cache: "OrderedDict[tuple[Any, ...], Any]" = OrderedDict()
+        self._peer_cache_max: int = 16
+
+    async def _ensure_checkpoint_and_store(self) -> None:
+        if not self._checkpointer:
+            import aiosqlite
+            if not hasattr(aiosqlite.Connection, "is_alive"):
+                def is_alive(self):
+                    return True
+                aiosqlite.Connection.is_alive = is_alive
+            self._checkpointer_cm = AsyncSqliteSaver.from_conn_string(get_checkpoint_db_path())
+            self._checkpointer = await self._checkpointer_cm.__aenter__()
+        if not self._store:
+            self._store = await memory_store.get_store()
+
+    async def _async_load_all_tools_map(self) -> dict[str, Any]:
+        """Runtime tool registry (baseline + MCP + external), for peer inbound policy."""
+        all_tools_map: dict[str, Any] = {
+            "internet_search": internet_search,
+            "schedule_chat_task": schedule_chat_task_tool,
+            "remote_friend_ask": remote_friend_ask_tool,
+            **WINDOWS_TOOLS,
+            **{t.name: t for t in LTM_TOOLS},
+            **{t.name: t for t in MCP_REGISTRY_TOOLS},
+        }
+        try:
+            loaded_mcp_tools = await mcp_manager.refresh_tools()
+            if loaded_mcp_tools:
+                print(f"DEBUG: Peer tool map integrated {len(loaded_mcp_tools)} MCP tools")
+        except Exception as e:
+            print(f"ERROR: Failed to load MCP tools for peer map: {e}")
+            loaded_mcp_tools = []
+        try:
+            loaded_external_tools = get_external_tools(settings.EXTERNAL_APIS) or []
+        except Exception as e:
+            print(f"ERROR: Failed to load external tools for peer map: {e}")
+            loaded_external_tools = []
+        for tool in loaded_mcp_tools + loaded_external_tools:
+            tool_name = getattr(tool, "name", None)
+            if tool_name:
+                all_tools_map[tool_name] = tool
+        return all_tools_map
+
+    def _create_llm_for_peer(self) -> Optional[BaseChatModel]:
+        """Instantiate LLM for peer sessions (does not mutate self._llm)."""
+        provider = settings.LLM_PROVIDER
+        if not provider:
+            provider = "rie"
+            if settings.GROQ_API_KEY:
+                provider = "groq"
+            elif settings.VERTEX_PROJECT:
+                provider = "vertex"
+            elif settings.GOOGLE_API_KEY:
+                provider = "gemini"
+            elif settings.OPENAI_API_KEY:
+                provider = "openai"
+
+        if provider == "vertex":
+            return self._create_vertex_llm()
+        if provider == "gemini":
+            return self._create_gemini_llm()
+        if provider == "groq":
+            return self._create_llm()
+        if provider == "openai":
+            return self._create_openai_llm()
+        if provider == "rie":
+            return self._create_rie_llm()
+        if provider == "ollama":
+            return self._create_ollama_llm()
+        print("ERROR: No valid LLM provider selected or configured for peer inbound.")
+        return None
+
+    def _peer_system_prompt(self, receive_profile: str) -> str:
+        eff = "chat" if receive_profile == "chat" else "agent"
+        mode_instructions = ""
+        if eff == "chat":
+            mode_instructions += (
+                "\n- CURRENT MODE: Chat Mode. You are acting as a conversational assistant. "
+                "Keep answers concise. Do not attempt complex multi-step technical workflows unless requested."
+            )
+        else:
+            mode_instructions += (
+                "\n- CURRENT MODE: Agent Mode. You are acting as an autonomous technical agent. "
+                "Use your tools extensively to accomplish the user's goal."
+            )
+        mode_instructions += "\n- SPEED: Flash. Provide immediate answers. Do not output internal thinking or plans."
+        planner_graph = settings.SUBAGENT_PLANNER_GRAPH or {}
+        planner_main_instruction = str(planner_graph.get("main_instruction", "")).strip()
+        planner_main_section = ""
+        if planner_main_instruction:
+            planner_main_section = (
+                "\n\n[Planner Main Instruction]\n"
+                f"{planner_main_instruction}\n"
+                "[End Planner Main Instruction]"
+            )
+        peer_note = (
+            "\n\n[Inbound linked device] You are replying to a request from another paired Rie install. "
+            "Use only the tools available in this session."
+        )
+        return SYSTEM_PROMPT + mode_instructions + planner_main_section + peer_note
+
+    def _lru_peer_put(self, key: tuple[Any, ...], agent: Any) -> None:
+        if key in self._peer_inbound_cache:
+            del self._peer_inbound_cache[key]
+        self._peer_inbound_cache[key] = agent
+        while len(self._peer_inbound_cache) > self._peer_cache_max:
+            self._peer_inbound_cache.popitem(last=False)
+
+    async def _get_or_create_peer_inbound_agent(
+        self,
+        receive_profile: str,
+        effective_tool_ids: List[str],
+        tools_to_use: List[Any],
+    ) -> Any:
+        cache_key = (receive_profile, tuple(effective_tool_ids))
+        if cache_key in self._peer_inbound_cache:
+            self._peer_inbound_cache.move_to_end(cache_key)
+            return self._peer_inbound_cache[cache_key]
+
+        llm = self._create_llm_for_peer()
+        if not llm:
+            raise RuntimeError("Agent not configured. Please check your API keys and try again.")
+
+        system_prompt = self._peer_system_prompt(receive_profile)
+        middleware_stack = [
+            SummarizationMiddleware(
+                model=llm,
+                trigger=("tokens", 8000),
+                keep=("messages", 20),
+                summary_prompt="""Summarize the conversation history. 
+                            1. EXPLICITLY preserve all file paths (e.g., /src/main.py).
+                            2. EXPLICITLY preserve class names and function names.
+                            3. Maintain a bulleted list of 'Tasks Completed' and 'Remaining Work'.
+                            4. Do not include actual code blocks in the summary, just describe what was modified.
+                            
+                            Messages to summarize:
+                            {messages}""",
+            )
+        ]
+        peer_agent = create_agent(
+            model=llm,
+            tools=tools_to_use,
+            system_prompt=system_prompt,
+            debug=True,
+            checkpointer=self._checkpointer,
+            store=self._store,
+            context_schema=Context,
+            middleware=middleware_stack,
+        )
+        self._lru_peer_put(cache_key, peer_agent)
+        return peer_agent
+
+    async def invoke_peer_inbound(
+        self,
+        *,
+        messages: Optional[list] = None,
+        thread_id: Optional[str] = None,
+        receive_profile: str = "chat",
+        effective_tool_ids: Optional[List[str]] = None,
+        memory_user_id: str = "default_user",
+        client_timezone: Optional[str] = None,
+        client_local_datetime_iso: Optional[str] = None,
+    ) -> dict:
+        """Run an inbound peer /connectivity/peer/receive turn with a cached per-policy agent."""
+        await self._ensure_checkpoint_and_store()
+        ids = effective_tool_ids or []
+        tools_map = await self._async_load_all_tools_map()
+        tools_to_use: List[Any] = []
+        for tid in ids:
+            t = tools_map.get(tid)
+            if t is not None:
+                tools_to_use.append(t)
+        if not tools_to_use:
+            raise RuntimeError(
+                "Peer policy allows no usable tools. Adjust Connectivity access for this friend."
+            )
+
+        peer_agent = await self._get_or_create_peer_inbound_agent(
+            receive_profile, ids, tools_to_use
+        )
+
+        config: dict = {"configurable": {}}
+        if thread_id:
+            config["configurable"]["thread_id"] = thread_id
+
+        context = Context(user_id=memory_user_id)
+
+        input_data: Any = None
+        if messages is not None:
+            clock = _client_clock_system_content(client_timezone, client_local_datetime_iso)
+            if clock:
+                input_data = {"messages": [{"role": "system", "content": clock}, *messages]}
+            else:
+                input_data = {"messages": messages}
+
+        eff_chat = "chat" if receive_profile == "chat" else "agent"
+        tokens = set_agent_context(
+            thread_id,
+            eff_chat,
+            "flash",
+            friend_target_id=None,
+            friend_target_name=None,
+        )
+        try:
+            return await peer_agent.ainvoke(input_data, config=config, context=context)
+        finally:
+            reset_agent_context(tokens)
     
     def _create_llm(self) -> Optional[BaseChatModel]:
         """Create and return a Groq LLM instance (potentially rotating)"""

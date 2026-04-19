@@ -449,6 +449,29 @@ export async function getFriends() {
   return response.json();
 }
 
+export async function getPeerAccessCatalog() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/peer-access/catalog`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch peer access catalog");
+  }
+  return response.json();
+}
+
+export async function updateFriendAccess(friendId, body) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/access`, {
+    method: "PATCH",
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to update friend access");
+  }
+  return response.json();
+}
+
 export async function removeFriend(friendId) {
   const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}`, {
     method: "DELETE",
@@ -456,6 +479,32 @@ export async function removeFriend(friendId) {
   });
   if (!response.ok) {
     await throwHttpError(response, "Failed to remove paired friend");
+  }
+  return response.json();
+}
+
+export async function fetchPeerQueryHistory(limit = 100, offset = 0) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  const response = await fetch(`${API_BASE_URL}/connectivity/peer-query-history?${params}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch peer query history");
+  }
+  return response.json();
+}
+
+export async function clearPeerQueryHistory() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/peer-query-history`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to clear peer query history");
   }
   return response.json();
 }

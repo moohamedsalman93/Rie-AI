@@ -190,6 +190,11 @@ def init_db():
 
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_device_id ON friends(device_id)")
 
+    cursor.execute("PRAGMA table_info(friends)")
+    friend_columns_peer = {row[1] for row in cursor.fetchall()}
+    if "peer_access_json" not in friend_columns_peer:
+        cursor.execute("ALTER TABLE friends ADD COLUMN peer_access_json TEXT")
+
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS friend_pair_tokens (
@@ -210,7 +215,26 @@ def init_db():
         )
         """
     )
-    
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS peer_query_events (
+            id TEXT PRIMARY KEY,
+            direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
+            friend_id TEXT,
+            friend_name TEXT,
+            query_text TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('ok', 'error')),
+            response_preview TEXT,
+            error_detail TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_peer_query_events_created ON peer_query_events(created_at DESC)"
+    )
+
     conn.commit()
     conn.close()
 
@@ -400,6 +424,127 @@ def delete_last_message(thread_id: str, role: Optional[str] = None):
     
     conn.commit()
     conn.close()
+
+
+# --- Peer query history (inbound / outbound connectivity) ---
+
+PEER_QUERY_TEXT_MAX = 8192
+PEER_RESPONSE_PREVIEW_MAX = 2048
+PEER_ERROR_DETAIL_MAX = 1024
+PEER_QUERY_EVENTS_RETENTION = 500
+
+
+def _truncate_peer_text(value: Optional[str], max_len: int) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value)
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 3] + "..."
+
+
+def append_peer_query_event(
+    direction: str,
+    friend_id: Optional[str],
+    friend_name: Optional[str],
+    query_text: str,
+    status: str,
+    response_preview: Optional[str] = None,
+    error_detail: Optional[str] = None,
+) -> None:
+    """Append one peer query event and prune to PEER_QUERY_EVENTS_RETENTION rows."""
+    if direction not in ("inbound", "outbound"):
+        direction = "outbound"
+    if status not in ("ok", "error"):
+        status = "error"
+    event_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    q = _truncate_peer_text(query_text, PEER_QUERY_TEXT_MAX) or ""
+    prev = _truncate_peer_text(response_preview, PEER_RESPONSE_PREVIEW_MAX)
+    err = _truncate_peer_text(error_detail, PEER_ERROR_DETAIL_MAX)
+
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO peer_query_events (
+                id, direction, friend_id, friend_name, query_text, status,
+                response_preview, error_detail, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                direction,
+                friend_id,
+                friend_name,
+                q,
+                status,
+                prev,
+                err,
+                now,
+            ),
+        )
+        cursor.execute("SELECT COUNT(*) FROM peer_query_events")
+        count_row = cursor.fetchone()
+        n = int(count_row[0]) if count_row else 0
+        if n > PEER_QUERY_EVENTS_RETENTION:
+            to_delete = n - PEER_QUERY_EVENTS_RETENTION
+            cursor.execute(
+                """
+                DELETE FROM peer_query_events WHERE id IN (
+                    SELECT id FROM peer_query_events ORDER BY created_at ASC LIMIT ?
+                )
+                """,
+                (to_delete,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_peer_query_events(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    """Newest first."""
+    if limit < 1:
+        limit = 1
+    if limit > 500:
+        limit = 500
+    if offset < 0:
+        offset = 0
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT id, direction, friend_id, friend_name, query_text, status,
+                   response_preview, error_detail, created_at
+            FROM peer_query_events
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        )
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def clear_peer_query_events() -> int:
+    """Delete all peer query events. Returns number of rows removed."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM peer_query_events")
+        n = int(cursor.fetchone()[0])
+        cursor.execute("DELETE FROM peer_query_events")
+        conn.commit()
+        return n
+    finally:
+        conn.close()
 
 
 # --- Scheduled tasks & UI notifications ---
@@ -648,7 +793,6 @@ def upsert_friend(
     existing = cursor.fetchone()
     if existing:
         friend_id = existing["id"]
-        created_at = existing["created_at"]
         cursor.execute(
             """
             UPDATE friends
@@ -659,7 +803,6 @@ def upsert_friend(
         )
     else:
         friend_id = str(uuid.uuid4())
-        created_at = now
         cursor.execute(
             """
             INSERT INTO friends (id, name, device_id, fingerprint, public_key, public_url, created_at, updated_at)
@@ -668,17 +811,10 @@ def upsert_friend(
             (friend_id, name, device_id, fingerprint, public_key, public_url, now, now),
         )
     conn.commit()
+    cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
+    row = cursor.fetchone()
     conn.close()
-    return {
-        "id": friend_id,
-        "name": name,
-        "device_id": device_id,
-        "fingerprint": fingerprint,
-        "public_key": public_key,
-        "public_url": public_url,
-        "created_at": created_at,
-        "updated_at": now,
-    }
+    return dict(row) if row else {}
 
 
 def list_friends() -> List[Dict[str, Any]]:
@@ -754,6 +890,24 @@ def approve_friend_for_thread(thread_id: str, friend_id: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def update_friend_peer_access(friend_id: str, peer_access_json: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Persist JSON policy for inbound peer access. Pass None to clear."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        "UPDATE friends SET peer_access_json = ?, updated_at = ? WHERE id = ?",
+        (peer_access_json, now, friend_id),
+    )
+    conn.commit()
+    cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def update_friend_public_url(friend_id: str, public_url: Optional[str]) -> Optional[Dict[str, Any]]:

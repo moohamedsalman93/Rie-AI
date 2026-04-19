@@ -2,9 +2,8 @@
 Pydantic models for request/response schemas
 """
 from datetime import datetime
+from typing import Literal, Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field
-
-from typing import Optional, List, Dict, Any, Union
 
 
 class ChatMessage(BaseModel):
@@ -263,6 +262,31 @@ class DeviceIdentity(BaseModel):
     public_url: Optional[str] = None
 
 
+class FriendPeerAccessPolicy(BaseModel):
+    """Effective inbound peer policy (merged defaults)."""
+
+    receive_profile: Literal["chat", "agent"] = "chat"
+    allowed_tool_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of runtime tools; None means allow full profile default set.",
+    )
+    memory_enabled: bool = True
+
+
+class FriendPeerAccessPatch(BaseModel):
+    receive_profile: Literal["chat", "agent"] = "chat"
+    allowed_tool_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Omit or null to mean 'all tools allowed for this profile' when saved.",
+    )
+    memory_enabled: bool = True
+
+
+class PeerAccessCatalogResponse(BaseModel):
+    chat_eligible: List[str]
+    agent_eligible: List[str]
+
+
 class FriendRecord(BaseModel):
     id: str
     name: str
@@ -272,6 +296,7 @@ class FriendRecord(BaseModel):
     public_url: Optional[str] = None
     created_at: str
     updated_at: str
+    peer_access: Optional[FriendPeerAccessPolicy] = None
 
 
 class PairingRequest(BaseModel):
@@ -337,6 +362,18 @@ class FriendStatusResponse(BaseModel):
     checked_at: str
     failure_code: Optional[str] = None
     failure_stage: Optional[str] = None
+
+
+class PeerQueryEventItem(BaseModel):
+    id: str
+    direction: Literal["inbound", "outbound"]
+    friend_id: Optional[str] = None
+    friend_name: Optional[str] = None
+    query_text: str
+    status: Literal["ok", "error"]
+    response_preview: Optional[str] = None
+    error_detail: Optional[str] = None
+    created_at: str
 
 
 class FriendApprovalRequest(BaseModel):

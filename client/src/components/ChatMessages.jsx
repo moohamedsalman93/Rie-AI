@@ -3,6 +3,8 @@ import { GitBranch, Info, RotateCw } from 'lucide-react';
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ToolChip } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
+import { PEER_QUERY_HISTORY_THREAD_ID } from "../constants/appConfig";
+import { PeerQueryHistoryPanel } from "./PeerQueryHistoryPanel";
 
 export function ChatMessages({
   messages,
@@ -16,7 +18,16 @@ export function ChatMessages({
   onDeleteMessage,
   onSend,
   onOpenInNewChat,
+  activeThreadId = null,
 }) {
+  if (activeThreadId === PEER_QUERY_HISTORY_THREAD_ID) {
+    return (
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-neutral-900/70 px-3 pb-12 pt-10">
+        <PeerQueryHistoryPanel />
+      </main>
+    );
+  }
+
   return (
     <main className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden bg-neutral-900/70 py-4 min-h-0">
       <AnimatePresence>

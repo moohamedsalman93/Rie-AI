@@ -11,6 +11,7 @@ from app.database import (
     list_friends,
     has_friend_thread_approval,
     get_or_create_device_identity,
+    append_peer_query_event,
 )
 from app.runtime_context import get_current_thread_id, get_current_friend_target_id
 
@@ -49,13 +50,34 @@ def _remote_friend_ask(question: str, friend_id: Optional[str] = None) -> str:
         "query": question.strip(),
     }
     endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
+    qlog = question.strip() or "(empty)"
     try:
         with httpx.Client(timeout=PEER_HTTP_ASK_TIMEOUT) as client:
             response = client.post(endpoint, json=payload)
             response.raise_for_status()
             body = response.json()
-            return f"{body.get('status', 'online')}: {body.get('message', '')}"
+            msg = body.get("message", "")
+            preview = msg if isinstance(msg, str) else str(msg)
+            append_peer_query_event(
+                "outbound",
+                friend["id"],
+                friend["name"],
+                qlog,
+                "ok",
+                preview,
+                None,
+            )
+            return f"{body.get('status', 'online')}: {preview}"
     except Exception as exc:
+        append_peer_query_event(
+            "outbound",
+            friend["id"],
+            friend["name"],
+            qlog,
+            "error",
+            None,
+            str(exc),
+        )
         return f"Failed to ask friend: {exc}"
 
 

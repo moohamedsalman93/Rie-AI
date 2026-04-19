@@ -32,6 +32,7 @@ export function ChatInputArea({
   friends = [],
   selectedFriend = null,
   onSelectFriendTarget = () => {},
+  peerQueryReadOnly = false,
 }) {
   const [dragCounter, setDragCounter] = useState(0);
   const [slashOpen, setSlashOpen] = useState(false);
@@ -67,6 +68,16 @@ export function ChatInputArea({
     };
     reader.readAsDataURL(file);
   };
+
+  if (peerQueryReadOnly) {
+    return (
+      <footer className="shrink-0 border-t border-neutral-800 bg-neutral-950 px-3 py-2.5 text-center">
+        <p className="text-xs text-neutral-500">
+          Peer query history is read-only. Open a chat from the list to send messages.
+        </p>
+      </footer>
+    );
+  }
 
   return (
     <footer

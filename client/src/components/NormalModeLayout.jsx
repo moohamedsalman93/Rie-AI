@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GitBranch, Info, RotateCw } from 'lucide-react';
+import { GitBranch, Info, RotateCw, MessageSquare } from 'lucide-react';
 import { getHistory, deleteThread } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
@@ -10,6 +10,8 @@ import { ModeToggle } from './ModeToggle';
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
 import logo from '../assets/logo.png';
+import { PEER_QUERY_HISTORY_THREAD_ID } from '../constants/appConfig';
+import { PeerQueryHistoryPanel } from './PeerQueryHistoryPanel';
 
 export function NormalModeLayout({
     messages,
@@ -178,6 +180,11 @@ export function NormalModeLayout({
         (t.title || 'Untitled Chat').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    const isPeerHistoryView = currentThreadId === PEER_QUERY_HISTORY_THREAD_ID;
+    const peerRowMatches =
+        !searchTerm.trim() ||
+        /peer|queries|query|friend|history|inbound|outbound|link/i.test(searchTerm);
+
     return (
         <div className="w-full h-full flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
             {/* Title Bar */}
@@ -340,13 +347,29 @@ export function NormalModeLayout({
 
                             {/* Thread List */}
                             <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-0.5">
+                                {peerRowMatches ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onSelectThread(PEER_QUERY_HISTORY_THREAD_ID)}
+                                        className={`mb-1.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition-colors ${currentThreadId === PEER_QUERY_HISTORY_THREAD_ID
+                                            ? 'bg-gradient-to-r from-violet-950/50 to-sky-950/40 text-neutral-100 ring-1 ring-white/10'
+                                            : 'border border-white/5 bg-neutral-900/40 text-neutral-300 hover:bg-neutral-800/60 hover:text-neutral-100'
+                                            }`}
+                                    >
+                                        <MessageSquare size={14} className="shrink-0 text-neutral-400" aria-hidden />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-xs font-medium truncate">Peer queries</div>
+                                            <div className="text-[9px] text-neutral-500">Friend traffic log</div>
+                                        </div>
+                                    </button>
+                                ) : null}
                                 {loading ? (
                                     <div className="flex justify-center py-8">
                                         <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-emerald-500"></div>
                                     </div>
                                 ) : filteredThreads.length === 0 ? (
-                                    <div className="text-center py-8 text-neutral-500 text-xs">
-                                        {searchTerm ? 'No matches' : 'No history'}
+                                    <div className="py-6 text-center text-xs text-neutral-500">
+                                        {searchTerm ? 'No chats match.' : null}
                                     </div>
                                 ) : (
                                     filteredThreads.map(thread => (
@@ -390,7 +413,10 @@ export function NormalModeLayout({
                 {/* Chat Area */}
                 <div className="flex-1 flex flex-col min-w-0 bg-neutral-950">
                     {/* Messages */}
-                    <main className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar transition-transform duration-300  py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"}`}>
+                    <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} ${isPeerHistoryView ? "flex min-h-0 flex-col overflow-hidden" : "overflow-y-auto overflow-x-hidden custom-scrollbar"}`}>
+                        {isPeerHistoryView ? (
+                            <PeerQueryHistoryPanel className="px-1" />
+                        ) : (
                         <AnimatePresence>
                             {messages.map((m) => {
                                 if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
@@ -505,16 +531,18 @@ export function NormalModeLayout({
                                 );
                             })}
                         </AnimatePresence>
-                        {pendingAction && (
+                        )}
+                        {!isPeerHistoryView && pendingAction && (
                             <HITLApproval
                                 hitl={pendingAction}
                                 onDecision={onActionDecision}
                             />
                         )}
-                        <div ref={messagesEndRef} />
+                        {!isPeerHistoryView ? <div ref={messagesEndRef} /> : null}
                     </main>
 
                     {/* Input Area */}
+                    {!isPeerHistoryView ? (
                     <footer
                         onDragEnter={(e) => {
                             e.preventDefault();
@@ -817,6 +845,15 @@ export function NormalModeLayout({
                             </div>
                         </div>
                     </footer>
+                    ) : (
+                    <footer
+                        className={`shrink-0 border-t border-neutral-800 bg-neutral-950 py-3 text-center ${isHistoryVisible ? 'px-6' : 'px-24'}`}
+                    >
+                        <p className="text-xs text-neutral-500">
+                            Peer query history is read-only. Select a chat or start a new one to send messages.
+                        </p>
+                    </footer>
+                    )}
 
                 </div>
 

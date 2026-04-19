@@ -23,6 +23,8 @@ from app.models import (
     FriendStatusResponse,
     NgrokInstallRequest, NgrokInstallResponse, NgrokStatusResponse,
     FriendApprovalRequest, FriendEndpointUpdateRequest,
+    FriendPeerAccessPatch, PeerAccessCatalogResponse,
+    PeerQueryEventItem,
 )
 from app.agent import agent_manager
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
@@ -56,6 +58,17 @@ from app.database import (
     has_friend_thread_approval,
     approve_friend_for_thread,
     update_friend_public_url,
+    update_friend_peer_access,
+    append_peer_query_event,
+    list_peer_query_events,
+    clear_peer_query_events,
+)
+from app.peer_access import (
+    compute_effective_tool_ids,
+    friend_row_peer_policy,
+    patch_to_policy_dict,
+    split_catalog_for_profiles,
+    validate_patch_tool_ids,
 )
 from app.connectivity.manager import connectivity_manager
 from app.connectivity.constants import PEER_HTTP_ASK_TIMEOUT
@@ -71,6 +84,21 @@ import io
 import base64
 
 router = APIRouter()
+
+
+def _friend_record_from_row(row: Dict[str, Any]) -> FriendRecord:
+    pa = friend_row_peer_policy(row)
+    return FriendRecord(
+        id=str(row["id"]),
+        name=str(row["name"]),
+        device_id=str(row["device_id"]),
+        fingerprint=str(row["fingerprint"]),
+        public_key=str(row["public_key"]),
+        public_url=row.get("public_url"),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        peer_access=pa,
+    )
 
 
 def _get_runtime_tool_catalog_ids() -> set[str]:
@@ -672,6 +700,13 @@ def _extract_peer_http_error_detail(response: httpx.Response, max_len: int = 800
     return text[:max_len] + ("..." if len(text) > max_len else "")
 
 
+def _peer_log_http_exception_detail(exc: HTTPException) -> str:
+    d = exc.detail
+    if isinstance(d, str):
+        return d
+    return str(d)
+
+
 def _peer_flatten_message_content(msg: Any) -> str:
     """Plain text from a LangChain message object or dict."""
     if isinstance(msg, dict):
@@ -821,7 +856,7 @@ async def connectivity_pair_confirm(data: PairingConfirmRequest):
             reciprocal_message = f"Peer finalize failed: {exc}"
 
     return PairingConfirmResponse(
-        friend=FriendRecord(**friend),
+        friend=_friend_record_from_row(friend),
         reciprocal_synced=reciprocal_synced,
         reciprocal_status=reciprocal_status,
         reciprocal_code=reciprocal_code,
@@ -840,12 +875,36 @@ async def connectivity_pair_finalize(data: PairingFinalizeRequest):
         public_key=data.peer_public_key.strip(),
         public_url=(data.peer_public_url or "").strip() or None,
     )
-    return FriendRecord(**friend)
+    return _friend_record_from_row(friend)
+
+
+@router.get("/connectivity/peer-access/catalog", response_model=PeerAccessCatalogResponse)
+async def connectivity_peer_access_catalog():
+    full = _get_runtime_tool_catalog_ids()
+    chat_eligible, agent_eligible = split_catalog_for_profiles(full)
+    return PeerAccessCatalogResponse(chat_eligible=chat_eligible, agent_eligible=agent_eligible)
+
+
+@router.patch("/connectivity/friends/{friend_id}/access", response_model=FriendRecord)
+async def connectivity_friend_access_patch(friend_id: str, data: FriendPeerAccessPatch):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    full = _get_runtime_tool_catalog_ids()
+    try:
+        validate_patch_tool_ids(data, full)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = patch_to_policy_dict(data)
+    updated = update_friend_peer_access(friend_id, json.dumps(payload))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    return _friend_record_from_row(updated)
 
 
 @router.get("/connectivity/friends", response_model=List[FriendRecord])
 async def connectivity_friends():
-    return [FriendRecord(**item) for item in list_friends()]
+    return [_friend_record_from_row(item) for item in list_friends()]
 
 
 @router.delete("/connectivity/friends/{friend_id}")
@@ -867,9 +926,23 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     if not friend:
         raise HTTPException(status_code=404, detail="Friend not found")
 
+    q_log = (data.query or "").strip()
+    fid = friend["id"]
+    fname = friend["name"]
+
     try:
         target_url = connectivity_manager.resolve_peer(friend)
     except RuntimeError as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            str(exc),
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     source_identity = _identity_payload()
@@ -887,24 +960,76 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
                 base = f"Peer ask failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
                 peer_snippet = _extract_peer_http_error_detail(response)
                 detail = f"{base}: {peer_snippet}" if peer_snippet else base
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "outbound",
+                    fid,
+                    fname,
+                    q_log or "(empty)",
+                    "error",
+                    None,
+                    detail,
+                )
                 raise HTTPException(status_code=502, detail=detail)
             body = response.json()
     except HTTPException:
         raise
     except httpx.TimeoutException as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            "Peer ask timed out [timeout]",
+        )
         raise HTTPException(status_code=502, detail="Peer ask timed out [timeout]") from exc
     except httpx.ConnectError as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            "Peer ask endpoint unreachable [unreachable]",
+        )
         raise HTTPException(status_code=502, detail="Peer ask endpoint unreachable [unreachable]") from exc
     except Exception as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            f"Failed to reach peer [network_error]: {exc}",
+        )
         raise HTTPException(status_code=502, detail=f"Failed to reach peer [network_error]: {exc}") from exc
 
     responder_url = _normalize_public_url(str(body.get("responder_public_url") or ""))
     if responder_url and responder_url != friend.get("public_url"):
         update_friend_public_url(friend_id, responder_url)
 
+    msg_preview = str(body.get("message", ""))
+    await run_in_threadpool(
+        append_peer_query_event,
+        "outbound",
+        fid,
+        fname,
+        q_log or "(empty)",
+        "ok",
+        msg_preview,
+        None,
+    )
+
     return PeerAskResponse(
         status=str(body.get("status", "online")),
-        message=str(body.get("message", "")),
+        message=msg_preview,
         responder_device_id=str(body.get("responder_device_id", friend["device_id"])),
     )
 
@@ -1004,12 +1129,36 @@ async def connectivity_friend_status(friend_id: str):
 @router.post("/connectivity/peer/receive", response_model=PeerAskResponse)
 async def connectivity_peer_receive(data: PeerReceiveRequest):
     friend = get_friend_by_device_id(data.from_device_id)
-    if not friend:
-        raise HTTPException(status_code=403, detail="Unknown peer")
-    if friend["fingerprint"] != data.from_fingerprint:
-        raise HTTPException(status_code=403, detail="Fingerprint mismatch")
     identity = _identity_payload()
     query = (data.query or "").strip()
+    peer_query = query if query else "Hello"
+    fid: Optional[str] = friend["id"] if friend else None
+    fname: Optional[str] = friend["name"] if friend else None
+
+    if not friend:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            None,
+            None,
+            peer_query,
+            "error",
+            None,
+            "Unknown peer",
+        )
+        raise HTTPException(status_code=403, detail="Unknown peer")
+    if friend["fingerprint"] != data.from_fingerprint:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            "Fingerprint mismatch",
+        )
+        raise HTTPException(status_code=403, detail="Fingerprint mismatch")
 
     # Keep status checks lightweight: do not route health probes through model inference.
     if query == "status_ping":
@@ -1020,35 +1169,133 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
             responder_public_url=identity.get("public_url"),
         )
 
-    # Run a local lightweight generation so peer chat returns an actual answer.
+    # Run a local generation respecting per-friend inbound access policy.
     local_thread_id = f"peer:{data.from_device_id}"
-    peer_query = query
-    if not peer_query:
-        peer_query = "Hello"
+
+    policy = friend_row_peer_policy(friend)
+    full_catalog = _get_runtime_tool_catalog_ids()
+    effective_ids = compute_effective_tool_ids(policy, full_catalog)
+    memory_user_id = (
+        f"peer:{data.from_device_id}" if policy.memory_enabled else "default_user"
+    )
 
     try:
         if not agent_manager.is_configured:
             raise HTTPException(status_code=503, detail="Receiver agent is not configured")
 
-        agent_result = await agent_manager.invoke(
+        agent_result = await agent_manager.invoke_peer_inbound(
             messages=[{"role": "user", "content": peer_query}],
             thread_id=local_thread_id,
-            chat_mode="chat",
-            speed_mode="flash",
+            receive_profile=policy.receive_profile,
+            effective_tool_ids=effective_ids,
+            memory_user_id=memory_user_id,
         )
         reply_text = _extract_peer_assistant_text(agent_result) or "I received your message but could not generate a reply."
-    except HTTPException:
+    except HTTPException as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            _peer_log_http_exception_detail(exc),
+        )
         raise
     except httpx.ConnectError as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            f"Receiver model provider is unreachable [unreachable]: {exc}",
+        )
         raise HTTPException(status_code=503, detail=f"Receiver model provider is unreachable [unreachable]: {exc}") from exc
+    except RuntimeError as exc:
+        msg = str(exc).lower()
+        if "peer policy" in msg or "no usable tools" in msg:
+            detail = "Peer access policy blocks all tools for this friend. Update Connectivity settings."
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                detail,
+            )
+            raise HTTPException(status_code=403, detail=detail) from exc
+        if "not configured" in msg:
+            detail = "Receiver agent is not configured"
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                detail,
+            )
+            raise HTTPException(status_code=503, detail=detail) from exc
+        raise
     except Exception as exc:
-        detail = str(exc).lower()
-        if "upstream_connection_error" in detail or "connection error" in detail:
-            raise HTTPException(status_code=503, detail="Receiver model provider is unreachable [unreachable]") from exc
-        if "agent not configured" in detail:
-            raise HTTPException(status_code=503, detail="Receiver agent is not configured") from exc
+        detail_low = str(exc).lower()
+        if "upstream_connection_error" in detail_low or "connection error" in detail_low:
+            d = "Receiver model provider is unreachable [unreachable]"
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                d,
+            )
+            raise HTTPException(status_code=503, detail=d) from exc
+        if "agent not configured" in detail_low:
+            d = "Receiver agent is not configured"
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                d,
+            )
+            raise HTTPException(status_code=503, detail=d) from exc
         logging.error(f"Peer receive generation failed: {exc}", exc_info=True)
-        raise HTTPException(status_code=502, detail=f"Receiver failed to generate response [peer_server_error]: {exc}") from exc
+        d = f"Receiver failed to generate response [peer_server_error]: {exc}"
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            d,
+        )
+        raise HTTPException(status_code=502, detail=d) from exc
+
+    await run_in_threadpool(
+        append_peer_query_event,
+        "inbound",
+        fid,
+        fname,
+        peer_query,
+        "ok",
+        reply_text,
+        None,
+    )
 
     return PeerAskResponse(
         status="online",
@@ -1056,6 +1303,21 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
         responder_device_id=identity["device_id"],
         responder_public_url=identity.get("public_url"),
     )
+
+
+@router.get("/connectivity/peer-query-history", response_model=List[PeerQueryEventItem])
+async def connectivity_peer_query_history(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    rows = await run_in_threadpool(list_peer_query_events, limit, offset)
+    return [PeerQueryEventItem(**r) for r in rows]
+
+
+@router.delete("/connectivity/peer-query-history")
+async def connectivity_peer_query_history_clear():
+    deleted = await run_in_threadpool(clear_peer_query_events)
+    return {"status": "success", "deleted": deleted}
 
 
 @router.post("/connectivity/friends/{friend_id}/endpoint", response_model=FriendRecord)
@@ -1066,7 +1328,7 @@ async def connectivity_friend_endpoint_update(friend_id: str, data: FriendEndpoi
     updated = update_friend_public_url(friend_id, data.public_url)
     if not updated:
         raise HTTPException(status_code=404, detail="Friend not found")
-    return FriendRecord(**updated)
+    return _friend_record_from_row(updated)
 
 
 @router.get("/connectivity/friends/{friend_id}/approval")

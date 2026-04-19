@@ -21,6 +21,7 @@ import { FloatingChatWindow } from "./components/FloatingChatWindow";
 import { HITLApproval } from "./components/HITLApproval";
 import {
   WINDOW_SIZES,
+  PEER_QUERY_HISTORY_THREAD_ID,
   getToolDisplayName,
   initialMessages,
 } from "./constants/appConfig";
@@ -582,6 +583,9 @@ function MainApp() {
     }
   }, [windowMode, queueSentence, handleOpen, minimizeToBottomCenter]);
   const handleSend = useCallback(async (overrideText = null, isVoice = false, overrideImage = null) => {
+    if (threadIdRef.current === PEER_QUERY_HISTORY_THREAD_ID) {
+      return;
+    }
     const textToSend = (typeof overrideText === 'string') ? overrideText : input;
     const trimmed = textToSend.trim();
     const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage;
@@ -1045,6 +1049,11 @@ function MainApp() {
     // Update active state immediately to provide feedback
     setActiveThreadId(threadId);
     threadIdRef.current = threadId;
+
+    if (threadId === PEER_QUERY_HISTORY_THREAD_ID) {
+      return;
+    }
+
     saveThreadId(threadId);
 
     // If session already exists in memory and not empty, don't refetch
@@ -1406,6 +1415,9 @@ function MainApp() {
   useEffect(() => {
     const initChat = async () => {
       let storedThreadId = getStoredThreadId();
+      if (storedThreadId === PEER_QUERY_HISTORY_THREAD_ID) {
+        storedThreadId = null;
+      }
       if (storedThreadId) {
         try {
           const msgs = await getThreadMessages(storedThreadId);

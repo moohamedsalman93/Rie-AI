@@ -71,4 +71,8 @@ htmlcov/
 
 *db
 
+# SQLite write-ahead / shared memory (never commit)
+*.db-shm
+*.db-wal
+
 server/chroma_ltm

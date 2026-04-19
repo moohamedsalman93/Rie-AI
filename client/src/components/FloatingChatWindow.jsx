@@ -4,6 +4,7 @@ import { FloatingScheduleSheet } from "./FloatingScheduleSheet";
 import { ChatMessages } from "./ChatMessages";
 import { ChatInputArea } from "./ChatInputArea";
 import { HistorySidebar } from "./HistorySidebar";
+import { PEER_QUERY_HISTORY_THREAD_ID } from "../constants/appConfig";
 import { Terminal } from "./Terminal";
 import { WelcomeScreen } from "./WelcomeScreen";
 import { SettingsPage } from "./SettingsPage";
@@ -169,6 +170,7 @@ export function FloatingChatWindow({
                 onDeleteMessage={onDeleteMessage}
                 onSend={onSend}
                 onOpenInNewChat={onOpenMessageInNewChat}
+                activeThreadId={activeThreadId}
               />
             </div>
           </div>
@@ -176,6 +178,7 @@ export function FloatingChatWindow({
           <ChatInputArea
             input={input}
             setInput={setInput}
+            peerQueryReadOnly={activeThreadId === PEER_QUERY_HISTORY_THREAD_ID}
             isLoading={isLoading}
             isRecording={isRecording}
             isCapturing={isCapturing}
