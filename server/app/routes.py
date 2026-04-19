@@ -58,6 +58,7 @@ from app.database import (
     delete_friend,
     has_friend_thread_approval,
     approve_friend_for_thread,
+    upsert_friend_thread,
     update_friend_public_url,
     update_friend_peer_access,
     append_peer_query_event,
@@ -931,6 +932,7 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     thread_id = (data.thread_id or "").strip() or str(uuid.uuid4())
     fid = friend["id"]
     fname = friend["name"]
+    await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
     await run_in_threadpool(save_message, thread_id, "user", q_log or "(empty)")
 
     try:
@@ -1021,6 +1023,7 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
 
     msg_preview = str(body.get("message", ""))
     responder_thread_id = str(body.get("thread_id") or thread_id)
+    await run_in_threadpool(upsert_friend_thread, responder_thread_id, fid, fname)
     await run_in_threadpool(save_message, responder_thread_id, "assistant", msg_preview)
     await run_in_threadpool(
         append_peer_query_event,
@@ -1142,6 +1145,8 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
     thread_id = (data.thread_id or "").strip() or f"peer:{data.from_device_id}"
     fid: Optional[str] = friend["id"] if friend else None
     fname: Optional[str] = friend["name"] if friend else None
+    if fid and fname:
+        await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
 
     if not friend:
         await run_in_threadpool(
@@ -1200,6 +1205,8 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
             memory_user_id=memory_user_id,
         )
         reply_text = _extract_peer_assistant_text(agent_result) or "I received your message but could not generate a reply."
+        if fid and fname:
+            await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
         await run_in_threadpool(save_message, thread_id, "assistant", reply_text)
     except HTTPException as exc:
         await run_in_threadpool(

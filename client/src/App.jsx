@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, askFriend, deleteThread } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, askFriend, deleteThread } from "./services/chatApi";
 import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
@@ -78,6 +78,22 @@ function normalizeFriendMetaMap(metaMap) {
     };
   });
   return normalized;
+}
+
+function mergeFriendMetaFromHistoryRows(baseMap, rows) {
+  const next = { ...(baseMap || {}) };
+  (rows || []).forEach((row) => {
+    const threadId = String(row?.thread_id || row?.id || "");
+    const friendId = row?.friend_id || null;
+    const friendName = row?.friend_name || "Friend";
+    if (!threadId || !friendId) return;
+    next[threadId] = {
+      friendId,
+      friendName,
+      isFriendChat: true,
+    };
+  });
+  return next;
 }
 
 function MainApp() {
@@ -1137,6 +1153,11 @@ function MainApp() {
     setStreamingThreads(prev => new Set(prev).add(threadId)); // Use as loading indicator
     try {
       const msgs = await getThreadMessages(threadId);
+      const mergedMeta = mergeFriendMetaFromHistoryRows(friendThreadMeta, msgs);
+      if (Object.keys(mergedMeta).length !== Object.keys(friendThreadMeta).length) {
+        setFriendThreadMeta(mergedMeta);
+        saveFriendThreadMeta(mergedMeta);
+      }
       if (msgs && msgs.length > 0) {
         const formatted = msgs.map(m => ({
           id: m.id,
@@ -1161,7 +1182,7 @@ function MainApp() {
         return next;
       });
     }
-  }, [sessions]);
+  }, [sessions, friendThreadMeta]);
 
   const handleDeleteThread = useCallback(async (threadId) => {
     if (!threadId) return;
@@ -1522,13 +1543,25 @@ function MainApp() {
   // Load history and thread ID on mount
   useEffect(() => {
     const initChat = async () => {
-      const normalizedMeta = normalizeFriendMetaMap(getFriendThreadMeta());
+      let normalizedMeta = normalizeFriendMetaMap(getFriendThreadMeta());
+      try {
+        const historyRows = await getHistory();
+        normalizedMeta = mergeFriendMetaFromHistoryRows(normalizedMeta, historyRows);
+      } catch (e) {
+        console.warn("Failed to hydrate friend metadata from history:", e);
+      }
       setFriendThreadMeta(normalizedMeta);
       saveFriendThreadMeta(normalizedMeta);
       let storedThreadId = getStoredThreadId();
       if (storedThreadId) {
         try {
           const msgs = await getThreadMessages(storedThreadId);
+          const hydrated = mergeFriendMetaFromHistoryRows(normalizedMeta, msgs);
+          if (Object.keys(hydrated).length !== Object.keys(normalizedMeta).length) {
+            setFriendThreadMeta(hydrated);
+            saveFriendThreadMeta(hydrated);
+            normalizedMeta = hydrated;
+          }
           if (msgs && msgs.length > 0) {
             const formatted = msgs.map(m => ({
               id: m.id,

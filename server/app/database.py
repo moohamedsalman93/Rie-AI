@@ -215,6 +215,17 @@ def init_db():
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS friend_threads (
+            thread_id TEXT PRIMARY KEY,
+            friend_id TEXT NOT NULL,
+            friend_name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
 
     cursor.execute(
         """
@@ -354,7 +365,17 @@ def get_threads() -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM threads ORDER BY updated_at DESC")
+    cursor.execute(
+        """
+        SELECT
+            t.*,
+            ft.friend_id AS friend_id,
+            ft.friend_name AS friend_name
+        FROM threads t
+        LEFT JOIN friend_threads ft ON ft.thread_id = t.id
+        ORDER BY t.updated_at DESC
+        """
+    )
     rows = cursor.fetchall()
     
     threads = []
@@ -363,7 +384,10 @@ def get_threads() -> List[Dict[str, Any]]:
             "id": row["id"],
             "title": row["title"],
             "created_at": row["created_at"],
-            "updated_at": row["updated_at"]
+            "updated_at": row["updated_at"],
+            "is_friend_chat": bool(row["friend_id"]),
+            "friend_id": row["friend_id"],
+            "friend_name": row["friend_name"],
         })
         
     conn.close()
@@ -376,7 +400,19 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC", (thread_id,))
+    cursor.execute(
+        """
+        SELECT
+            m.*,
+            ft.friend_id AS friend_id,
+            ft.friend_name AS friend_name
+        FROM messages m
+        LEFT JOIN friend_threads ft ON ft.thread_id = m.thread_id
+        WHERE m.thread_id = ?
+        ORDER BY m.created_at ASC
+        """,
+        (thread_id,),
+    )
     rows = cursor.fetchall()
     
     messages = []
@@ -386,7 +422,10 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
             "role": row["role"],
             "content": row["content"],
             "image_url": row["image_url"],
-            "created_at": row["created_at"]
+            "created_at": row["created_at"],
+            "is_friend_chat": bool(row["friend_id"]),
+            "friend_id": row["friend_id"],
+            "friend_name": row["friend_name"],
         })
         
     conn.close()
@@ -399,6 +438,7 @@ def delete_thread(thread_id: str):
     cursor = conn.cursor()
     
     cursor.execute("DELETE FROM messages WHERE thread_id = ?", (thread_id,))
+    cursor.execute("DELETE FROM friend_threads WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
     
     conn.commit()
@@ -855,6 +895,7 @@ def delete_friend(friend_id: str) -> bool:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM friend_thread_approvals WHERE friend_id = ?", (friend_id,))
+    cursor.execute("DELETE FROM friend_threads WHERE friend_id = ?", (friend_id,))
     cursor.execute("DELETE FROM friends WHERE id = ?", (friend_id,))
     deleted = cursor.rowcount > 0
     conn.commit()
@@ -890,6 +931,37 @@ def approve_friend_for_thread(thread_id: str, friend_id: str) -> None:
     )
     conn.commit()
     conn.close()
+
+
+def upsert_friend_thread(thread_id: str, friend_id: str, friend_name: str) -> None:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        """
+        INSERT INTO friend_threads (thread_id, friend_id, friend_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(thread_id) DO UPDATE SET
+            friend_id = excluded.friend_id,
+            friend_name = excluded.friend_name,
+            updated_at = excluded.updated_at
+        """,
+        (thread_id, friend_id, friend_name, now, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_friend_thread(thread_id: str) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM friend_threads WHERE thread_id = ?", (thread_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def update_friend_peer_access(friend_id: str, peer_access_json: Optional[str]) -> Optional[Dict[str, Any]]:
