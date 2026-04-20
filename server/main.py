@@ -44,9 +44,10 @@ logging.config.dictConfig(LOG_CONFIG)
 logger = logging.getLogger(__name__)
 logger.info(f"Backend starting up... Logging to: {settings.LOG_FILE}")
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import router
+from app.realtime import hub, websocket_endpoint
 from app.database import init_db
 from app.mcp_client import mcp_manager
 from app.scheduler import scheduler_manager
@@ -66,6 +67,7 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     """Start scheduler on app startup"""
+    hub.set_loop(asyncio.get_running_loop())
     scheduler_manager.start()
     scheduler_manager.reschedule_pending_from_db()
     await asyncio.to_thread(try_start_ngrok_tunnel_on_startup)
@@ -93,6 +95,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:14200",  # Tauri/Vite dev server
         "http://127.0.0.1:14200",
+        "http://localhost:14300",  # Backend / browser tests hitting API origin
+        "http://127.0.0.1:14300",
         "tauri://localhost",  # Tauri production
         "https://tauri.localhost",  # Tauri production HTTPS
         "http://tauri.localhost",  # Tauri production HTTP
@@ -107,6 +111,11 @@ from fastapi import Depends
 
 # Include routers
 app.include_router(router, dependencies=[Depends(verify_app_token)])
+
+
+@app.websocket("/ws")
+async def ws_route(websocket: WebSocket):
+    await websocket_endpoint(websocket)
 
 
 if __name__ == "__main__":

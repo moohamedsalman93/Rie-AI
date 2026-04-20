@@ -4,7 +4,20 @@
 
 import { getConversationContext } from "./memoryService";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:14300";
+function normalizeApiBaseUrl() {
+  let s = (import.meta.env.VITE_API_URL || "http://localhost:14300").trim();
+  if (!/^https?:\/\//i.test(s)) {
+    s = `http://${s.replace(/^\/+/, "")}`;
+  }
+  return s.replace(/\/+$/, "") || "http://localhost:14300";
+}
+
+const API_BASE_URL = normalizeApiBaseUrl();
+
+/** Same base used for HTTP fetch (trailing slashes stripped). */
+export function getApiBaseUrl() {
+  return API_BASE_URL;
+}
 
 /**
  * User device local clock for the backend (avoids wrong year/day in scheduling).
@@ -53,6 +66,11 @@ let appToken = null;
  */
 export function setAppToken(token) {
   appToken = token;
+}
+
+/** @returns {string|null} */
+export function getAppToken() {
+  return appToken;
 }
 
 /**

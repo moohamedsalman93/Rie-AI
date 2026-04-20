@@ -46,10 +46,10 @@ export function ScheduledTasksPanel({ apiStatus, className = "", variant = "defa
   }, [load]);
 
   useEffect(() => {
-    if (apiStatus !== 'online') return;
-    const t = setInterval(load, 20000);
-    return () => clearInterval(t);
-  }, [apiStatus, load]);
+    const onWs = () => load();
+    window.addEventListener("rie-scheduler-tasks-refresh", onWs);
+    return () => window.removeEventListener("rie-scheduler-tasks-refresh", onWs);
+  }, [load]);
 
   // Refresh when a chat finishes (agent may have called schedule_chat_task)
   useEffect(() => {

@@ -17,6 +17,7 @@ export function ChatMessages({
   onSend,
   onOpenInNewChat,
   activeFriendMeta = null,
+  isReceiverReadOnlyThread = false,
 }) {
   return (
     <main className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden bg-neutral-900/70 py-4 min-h-0">
@@ -24,6 +25,11 @@ export function ChatMessages({
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
           <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
           <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
+          {isReceiverReadOnlyThread && (
+            <div className="mt-1 text-emerald-200/80">
+              This chat was created by Device A ({activeFriendMeta.originDeviceName || activeFriendMeta.originDeviceId || "remote device"}) and is read-only on this device.
+            </div>
+          )}
         </div>
       )}
       <AnimatePresence>
@@ -42,10 +48,10 @@ export function ChatMessages({
               key={m.id}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`flex flex-col ${m.from === "user" ? "items-end" : "items-start"} w-full group`}
+              className={`flex flex-col ${(isReceiverReadOnlyThread ? m.from !== "user" : m.from === "user") ? "items-end" : "items-start"} w-full group`}
             >
-              <div className={`flex items-end gap-2 min-w-0 max-w-[95%] ${m.from === 'user' ? 'justify-end' : ''}`}>
-                {m.from === 'user' && (
+              <div className={`flex items-end gap-2 min-w-0 max-w-[95%] ${(isReceiverReadOnlyThread ? m.from !== "user" : m.from === 'user') ? 'justify-end' : ''}`}>
+                {!isReceiverReadOnlyThread && m.from === 'user' && (
                   <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
                     <button
                       onClick={(e) => {
@@ -131,7 +137,7 @@ export function ChatMessages({
               </div>
             </div>
             <span className={`mt-1 text-[10px] font-medium text-neutral-500 ${m.error ? 'text-red-500/50' : ''}`}>
-              {m.from === "user" ? "You" : "Assistant"} {m.error && '• Failed'}
+              {isReceiverReadOnlyThread ? (m.from === "user" ? (activeFriendMeta?.originDeviceName || "Device A") : "You") : (m.from === "user" ? "You" : "Assistant")} {m.error && '• Failed'}
             </span>
           </motion.div>
           );

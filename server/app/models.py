@@ -344,6 +344,7 @@ class PeerAskRequest(BaseModel):
 class PeerReceiveRequest(BaseModel):
     from_device_id: str
     from_fingerprint: str
+    from_device_name: Optional[str] = None
     query: str
     thread_id: Optional[str] = None
 

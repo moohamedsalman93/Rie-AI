@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
@@ -73,6 +73,7 @@ export function NormalModeLayout({
     friends = [],
     friendThreadMeta = {},
     activeFriendMeta = null,
+    isReceiverReadOnlyThread = false,
     onSelectFriendChat = () => {},
     onStartFriendChat = () => {},
 }) {
@@ -110,11 +111,7 @@ export function NormalModeLayout({
         }
     }, [terminalLogs, isTerminalOpen]);
 
-    useEffect(() => {
-        loadThreads();
-    }, [currentThreadId]);
-
-    const loadThreads = async () => {
+    const loadThreads = useCallback(async () => {
         setLoading(true);
         try {
             const data = await getHistory();
@@ -124,7 +121,19 @@ export function NormalModeLayout({
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    useEffect(() => {
+        loadThreads();
+    }, [currentThreadId, loadThreads]);
+
+    useEffect(() => {
+        const onRefresh = () => {
+            loadThreads();
+        };
+        window.addEventListener('rie-history-refresh', onRefresh);
+        return () => window.removeEventListener('rie-history-refresh', onRefresh);
+    }, [loadThreads]);
 
     const handleDeleteClick = (e, threadId) => {
         e.stopPropagation();
@@ -431,6 +440,9 @@ export function NormalModeLayout({
                             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
                                 <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
                                 <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
+                                {isReceiverReadOnlyThread && (
+                                    <div className="mt-1 text-emerald-200/80">This chat was created by Device A ({activeFriendMeta.originDeviceName || activeFriendMeta.originDeviceId || "remote device"}) and is read-only on this device.</div>
+                                )}
                             </div>
                         )}
                         <AnimatePresence>
@@ -443,11 +455,11 @@ export function NormalModeLayout({
                                         key={m.id}
                                         initial={{ opacity: 0, y: 10 }}
                                         animate={{ opacity: 1, y: 0 }}
-                                        className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
+                                        className={`flex flex-col ${(isReceiverReadOnlyThread ? m.from !== 'user' : m.from === 'user') ? 'items-end' : 'items-start'} w-full group`}
                                     >
-                                        <div className={`flex items-end gap-2 min-w-0 max-w-[85%] ${m.from === 'user' ? 'justify-end' : ''}`}>
+                                        <div className={`flex items-end gap-2 min-w-0 max-w-[85%] ${(isReceiverReadOnlyThread ? m.from !== 'user' : m.from === 'user') ? 'justify-end' : ''}`}>
 
-                                            {m.from === 'user' && m.error && (
+                                            {!isReceiverReadOnlyThread && m.from === 'user' && m.error && (
                                                 <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
                                                     <button
                                                         onClick={(e) => {
@@ -480,7 +492,7 @@ export function NormalModeLayout({
                                                     </div>
                                                 </div>
                                             )}
-                                            {m.from === 'user' && !m.error && (
+                                            {!isReceiverReadOnlyThread && m.from === 'user' && !m.error && (
                                                 <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
                                                     <button
                                                         onClick={(e) => {
@@ -541,7 +553,7 @@ export function NormalModeLayout({
                                             </div>
                                         </div>
                                         <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
-                                            {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
+                                            {isReceiverReadOnlyThread ? (m.from === 'user' ? (activeFriendMeta?.originDeviceName || "Device A") : 'You') : (m.from === 'user' ? 'You' : 'Assistant')} {m.error && '• Failed'}
                                         </span>
                                     </motion.div>
                                 );
@@ -557,6 +569,13 @@ export function NormalModeLayout({
                     </main>
 
                     {/* Input Area */}
+                    {isReceiverReadOnlyThread ? (
+                    <footer className={`px-4 py-2 relative ${isHistoryVisible ? "px-6" : "px-24"}`}>
+                        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-center text-xs text-amber-200">
+                            This remote-created friend thread is read-only on this device.
+                        </div>
+                    </footer>
+                    ) : (
                     <footer
                         onDragEnter={(e) => {
                             e.preventDefault();
@@ -818,6 +837,7 @@ export function NormalModeLayout({
                             </div>
                         </div>
                     </footer>
+                    )}
 
                 </div>
 

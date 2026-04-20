@@ -221,11 +221,19 @@ def init_db():
             thread_id TEXT PRIMARY KEY,
             friend_id TEXT NOT NULL,
             friend_name TEXT NOT NULL,
+            origin_device_id TEXT,
+            origin_device_name TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+    cursor.execute("PRAGMA table_info(friend_threads)")
+    friend_thread_cols = {row[1] for row in cursor.fetchall()}
+    if "origin_device_id" not in friend_thread_cols:
+        cursor.execute("ALTER TABLE friend_threads ADD COLUMN origin_device_id TEXT")
+    if "origin_device_name" not in friend_thread_cols:
+        cursor.execute("ALTER TABLE friend_threads ADD COLUMN origin_device_name TEXT")
 
     cursor.execute(
         """
@@ -351,12 +359,27 @@ def save_message(thread_id: str, role: str, content: str, image_url: Optional[st
         "INSERT INTO messages (thread_id, role, content, image_url, created_at) VALUES (?, ?, ?, ?, ?)",
         (thread_id, role, content, image_url, now)
     )
-    
+    message_id = cursor.lastrowid
+
     # Update thread's updated_at
     cursor.execute("UPDATE threads SET updated_at = ? WHERE id = ?", (now, thread_id))
-    
+
     conn.commit()
     conn.close()
+
+    try:
+        from app.realtime import hub
+
+        hub.emit_fire_and_forget(
+            "history",
+            {
+                "action": "message_added",
+                "thread_id": thread_id,
+                "message_id": message_id,
+            },
+        )
+    except Exception:
+        pass
 
 def get_threads() -> List[Dict[str, Any]]:
     """Get all chat threads ordered by last update"""
@@ -365,12 +388,18 @@ def get_threads() -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
+    cursor.execute("SELECT device_id FROM device_identity WHERE id = 1")
+    local_row = cursor.fetchone()
+    local_device_id = local_row["device_id"] if local_row else None
+
     cursor.execute(
         """
         SELECT
             t.*,
             ft.friend_id AS friend_id,
-            ft.friend_name AS friend_name
+            ft.friend_name AS friend_name,
+            ft.origin_device_id AS origin_device_id,
+            ft.origin_device_name AS origin_device_name
         FROM threads t
         LEFT JOIN friend_threads ft ON ft.thread_id = t.id
         ORDER BY t.updated_at DESC
@@ -388,6 +417,14 @@ def get_threads() -> List[Dict[str, Any]]:
             "is_friend_chat": bool(row["friend_id"]),
             "friend_id": row["friend_id"],
             "friend_name": row["friend_name"],
+            "origin_device_id": row["origin_device_id"],
+            "origin_device_name": row["origin_device_name"],
+            "is_remote_origin": bool(
+                row["friend_id"]
+                and row["origin_device_id"]
+                and local_device_id
+                and row["origin_device_id"] != local_device_id
+            ),
         })
         
     conn.close()
@@ -400,12 +437,18 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
+    cursor.execute("SELECT device_id FROM device_identity WHERE id = 1")
+    local_row = cursor.fetchone()
+    local_device_id = local_row["device_id"] if local_row else None
+
     cursor.execute(
         """
         SELECT
             m.*,
             ft.friend_id AS friend_id,
-            ft.friend_name AS friend_name
+            ft.friend_name AS friend_name,
+            ft.origin_device_id AS origin_device_id,
+            ft.origin_device_name AS origin_device_name
         FROM messages m
         LEFT JOIN friend_threads ft ON ft.thread_id = m.thread_id
         WHERE m.thread_id = ?
@@ -426,6 +469,14 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
             "is_friend_chat": bool(row["friend_id"]),
             "friend_id": row["friend_id"],
             "friend_name": row["friend_name"],
+            "origin_device_id": row["origin_device_id"],
+            "origin_device_name": row["origin_device_name"],
+            "is_remote_origin": bool(
+                row["friend_id"]
+                and row["origin_device_id"]
+                and local_device_id
+                and row["origin_device_id"] != local_device_id
+            ),
         })
         
     conn.close()
@@ -440,9 +491,16 @@ def delete_thread(thread_id: str):
     cursor.execute("DELETE FROM messages WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM friend_threads WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
-    
+
     conn.commit()
     conn.close()
+
+    try:
+        from app.realtime import hub
+
+        hub.emit_fire_and_forget("history", {"action": "thread_deleted", "thread_id": thread_id})
+    except Exception:
+        pass
 def delete_last_message(thread_id: str, role: Optional[str] = None):
     """Delete the most recent message in a thread, optionally filtering by role"""
     db_path = get_db_path()
@@ -542,6 +600,29 @@ def append_peer_query_event(
         conn.commit()
     finally:
         conn.close()
+
+    try:
+        from app.realtime import hub
+
+        hub.emit_fire_and_forget(
+            "connectivity",
+            {
+                "action": "peer_query_event",
+                "event": {
+                    "id": event_id,
+                    "direction": direction,
+                    "friend_id": friend_id,
+                    "friend_name": friend_name,
+                    "query_text": q,
+                    "status": status,
+                    "response_preview": prev,
+                    "error_detail": err,
+                    "created_at": now,
+                },
+            },
+        )
+    except Exception:
+        pass
 
 
 def list_peer_query_events(limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
@@ -854,6 +935,17 @@ def upsert_friend(
     cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
     row = cursor.fetchone()
     conn.close()
+
+    try:
+        from app.realtime import hub
+
+        hub.emit_fire_and_forget(
+            "connectivity",
+            {"action": "friends_updated", "friend_id": friend_id},
+        )
+    except Exception:
+        pass
+
     return dict(row) if row else {}
 
 
@@ -900,6 +992,18 @@ def delete_friend(friend_id: str) -> bool:
     deleted = cursor.rowcount > 0
     conn.commit()
     conn.close()
+
+    if deleted:
+        try:
+            from app.realtime import hub
+
+            hub.emit_fire_and_forget(
+                "connectivity",
+                {"action": "friends_updated", "friend_id": friend_id},
+            )
+        except Exception:
+            pass
+
     return deleted
 
 
@@ -933,21 +1037,29 @@ def approve_friend_for_thread(thread_id: str, friend_id: str) -> None:
     conn.close()
 
 
-def upsert_friend_thread(thread_id: str, friend_id: str, friend_name: str) -> None:
+def upsert_friend_thread(
+    thread_id: str,
+    friend_id: str,
+    friend_name: str,
+    origin_device_id: Optional[str] = None,
+    origin_device_name: Optional[str] = None,
+) -> None:
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     now = datetime.utcnow().isoformat()
     cursor.execute(
         """
-        INSERT INTO friend_threads (thread_id, friend_id, friend_name, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO friend_threads (thread_id, friend_id, friend_name, origin_device_id, origin_device_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(thread_id) DO UPDATE SET
             friend_id = excluded.friend_id,
             friend_name = excluded.friend_name,
+            origin_device_id = COALESCE(friend_threads.origin_device_id, excluded.origin_device_id),
+            origin_device_name = COALESCE(friend_threads.origin_device_name, excluded.origin_device_name),
             updated_at = excluded.updated_at
         """,
-        (thread_id, friend_id, friend_name, now, now),
+        (thread_id, friend_id, friend_name, origin_device_id, origin_device_name, now, now),
     )
     conn.commit()
     conn.close()
@@ -979,6 +1091,18 @@ def update_friend_peer_access(friend_id: str, peer_access_json: Optional[str]) -
     cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
     row = cursor.fetchone()
     conn.close()
+
+    if row:
+        try:
+            from app.realtime import hub
+
+            hub.emit_fire_and_forget(
+                "connectivity",
+                {"action": "friends_updated", "friend_id": friend_id},
+            )
+        except Exception:
+            pass
+
     return dict(row) if row else None
 
 
@@ -997,4 +1121,16 @@ def update_friend_public_url(friend_id: str, public_url: Optional[str]) -> Optio
     cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
     row = cursor.fetchone()
     conn.close()
+
+    if row:
+        try:
+            from app.realtime import hub
+
+            hub.emit_fire_and_forget(
+                "connectivity",
+                {"action": "friends_updated", "friend_id": friend_id},
+            )
+        except Exception:
+            pass
+
     return dict(row) if row else None

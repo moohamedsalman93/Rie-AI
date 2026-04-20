@@ -84,6 +84,7 @@ export function FloatingChatWindow({
   friends = [],
   friendThreadMeta = {},
   activeFriendMeta = null,
+  isReceiverReadOnlyThread = false,
   onSelectFriendChat = () => {},
   onStartFriendChat = () => {},
   isFriendsQuickOpen = false,
@@ -202,6 +203,7 @@ export function FloatingChatWindow({
                 onSend={onSend}
                 onOpenInNewChat={onOpenMessageInNewChat}
                 activeFriendMeta={activeFriendMeta}
+                isReceiverReadOnlyThread={isReceiverReadOnlyThread}
               />
             </div>
           </div>
@@ -232,6 +234,8 @@ export function FloatingChatWindow({
             onCancelRequest={onCancelRequest}
             textareaRef={textareaRef}
             isWindowDraggingFile={isWindowDraggingFile}
+            threadReadOnly={isReceiverReadOnlyThread}
+            readOnlyMessage={`This chat was created by Device A (${activeFriendMeta?.originDeviceName || activeFriendMeta?.originDeviceId || "remote device"}) and is read-only on this device.`}
           />
 
           <Terminal

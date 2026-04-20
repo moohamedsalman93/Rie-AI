@@ -28,6 +28,8 @@ export function ChatInputArea({
   textareaRef,
   isWindowDraggingFile,
   chatMode,
+  threadReadOnly = false,
+  readOnlyMessage = "This thread is read-only on this device.",
 }) {
   const [dragCounter, setDragCounter] = useState(0);
   const isDragging = dragCounter > 0;
@@ -41,6 +43,16 @@ export function ChatInputArea({
     };
     reader.readAsDataURL(file);
   };
+
+  if (threadReadOnly) {
+    return (
+      <footer className="w-[95%] absolute bottom-0 left-1/2 -translate-x-1/2 p-2 py-3 z-10">
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-center text-xs text-amber-200">
+          {readOnlyMessage}
+        </div>
+      </footer>
+    );
+  }
 
   return (
     <footer

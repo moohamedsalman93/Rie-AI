@@ -81,6 +81,7 @@ from app.connectivity.ngrok_installer import (
     get_tunnel_runtime_status,
 )
 from app.connectivity.ngrok_setup import persist_ngrok_setup
+from app.realtime import hub
 from fastapi.concurrency import run_in_threadpool
 import io
 import base64
@@ -932,7 +933,15 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     thread_id = (data.thread_id or "").strip() or str(uuid.uuid4())
     fid = friend["id"]
     fname = friend["name"]
-    await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+    source_identity = _identity_payload()
+    await run_in_threadpool(
+        upsert_friend_thread,
+        thread_id,
+        fid,
+        fname,
+        source_identity["device_id"],
+        source_identity.get("name"),
+    )
     await run_in_threadpool(save_message, thread_id, "user", q_log or "(empty)")
 
     try:
@@ -950,11 +959,11 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
         )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    source_identity = _identity_payload()
     endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
     payload = {
         "from_device_id": source_identity["device_id"],
         "from_fingerprint": source_identity["fingerprint"],
+        "from_device_name": source_identity.get("name"),
         "query": data.query,
         "thread_id": thread_id,
     }
@@ -1023,7 +1032,14 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
 
     msg_preview = str(body.get("message", ""))
     responder_thread_id = str(body.get("thread_id") or thread_id)
-    await run_in_threadpool(upsert_friend_thread, responder_thread_id, fid, fname)
+    await run_in_threadpool(
+        upsert_friend_thread,
+        responder_thread_id,
+        fid,
+        fname,
+        source_identity["device_id"],
+        source_identity.get("name"),
+    )
     await run_in_threadpool(save_message, responder_thread_id, "assistant", msg_preview)
     await run_in_threadpool(
         append_peer_query_event,
@@ -1146,7 +1162,14 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
     fid: Optional[str] = friend["id"] if friend else None
     fname: Optional[str] = friend["name"] if friend else None
     if fid and fname:
-        await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+        await run_in_threadpool(
+            upsert_friend_thread,
+            thread_id,
+            fid,
+            fname,
+            data.from_device_id,
+            data.from_device_name or fname,
+        )
 
     if not friend:
         await run_in_threadpool(
@@ -1206,7 +1229,14 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
         )
         reply_text = _extract_peer_assistant_text(agent_result) or "I received your message but could not generate a reply."
         if fid and fname:
-            await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+            await run_in_threadpool(
+                upsert_friend_thread,
+                thread_id,
+                fid,
+                fname,
+                data.from_device_id,
+                data.from_device_name or fname,
+            )
         await run_in_threadpool(save_message, thread_id, "assistant", reply_text)
     except HTTPException as exc:
         await run_in_threadpool(
@@ -1335,6 +1365,7 @@ async def connectivity_peer_query_history(
 @router.delete("/connectivity/peer-query-history")
 async def connectivity_peer_query_history_clear():
     deleted = await run_in_threadpool(clear_peer_query_events)
+    await hub.emit("connectivity", {"action": "peer_query_cleared"})
     return {"status": "success", "deleted": deleted}
 
 
@@ -1727,12 +1758,17 @@ async def list_schedule_notifications():
 @router.post("/scheduler/notifications/read-all")
 async def mark_all_notifications_read():
     mark_all_schedule_notifications_read()
+    await hub.emit("scheduler_notifications", {"action": "read_all"})
     return {"status": "success"}
 
 
 @router.post("/scheduler/notifications/{notif_id}/read")
 async def mark_notification_read(notif_id: str):
     mark_schedule_notification_read(notif_id)
+    await hub.emit(
+        "scheduler_notifications",
+        {"action": "read", "notification_id": notif_id},
+    )
     return {"status": "success"}
 
 

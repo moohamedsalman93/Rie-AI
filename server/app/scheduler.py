@@ -15,6 +15,7 @@ from app.database import (
 )
 
 from app.models import ScheduledTaskResponse
+from app.realtime import hub, notify_scheduler_tasks_changed
 
 logger = logging.getLogger(__name__)
 
@@ -195,12 +196,36 @@ class SchedulerManager:
                     body,
                 )
                 logger.info("Created schedule notification %s for task %s", notif_id, task_id)
+                try:
+                    title_val = _notification_title(intent, title, text)
+                    await hub.emit(
+                        "scheduler_notifications",
+                        {
+                            "action": "created",
+                            "notification": {
+                                "id": notif_id,
+                                "thread_id": thread_id,
+                                "task_id": task_id,
+                                "intent": intent,
+                                "title": title_val,
+                                "body": body,
+                                "created_at": datetime.utcnow().isoformat(),
+                            },
+                        },
+                    )
+                except Exception:
+                    logger.debug("Realtime scheduler notification emit failed", exc_info=True)
 
         except Exception as e:
             logger.error("Error executing scheduled task %s: %s", task_id, e, exc_info=True)
             update_scheduled_task_status(task_id, "failed")
             try:
                 save_message(thread_id, "assistant", f"Error executing scheduled task: {str(e)}")
+            except Exception:
+                pass
+        finally:
+            try:
+                notify_scheduler_tasks_changed()
             except Exception:
                 pass
 
@@ -242,6 +267,10 @@ class SchedulerManager:
             replace_existing=True,
         )
         logger.info("Scheduled task %s for %s (intent=%s)", task_id, run_dt, intent)
+        try:
+            notify_scheduler_tasks_changed()
+        except Exception:
+            pass
         return task_id
 
     def list_tasks(self) -> List[ScheduledTaskResponse]:
@@ -269,6 +298,10 @@ class SchedulerManager:
         try:
             update_scheduled_task_status(job_id, "cancelled")
             logger.info("Cancelled task %s", job_id)
+            try:
+                notify_scheduler_tasks_changed()
+            except Exception:
+                pass
             return True
         except Exception:
             return False

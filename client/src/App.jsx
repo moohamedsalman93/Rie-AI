@@ -8,6 +8,11 @@ import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
 import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, askFriend, deleteThread } from "./services/chatApi";
+import {
+  registerRealtimeHandler,
+  startRealtime,
+  stopRealtime,
+} from "./services/realtimeClient";
 import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
@@ -27,7 +32,7 @@ import {
 import { useWindowManager } from "./hooks/useWindowManager";
 import { useAttachments } from "./hooks/useAttachments";
 
-/** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
+/** Merge unread notifications into session log so items stay visible after mark-read (until app restart). */
 function mergeScheduleNotificationLog(prev, incoming) {
   const map = new Map(prev.map((n) => [n.id, n]));
   for (const n of incoming) {
@@ -70,11 +75,17 @@ function normalizeFriendMetaMap(metaMap) {
     if (!meta || typeof meta !== "object") return;
     const friendId = meta.friendId || meta.friend_id || null;
     const friendName = meta.friendName || meta.friend_name || "Friend";
+    const originDeviceId = meta.originDeviceId || meta.origin_device_id || null;
+    const originDeviceName = meta.originDeviceName || meta.origin_device_name || null;
+    const isRemoteOrigin = Boolean(meta.isRemoteOrigin || meta.is_remote_origin);
     if (!friendId) return;
     normalized[String(threadId)] = {
       friendId,
       friendName,
       isFriendChat: true,
+      originDeviceId,
+      originDeviceName,
+      isRemoteOrigin,
     };
   });
   return normalized;
@@ -86,11 +97,17 @@ function mergeFriendMetaFromHistoryRows(baseMap, rows) {
     const threadId = String(row?.thread_id || row?.id || "");
     const friendId = row?.friend_id || null;
     const friendName = row?.friend_name || "Friend";
+    const originDeviceId = row?.origin_device_id || null;
+    const originDeviceName = row?.origin_device_name || null;
+    const isRemoteOrigin = Boolean(row?.is_remote_origin);
     if (!threadId || !friendId) return;
     next[threadId] = {
       friendId,
       friendName,
       isFriendChat: true,
+      originDeviceId,
+      originDeviceName,
+      isRemoteOrigin,
     };
   });
   return next;
@@ -190,6 +207,11 @@ function MainApp() {
   const bubbleRef = useRef(null);
   const textareaRef = useRef(null);
   const isOpenRef = useRef(isOpen);
+  const activeThreadIdRef = useRef(activeThreadId);
+  const windowModeRef = useRef(windowMode);
+  const handleOpenRef = useRef(null);
+  const getWindowRef = useRef(null);
+  const historyRealtimeTimerRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const currentAudioRef = useRef(null);
@@ -203,6 +225,8 @@ function MainApp() {
   const sentenceBufferRef = useRef("");
   const isRecordingRef = useRef(isRecording);
   const messages = sessions[activeThreadId] || initialMessages;
+  const activeFriendMeta = friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null;
+  const isReceiverReadOnlyThread = Boolean(activeFriendMeta?.isRemoteOrigin);
   const isLoading = streamingThreads.has(activeThreadId);
   const isLoadingRef = useRef(isLoading);
   const isGlobalPTTPressedRef = useRef(false);
@@ -680,6 +704,7 @@ function MainApp() {
   }, [activeThreadId, persistFriendMeta]);
 
   const handleSend = useCallback(async (overrideText = null, isVoice = false, overrideImage = null) => {
+    if (isReceiverReadOnlyThread) return;
     const textToSend = (typeof overrideText === 'string') ? overrideText : input;
     const trimmed = textToSend.trim();
     const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage;
@@ -906,7 +931,7 @@ function MainApp() {
     } else {
       await performSend();
     }
-  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread]);
+  }, [input, isLoading, isReceiverReadOnlyThread, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -1257,6 +1282,19 @@ function MainApp() {
   }, [isOpen]);
 
   useEffect(() => {
+    activeThreadIdRef.current = activeThreadId;
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    windowModeRef.current = windowMode;
+  }, [windowMode]);
+
+  useEffect(() => {
+    handleOpenRef.current = handleOpen;
+    getWindowRef.current = getWindow;
+  }, [handleOpen, getWindow]);
+
+  useEffect(() => {
     if (windowMode !== "floating") {
       setIsFloatingScheduleOpen(false);
       setIsFloatingFriendsOpen(false);
@@ -1284,12 +1322,11 @@ function MainApp() {
     if (apiStatus !== "online" || isSettingsOpen || showWelcome) return;
 
     let cancelled = false;
-    const poll = async () => {
+    (async () => {
       try {
         const list = await getScheduleNotifications();
         if (cancelled) return;
         const next = Array.isArray(list) ? list : [];
-        let hasNewScheduleNotification = false;
 
         if (!scheduleNotifInitializedRef.current) {
           scheduleNotifInitializedRef.current = true;
@@ -1299,61 +1336,118 @@ function MainApp() {
           return;
         }
 
-        for (const n of next) {
-          if (!scheduleNotifSeenIdsRef.current.has(n.id)) {
-            hasNewScheduleNotification = true;
+        scheduleNotifSeenIdsRef.current = new Set(next.map((n) => n.id));
+        setScheduleNotifications(next);
+        setScheduleNotificationLog((prev) => mergeScheduleNotificationLog(prev, next));
+      } catch (e) {
+        console.warn("Schedule notifications hydrate:", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiStatus, isSettingsOpen, showWelcome]);
+
+  useEffect(() => {
+    if (apiStatus !== "online") {
+      stopRealtime();
+      return;
+    }
+
+    startRealtime(true);
+
+    const flushHistoryRealtime = () => {
+      window.dispatchEvent(new CustomEvent("rie-history-refresh"));
+      const tid = activeThreadIdRef.current;
+      if (!tid) return;
+      getThreadMessages(tid)
+        .then((msgs) => {
+          if (!msgs?.length) return;
+          const formatted = msgs.map((m) => ({
+            id: m.id,
+            from: m.role === "user" ? "user" : "bot",
+            text: m.content,
+            image_url: m.image_url,
+            blocks: m.role !== "user" ? [{ type: "text", text: m.content }] : undefined,
+          }));
+          setSessions((prev) => ({ ...prev, [tid]: formatted }));
+        })
+        .catch(() => {});
+    };
+
+    const scheduleHistoryRealtime = () => {
+      clearTimeout(historyRealtimeTimerRef.current);
+      historyRealtimeTimerRef.current = setTimeout(flushHistoryRealtime, 350);
+    };
+
+    const off = registerRealtimeHandler((topic, payload) => {
+      if (topic === "scheduler_notifications") {
+        if (payload.action === "created" && payload.notification) {
+          const n = payload.notification;
+          if (scheduleNotifSeenIdsRef.current.has(n.id)) return;
+          scheduleNotifSeenIdsRef.current.add(n.id);
+          setScheduleNotifications((prev) => {
+            if (prev.some((x) => x.id === n.id)) return prev;
+            return [n, ...prev];
+          });
+          setScheduleNotificationLog((prev) => mergeScheduleNotificationLog(prev, [n]));
+          (async () => {
             try {
               const granted = await isPermissionGranted();
               if (granted) {
                 sendNotification({
                   title: n.title || "Scheduled task completed",
                   body: (n.body || "").slice(0, 200),
-                  // These are best-effort across platforms.
                   ongoing: true,
                   sound: "default",
                 });
               }
               playScheduleAlertSound();
+              const openFn = handleOpenRef.current;
+              const gw = getWindowRef.current;
+              if (!gw) return;
+              if (windowModeRef.current === "floating") {
+                if (!isOpenRef.current && openFn) await openFn();
+                else await gw().setFocus();
+              } else {
+                const win = gw();
+                await win.show();
+                await win.unminimize();
+                await win.setFocus();
+              }
             } catch (e) {
               console.warn("Desktop notification failed:", e);
             }
-          }
+          })();
         }
-
-        if (hasNewScheduleNotification) {
-          try {
-            if (windowMode === "floating") {
-              if (!isOpen) {
-                await handleOpen();
-              } else {
-                await getWindow().setFocus();
-              }
-            } else {
-              const win = getWindow();
-              await win.show();
-              await win.unminimize();
-              await win.setFocus();
-            }
-          } catch (e) {
-            console.warn("Failed to open/focus window for schedule notification:", e);
-          }
+        if (payload.action === "read" && payload.notification_id) {
+          const rid = payload.notification_id;
+          setScheduleNotifications((prev) => prev.filter((x) => x.id !== rid));
         }
-
-        scheduleNotifSeenIdsRef.current = new Set(next.map((n) => n.id));
-        setScheduleNotifications(next);
-        setScheduleNotificationLog((prev) => mergeScheduleNotificationLog(prev, next));
-      } catch (e) {
-        console.warn("Schedule notifications poll:", e);
+        if (payload.action === "read_all") {
+          setScheduleNotifications([]);
+        }
       }
-    };
 
-    poll();
-    const id = setInterval(poll, 6000);
+      if (topic === "history") {
+        if (payload.action === "message_added" || payload.action === "thread_deleted") {
+          scheduleHistoryRealtime();
+        }
+      }
+
+      if (topic === "connectivity") {
+        loadFriends();
+        window.dispatchEvent(new CustomEvent("rie-connectivity-refresh"));
+      }
+    });
+
     return () => {
-      cancelled = true;
-      clearInterval(id);
+      off();
+      clearTimeout(historyRealtimeTimerRef.current);
+      stopRealtime();
     };
-  }, [apiStatus, isSettingsOpen, showWelcome, windowMode, isOpen, handleOpen, getWindow]);
+  }, [apiStatus, loadFriends]);
 
   useEffect(() => {
     prevThreadScheduleNotifIdsRef.current = new Set();
@@ -2067,7 +2161,8 @@ function MainApp() {
                   onScheduleOpenChat={handleScheduleOpenChat}
                   friends={friends}
                   friendThreadMeta={friendThreadMeta}
-                  activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+                  activeFriendMeta={activeFriendMeta}
+                  isReceiverReadOnlyThread={isReceiverReadOnlyThread}
                   onSelectFriendChat={handleSelectFriendChat}
                   onStartFriendChat={handleStartFriendChat}
                 />
@@ -2165,7 +2260,8 @@ function MainApp() {
               onToggleFriendsQuick={() => setIsFloatingFriendsOpen((prev) => !prev)}
               friends={friends}
               friendThreadMeta={friendThreadMeta}
-              activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+              activeFriendMeta={activeFriendMeta}
+              isReceiverReadOnlyThread={isReceiverReadOnlyThread}
               onSelectFriendChat={handleSelectFriendChat}
               onStartFriendChat={handleStartFriendChat}
             />

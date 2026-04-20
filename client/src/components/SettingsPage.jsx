@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getSettings, updateSetting, getLogs, getMcpStatus, getOllamaModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess } from '../services/chatApi';
+import { setLogsRealtimeHandler, setRealtimeLogsEnabled } from '../services/realtimeClient';
 import { ConfirmationModal } from './ConfirmationModal';
 import {
   Cpu,
@@ -213,9 +214,27 @@ function SettingsPage({ onClose }) {
   };
 
   useEffect(() => {
-    if (activeTab === 'logs') {
-      fetchLogs();
+    setRealtimeLogsEnabled(activeTab === 'logs');
+    return () => setRealtimeLogsEnabled(false);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'logs') {
+      setLogsRealtimeHandler(null);
+      return;
     }
+    setLoadingLogs(true);
+    setLogsRealtimeHandler((payload) => {
+      if (payload.action === 'snapshot') {
+        setLogs(payload.text || '');
+        setLoadingLogs(false);
+      }
+      if (payload.action === 'append') {
+        setLogs((prev) => (prev || '') + (payload.text || ''));
+        setLoadingLogs(false);
+      }
+    });
+    return () => setLogsRealtimeHandler(null);
   }, [activeTab]);
 
   const fetchLogs = async () => {
@@ -370,7 +389,7 @@ function SettingsPage({ onClose }) {
     }
   };
 
-  const loadConnectivityData = async () => {
+  const loadConnectivityData = useCallback(async () => {
     try {
       const [identityData, friendsData, tunnelStatus] = await Promise.all([
         getConnectivityIdentity(),
@@ -384,7 +403,13 @@ function SettingsPage({ onClose }) {
     } catch (err) {
       console.error('Failed to load connectivity data:', err);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    const onConn = () => loadConnectivityData();
+    window.addEventListener('rie-connectivity-refresh', onConn);
+    return () => window.removeEventListener('rie-connectivity-refresh', onConn);
+  }, [loadConnectivityData]);
 
   const handleRefreshConnectivity = async () => {
     try {

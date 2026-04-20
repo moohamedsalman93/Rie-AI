@@ -46,6 +46,22 @@ export function HistorySidebar({
         })();
     }, [showSidebar]);
 
+    useEffect(() => {
+        const onRefresh = () => {
+            if (!showSidebar) return;
+            (async () => {
+                try {
+                    const data = await getHistory();
+                    setThreads(Array.isArray(data) ? data : []);
+                } catch (err) {
+                    console.error("Failed to load history:", err);
+                }
+            })();
+        };
+        window.addEventListener('rie-history-refresh', onRefresh);
+        return () => window.removeEventListener('rie-history-refresh', onRefresh);
+    }, [showSidebar]);
+
     const formatDate = (isoString) => {
         if (!isoString) return "";
         const date = new Date(isoString);
