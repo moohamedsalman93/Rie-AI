@@ -13,6 +13,7 @@ export function ChatHeader({
   onOpenSettings,
   onOpenHistory,
   onNewChat,
+  disableNewChat = false,
   onMinimize,
   onCloseApp,
   onDragStart,
@@ -34,7 +35,7 @@ export function ChatHeader({
   return (
     <header
       data-tauri-drag-region
-      className="flex rounded-xl absolute w-[95%] left-1/2 -translate-x-1/2 top-1 border-b border-neutral-700/40 bg-neutral-800 cursor-move h-10 items-center justify-between gap-3 px-2 py-2.5 z-10"
+      className="flex rounded-xl absolute w-[95%] left-1/2 -translate-x-1/2 top-1 border-b border-neutral-700/40 bg-neutral-800 cursor-move h-10 items-center justify-between gap-3 px-2 py-2.5 z-30"
       onMouseDown={onDragStart}
     >
       <div className="flex items-center gap-2">
@@ -80,7 +81,7 @@ export function ChatHeader({
                 transition={{ duration: 0.2 }}
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="absolute right-0 top-full mt-2 w-40 origin-top-right rounded-xl border border-neutral-700 bg-neutral-800/95 p-1.5 shadow-2xl backdrop-blur-xl z-50 overflow-hidden"
+                className="absolute right-0 top-full mt-2 w-40 origin-top-right rounded-xl border border-neutral-700 bg-neutral-800/95 p-1.5 shadow-2xl backdrop-blur-xl z-[1000] overflow-hidden"
               >
                 <button
                   onClick={(e) => {
@@ -183,10 +184,13 @@ export function ChatHeader({
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (disableNewChat) return;
                     onNewChat();
                   }}
+                  disabled={disableNewChat}
                   onMouseDown={(e) => e.stopPropagation()}
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-neutral-300 transition-colors hover:bg-neutral-700/50 hover:text-white"
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs transition-colors ${disableNewChat ? "cursor-not-allowed text-neutral-600" : "text-neutral-300 hover:bg-neutral-700/50 hover:text-white"}`}
+                  title={disableNewChat ? "Already in a new chat" : "New Chat"}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19" />

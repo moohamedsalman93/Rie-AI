@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
@@ -9,6 +9,7 @@ import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
+import { resolveThreadTitle, resolveThreadFirstMessage } from '../utils/threadDisplay';
 import logo from '../assets/logo.png';
 
 export function NormalModeLayout({
@@ -23,6 +24,7 @@ export function NormalModeLayout({
     onSelectThread,
     onDeleteThread = () => {},
     onNewChat,
+    disableNewChat = false,
     currentThreadId,
     onOpenSettings,
     onToggleFloating,
@@ -180,13 +182,13 @@ export function NormalModeLayout({
         return [...localOnly, ...(threads || [])];
     }, [threads, sessionsByThread]);
 
-    const filteredThreads = mergedThreads.filter(t =>
-        (t.title || 'Untitled Chat').toLowerCase().includes(searchTerm.toLowerCase())
-    );
     const getThreadFriendMeta = (threadId) => {
         if (!friendThreadMeta) return null;
         return friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
     };
+    const filteredThreads = mergedThreads.filter(t =>
+        resolveThreadTitle(t, getThreadFriendMeta(t?.id), sessionsByThread).toLowerCase().includes(searchTerm.toLowerCase())
+    );
 
     return (
         <div className="w-full h-full flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
@@ -337,8 +339,9 @@ export function NormalModeLayout({
                                     </div>
                                     <button
                                         onClick={onNewChat}
-                                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                                        title="New Chat"
+                                        disabled={disableNewChat}
+                                        className={`p-1.5 rounded-lg transition-colors ${disableNewChat ? 'cursor-not-allowed bg-neutral-800 text-neutral-600' : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
+                                        title={disableNewChat ? "Already in a new chat" : "New Chat"}
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                             <line x1="12" y1="5" x2="12" y2="19" />
@@ -391,7 +394,11 @@ export function NormalModeLayout({
                                         {searchTerm ? 'No chats match.' : null}
                                     </div>
                                 ) : (
-                                    filteredThreads.map(thread => (
+                                    filteredThreads.map(thread => {
+                                        const threadMeta = getThreadFriendMeta(thread.id);
+                                        const isFriendThread = Boolean(threadMeta?.isFriendChat || threadMeta?.friendId);
+                                        const friendLabel = resolveThreadTitle(thread, threadMeta, sessionsByThread);
+                                        return (
                                         <button
                                             key={thread.id}
                                             onClick={() => onSelectThread(thread.id)}
@@ -401,10 +408,21 @@ export function NormalModeLayout({
                                                 }`}
                                         >
                                             <div className="pr-5">
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="text-xs font-medium truncate">{thread.title || 'Untitled Chat'}</div>
-                                                    {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && (
-                                                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>
+                                                <div className="text-xs font-medium truncate">
+                                                    {resolveThreadFirstMessage(thread, sessionsByThread)}
+                                                </div>
+                                                <div className="flex items-center gap-1.5 mt-0.5">
+                                                    <div className="text-[10px] opacity-50">{formatDate(thread.updated_at || thread.created_at)}</div>
+                                                    {isFriendThread && (
+                                                        <>
+                                                            <span className="text-[10px] opacity-50">•</span>
+                                                            <span className="text-[10px] opacity-60 truncate max-w-[90px]">{friendLabel}</span>
+                                                            {threadMeta?.isRemoteOrigin ? (
+                                                                <ArrowDownLeft size={11} className="text-emerald-300 shrink-0" aria-label="Receiver thread" title="Receiver thread" />
+                                                            ) : (
+                                                                <ArrowUpRight size={11} className="text-emerald-300 shrink-0" aria-label="Sender thread" title="Sender thread" />
+                                                            )}
+                                                        </>
                                                     )}
                                                     {streamingThreads.has(thread.id) && (
                                                         <div className="flex items-center gap-1 shrink-0">
@@ -412,7 +430,6 @@ export function NormalModeLayout({
                                                         </div>
                                                     )}
                                                 </div>
-                                                <div className="text-[10px] opacity-50 mt-0.5">{formatDate(thread.updated_at || thread.created_at)}</div>
                                             </div>
                                             <div
                                                 onClick={(e) => handleDeleteClick(e, thread.id)}
@@ -424,7 +441,7 @@ export function NormalModeLayout({
                                                 </svg>
                                             </div>
                                         </button>
-                                    ))
+                                    )})
                                 )}
                             </div>
                             <ScheduledTasksPanel apiStatus={apiStatus} />

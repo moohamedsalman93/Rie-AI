@@ -81,17 +81,22 @@ function connect() {
       return;
     }
     if (data.type !== "event" || !data.topic) return;
+    const payload = data.payload || {};
     if (data.topic === "logs") {
-      if (typeof logsHandler === "function") logsHandler(data.payload || {});
+      if (typeof logsHandler === "function") logsHandler(payload);
       return;
     }
     if (data.topic === "scheduler_tasks") {
       window.dispatchEvent(new CustomEvent("rie-scheduler-tasks-refresh"));
       return;
     }
+    if (data.topic === "history") {
+      // Dispatch immediately so history UIs refresh even if app-level handlers restart.
+      window.dispatchEvent(new CustomEvent("rie-history-refresh", { detail: payload }));
+    }
     handlers.forEach((fn) => {
       try {
-        fn(data.topic, data.payload || {});
+        fn(data.topic, payload);
       } catch {
         /* ignore */
       }

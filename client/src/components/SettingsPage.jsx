@@ -687,6 +687,7 @@ function SettingsPage({ onClose }) {
         setError('ngrok auth token is required.');
         return;
       }
+      setNgrokConfirmOpen(false);
       setNgrokInstalling(true);
       setNgrokInstallResult(null);
       setNgrokReadyState('starting');
@@ -2459,7 +2460,13 @@ Separate keywords by commas. Commands containing these words will be blocked."
               <div className="flex items-center gap-2">
                 <motion.button
                   whileTap={{ scale: 0.97 }}
-                  onClick={() => setNgrokConfirmOpen(true)}
+                  onClick={() => {
+                    if (ngrokStatus?.installed) {
+                      handleInstallNgrok();
+                      return;
+                    }
+                    setNgrokConfirmOpen(true);
+                  }}
                   disabled={ngrokInstalling || !ngrokTokenInput.trim()}
                   className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
                 >

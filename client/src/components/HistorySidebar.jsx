@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, Users, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
+import { resolveThreadTitle, resolveThreadFirstMessage } from '../utils/threadDisplay';
 
 export function HistorySidebar({
     isOpen,
@@ -62,12 +63,46 @@ export function HistorySidebar({
         return () => window.removeEventListener('rie-history-refresh', onRefresh);
     }, [showSidebar]);
 
-    const formatDate = (isoString) => {
-        if (!isoString) return "";
-        const date = new Date(isoString);
+    const parseTimestamp = (value) => {
+        if (value === null || value === undefined || value === "") return null;
+        if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+        if (typeof value === "number" && Number.isFinite(value)) {
+            const millis = Math.abs(value) < 1e12 ? value * 1000 : value;
+            const d = new Date(millis);
+            return Number.isNaN(d.getTime()) ? null : d;
+        }
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (!trimmed) return null;
+            if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+                const numeric = Number(trimmed);
+                if (Number.isFinite(numeric)) {
+                    const millis = Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric;
+                    const d = new Date(millis);
+                    return Number.isNaN(d.getTime()) ? null : d;
+                }
+            }
+            // DB legacy values are often UTC ISO strings without timezone suffix.
+            // JS interprets those as local time, causing hour offsets in UI.
+            const hasExplicitTimezone = /(?:[zZ]|[+\-]\d{2}:\d{2})$/.test(trimmed);
+            const normalized = !hasExplicitTimezone && /^\d{4}-\d{2}-\d{2}T/.test(trimmed)
+                ? `${trimmed}Z`
+                : trimmed;
+            const d = new Date(normalized);
+            return Number.isNaN(d.getTime()) ? null : d;
+        }
+        return null;
+    };
+
+    const formatDate = (value) => {
+        const date = parseTimestamp(value);
+        if (!date) return "";
         const now = new Date();
-        const days = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-        if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        const days = Math.floor((startOfToday - startOfDate) / (1000 * 60 * 60 * 24));
+
+        if (days <= 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         if (days < 7) return date.toLocaleDateString([], { weekday: 'short' });
         return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     };
@@ -144,8 +179,12 @@ export function HistorySidebar({
                     <div className="py-6 text-center text-xs text-red-300">{error}</div>
                 ) : (
                     mergedThreads
-                        .filter((t) => (t.title || "Untitled Chat").toLowerCase().includes(searchTerm.toLowerCase()))
-                        .map((thread) => (
+                        .filter((t) => resolveThreadTitle(t, getThreadFriendMeta(t?.id), sessionsByThread).toLowerCase().includes(searchTerm.toLowerCase()))
+                        .map((thread) => {
+                            const threadMeta = getThreadFriendMeta(thread.id);
+                            const isFriendThread = Boolean(threadMeta?.isFriendChat || threadMeta?.friendId);
+                            const friendLabel = resolveThreadTitle(thread, threadMeta, sessionsByThread);
+                            return (
                             <button
                                 key={thread.id}
                                 onClick={() => {
@@ -155,16 +194,28 @@ export function HistorySidebar({
                                 className={`w-full text-left p-2.5 rounded-lg transition-all group relative border ${thread.id === currentThreadId ? "bg-neutral-800/80 border-neutral-700/50 text-neutral-100" : "border-transparent text-neutral-400 hover:bg-neutral-800/40 hover:text-neutral-200"}`}
                             >
                                 <div className="pr-6">
-                                    <div className="flex items-center gap-1.5 mb-0.5">
-                                        <div className="font-medium text-xs truncate">{thread.title || "Untitled Chat"}</div>
-                                        {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>}
+                                    <div className="font-medium text-xs truncate">
+                                        {resolveThreadFirstMessage(thread, sessionsByThread)}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                        <div className="text-[9px] opacity-40">{formatDate(thread.updated_at || thread.created_at)}</div>
+                                        {isFriendThread && (
+                                            <>
+                                                <span className="text-[9px] opacity-40">•</span>
+                                                <span className="text-[9px] opacity-50 truncate max-w-[90px]">{friendLabel}</span>
+                                                {threadMeta?.isRemoteOrigin ? (
+                                                    <ArrowDownLeft size={11} className="text-emerald-300 shrink-0" aria-label="Receiver thread" title="Receiver thread" />
+                                                ) : (
+                                                    <ArrowUpRight size={11} className="text-emerald-300 shrink-0" aria-label="Sender thread" title="Sender thread" />
+                                                )}
+                                            </>
+                                        )}
                                         {streamingThreads.has(thread.id) && <span className="h-1 w-1 rounded-full bg-emerald-500 animate-pulse" />}
                                     </div>
-                                    <div className="text-[9px] opacity-40">{formatDate(thread.updated_at || thread.created_at)}</div>
                                 </div>
                                 <div onClick={(e) => { e.stopPropagation(); setThreadToDelete(thread.id); setIsConfirmOpen(true); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all">x</div>
                             </button>
-                        ))
+                        )})
                 )}
             </div>
         </>

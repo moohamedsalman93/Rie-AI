@@ -9,8 +9,13 @@ import sys
 import uuid
 import secrets
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
+
+
+def utc_now_iso() -> str:
+    """Return timezone-aware UTC timestamp (ISO 8601 with trailing Z)."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 def get_db_path() -> Path:
     """Get the path to the SQLite database file"""
@@ -325,7 +330,7 @@ def create_thread(title: str, thread_id: Optional[str] = None) -> str:
     if not thread_id:
         thread_id = str(uuid.uuid4())
     
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
     
     # Check if exists first to avoid error if reuse same ID
     cursor.execute("SELECT id FROM threads WHERE id = ?", (thread_id,))
@@ -348,7 +353,7 @@ def save_message(thread_id: str, role: str, content: str, image_url: Optional[st
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    now = datetime.utcnow().isoformat()
+    now = utc_now_iso()
     
     # Ensure thread exists (create basic one if not found, though ideally should exist)
     cursor.execute("SELECT id FROM threads WHERE id = ?", (thread_id,))
@@ -399,7 +404,24 @@ def get_threads() -> List[Dict[str, Any]]:
             ft.friend_id AS friend_id,
             ft.friend_name AS friend_name,
             ft.origin_device_id AS origin_device_id,
-            ft.origin_device_name AS origin_device_name
+            ft.origin_device_name AS origin_device_name,
+            (
+                SELECT m.content
+                FROM messages m
+                WHERE m.thread_id = t.id
+                  AND m.role = 'user'
+                  AND TRIM(COALESCE(m.content, '')) <> ''
+                ORDER BY m.id ASC
+                LIMIT 1
+            ) AS first_user_message,
+            (
+                SELECT m.content
+                FROM messages m
+                WHERE m.thread_id = t.id
+                  AND TRIM(COALESCE(m.content, '')) <> ''
+                ORDER BY m.id ASC
+                LIMIT 1
+            ) AS first_message
         FROM threads t
         LEFT JOIN friend_threads ft ON ft.thread_id = t.id
         ORDER BY t.updated_at DESC
@@ -419,6 +441,8 @@ def get_threads() -> List[Dict[str, Any]]:
             "friend_name": row["friend_name"],
             "origin_device_id": row["origin_device_id"],
             "origin_device_name": row["origin_device_name"],
+            "first_user_message": row["first_user_message"],
+            "first_message": row["first_message"],
             "is_remote_origin": bool(
                 row["friend_id"]
                 and row["origin_device_id"]

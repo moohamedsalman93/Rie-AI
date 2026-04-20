@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { ChatHeader } from "./ChatHeader";
 import { FloatingScheduleSheet } from "./FloatingScheduleSheet";
@@ -20,6 +21,7 @@ export function FloatingChatWindow({
   onToggleWindowMode,
   onOpenHistory,
   onNewChat,
+  disableNewChat = false,
   onMinimize,
   onCloseApp,
   onDragStart,
@@ -89,7 +91,35 @@ export function FloatingChatWindow({
   onStartFriendChat = () => {},
   isFriendsQuickOpen = false,
   onToggleFriendsQuick = () => {},
+  onCloseFriendsQuick = () => {},
 }) {
+  const friendsQuickRef = useRef(null);
+
+  useEffect(() => {
+    if (!isFriendsQuickOpen) return;
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        onCloseFriendsQuick();
+      }
+    };
+
+    const handleOutsideClick = (event) => {
+      if (!friendsQuickRef.current) return;
+      if (!friendsQuickRef.current.contains(event.target)) {
+        onCloseFriendsQuick();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("mousedown", handleOutsideClick);
+
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [isFriendsQuickOpen, onCloseFriendsQuick]);
+
   return (
     <motion.section
       key="chat"
@@ -118,6 +148,7 @@ export function FloatingChatWindow({
         }}
         onOpenHistory={onOpenHistory}
         onNewChat={onNewChat}
+        disableNewChat={disableNewChat}
         onMinimize={onMinimize}
         onCloseApp={onCloseApp}
         onDragStart={onDragStart}
@@ -172,17 +203,40 @@ export function FloatingChatWindow({
             />
             <div className="flex-1 flex flex-col relative min-w-0 h-full min-h-0">
               {isFriendsQuickOpen && (
-                <div className="absolute left-3 top-12 z-30 max-h-72 w-72 overflow-y-auto rounded-xl border border-white/10 bg-neutral-900/95 p-2 shadow-xl backdrop-blur">
-                  <div className="mb-1 px-1 text-[11px] font-semibold text-neutral-300">Friends</div>
+                <div
+                  ref={friendsQuickRef}
+                  className="absolute left-1/2 top-14 z-30 max-h-72 w-72 -translate-x-1/2 overflow-y-auto rounded-xl border border-white/10 bg-neutral-900/95 p-2 shadow-xl backdrop-blur"
+                >
+                  <div className="mb-1 flex items-center justify-between px-1">
+                    <div className="text-[11px] font-semibold text-neutral-300">Friends</div>
+                    <button
+                      onClick={onCloseFriendsQuick}
+                      className="rounded p-1 text-neutral-400 transition hover:bg-neutral-700/50 hover:text-neutral-200"
+                      title="Close friends list"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
                   {friends.length === 0 ? (
                     <div className="px-2 py-2 text-xs text-neutral-500">No connections.</div>
                   ) : (
                     friends.map((friend) => {
                       return (
-                        <div key={friend.id} className="mb-1 rounded-lg border border-white/10 bg-neutral-900/60 p-1.5">
-                          <div className="mb-1 flex items-center justify-between">
+                        <div key={friend.id} className="mb-1 rounded-lg border border-white/10 bg-neutral-900/60 px-2 py-1.5">
+                          <div className="flex items-center justify-between gap-2">
                             <span className="truncate text-xs text-neutral-200">{friend.name || "Friend"}</span>
-                            <button onClick={() => onStartFriendChat(friend)} className="text-[10px] text-emerald-300 hover:text-emerald-200">Chat</button>
+                            <button
+                              onClick={() => {
+                                onStartFriendChat(friend);
+                                onCloseFriendsQuick();
+                              }}
+                              className="rounded-md border border-emerald-500/30 px-2 py-0.5 text-[10px] font-medium text-emerald-300 transition hover:border-emerald-400/40 hover:text-emerald-200"
+                            >
+                              Chat
+                            </button>
                           </div>
                         </div>
                       );
