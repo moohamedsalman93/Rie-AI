@@ -22,6 +22,14 @@ export function ChatMessages({
     (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
   ).length;
   const toolTooltipPlacement = botReplyCount <= 2 ? "bottom" : "top";
+  const hasStreamingContent = messages.some((msg) => {
+    if (msg.from !== "bot" || msg.id !== streamingBotMessageId) return false;
+    const hasTextBlocks = (msg.blocks || []).some(
+      (block) => block.type === "text" && block.text && block.text.trim()
+    );
+    return hasTextBlocks || (msg.text && msg.text.trim());
+  });
+  const shouldShowThinkingShimmer = isLoading && !hasStreamingContent;
 
   return (
     <main className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden bg-neutral-900/70 py-4 min-h-0">
@@ -146,6 +154,22 @@ export function ChatMessages({
           );
         })}
       </AnimatePresence>
+      {shouldShowThinkingShimmer && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex flex-col items-start w-full"
+        >
+          <div className="w-full max-w-[95%] rounded-xl border border-neutral-700/60 bg-neutral-800 px-3.5 py-2.5">
+            <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
+            <div className="space-y-1.5">
+              <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+              <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+            </div>
+          </div>
+          <span className="mt-1 text-[10px] font-medium text-neutral-500">Assistant is thinking...</span>
+        </motion.div>
+      )}
       <div ref={messagesEndRef} />
     </main>
   );
