@@ -4487,9 +4487,6 @@ files = [
     {file = "pyscreeze-1.0.1.tar.gz", hash = "sha256:cf1662710f1b46aa5ff229ee23f367da9e20af4a78e6e365bee973cad0ead4be"},
 ]
 
-[package.dependencies]
-Pillow = {version = ">=9.3.0", markers = "python_version == \"3.11\""}
-
 [[package]]
 name = "pysocks"
 version = "1.7.1"
@@ -6668,5 +6665,5 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 
 [metadata]
 lock-version = "2.1"
-python-versions = "3.11.9"
-content-hash = "ac1900b0a78f1c4d46efd754826c965b2c109b71317fb773f6b287f4e46397b6"
+python-versions = "3.12.10"
+content-hash = "c1433abd13b2acbb8ce2abe05f8622ad0bb6fed53b4ff9eadd30a707f6412eb7"

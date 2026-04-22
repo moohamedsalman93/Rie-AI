@@ -96,6 +96,7 @@ function SettingsPage({ onClose }) {
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [copied, setCopied] = useState(false);
   const logsEndRef = useRef(null);
+  const logsLoadTimeoutRef = useRef(null);
 
   // Local state for edits
   const [selectedProvider, setSelectedProvider] = useState(null);
@@ -218,26 +219,14 @@ function SettingsPage({ onClose }) {
     return () => setRealtimeLogsEnabled(false);
   }, [activeTab]);
 
-  useEffect(() => {
-    if (activeTab !== 'logs') {
-      setLogsRealtimeHandler(null);
-      return;
+  const clearLogsLoadTimeout = useCallback(() => {
+    if (logsLoadTimeoutRef.current) {
+      clearTimeout(logsLoadTimeoutRef.current);
+      logsLoadTimeoutRef.current = null;
     }
-    setLoadingLogs(true);
-    setLogsRealtimeHandler((payload) => {
-      if (payload.action === 'snapshot') {
-        setLogs(payload.text || '');
-        setLoadingLogs(false);
-      }
-      if (payload.action === 'append') {
-        setLogs((prev) => (prev || '') + (payload.text || ''));
-        setLoadingLogs(false);
-      }
-    });
-    return () => setLogsRealtimeHandler(null);
-  }, [activeTab]);
+  }, []);
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoadingLogs(true);
       const data = await getLogs();
@@ -248,9 +237,44 @@ function SettingsPage({ onClose }) {
       console.error('Failed to fetch logs:', err);
       setLogs("Error fetching logs: " + err.message);
     } finally {
+      clearLogsLoadTimeout();
       setLoadingLogs(false);
     }
-  };
+  }, [clearLogsLoadTimeout]);
+
+  useEffect(() => {
+    if (activeTab !== 'logs') {
+      clearLogsLoadTimeout();
+      setLogsRealtimeHandler(null);
+      return;
+    }
+    setLoadingLogs(true);
+    setLogsRealtimeHandler((payload) => {
+      if (payload.action === 'snapshot') {
+        setLogs(payload.text || '');
+        clearLogsLoadTimeout();
+        setLoadingLogs(false);
+      }
+      if (payload.action === 'append') {
+        setLogs((prev) => (prev || '') + (payload.text || ''));
+        clearLogsLoadTimeout();
+        setLoadingLogs(false);
+      }
+    });
+
+    // Always fetch once on tab-open so logs render even if realtime is unavailable.
+    fetchLogs();
+
+    // Guard against indefinite spinner if both realtime and HTTP are unavailable.
+    logsLoadTimeoutRef.current = setTimeout(() => {
+      setLoadingLogs(false);
+    }, 8000);
+
+    return () => {
+      clearLogsLoadTimeout();
+      setLogsRealtimeHandler(null);
+    };
+  }, [activeTab, clearLogsLoadTimeout, fetchLogs]);
 
   const handleCopyLogs = () => {
     if (!logs || typeof logs !== 'string') return;
@@ -2848,6 +2872,8 @@ function McpServersManager({ servers, onSave, isSaving }) {
   const [isAdding, setIsAdding] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
   const [newServer, setNewServer] = useState({ type: 'stdio', command: '', args: '', env: '', url: '' });
+  const [jsonConfigInput, setJsonConfigInput] = useState('');
+  const [jsonConfigError, setJsonConfigError] = useState(null);
   const [error, setError] = useState(null);
   const [mcpStatus, setMcpStatus] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
@@ -2885,6 +2911,78 @@ function McpServersManager({ servers, onSave, isSaving }) {
     setExpandedServers(newExpanded);
   };
 
+  const resetServerForm = () => {
+    setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
+    setJsonConfigInput('');
+    setJsonConfigError(null);
+    setError(null);
+  };
+
+  const extractServerFromJson = (jsonText) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      throw new Error('Invalid JSON. Please paste valid JSON.');
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('JSON must be an object.');
+    }
+
+    let candidate = parsed;
+    if (parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)) {
+      const entries = Object.entries(parsed.mcpServers);
+      if (entries.length === 0) {
+        throw new Error('`mcpServers` is empty.');
+      }
+      candidate = entries[0][1];
+    }
+
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('Could not find a valid MCP server object to extract.');
+    }
+
+    const hasUrl = typeof candidate.url === 'string' && candidate.url.trim();
+    const hasCommand = typeof candidate.command === 'string' && candidate.command.trim();
+
+    if (!hasUrl && !hasCommand) {
+      throw new Error('Server must include either `command` (stdio) or `url` (SSE).');
+    }
+
+    if (candidate.args && !Array.isArray(candidate.args)) {
+      throw new Error('`args` must be an array when provided.');
+    }
+    if (candidate.env && (typeof candidate.env !== 'object' || Array.isArray(candidate.env))) {
+      throw new Error('`env` must be an object when provided.');
+    }
+
+    const type = hasUrl ? 'sse' : 'stdio';
+    return {
+      type,
+      command: hasCommand ? candidate.command.trim() : '',
+      args: Array.isArray(candidate.args) ? candidate.args.map((arg) => String(arg)).join('\n') : '',
+      env: candidate.env ? JSON.stringify(candidate.env, null, 2) : '',
+      url: hasUrl ? candidate.url.trim() : '',
+    };
+  };
+
+  const handleExtractJsonConfig = () => {
+    if (!jsonConfigInput.trim()) {
+      setJsonConfigError('Paste JSON first.');
+      return;
+    }
+
+    try {
+      const extracted = extractServerFromJson(jsonConfigInput.trim());
+      setNewServer(extracted);
+      setJsonConfigError(null);
+      setError(null);
+    } catch (e) {
+      setJsonConfigError(e.message || 'Failed to extract MCP server config from JSON.');
+    }
+  };
+
   const handleEditClick = (index) => {
     const server = servers[index];
     const isSse = !!server.url;
@@ -2899,6 +2997,8 @@ function McpServersManager({ servers, onSave, isSaving }) {
     
     setEditingIndex(index);
     setIsAdding(true);
+    setJsonConfigInput('');
+    setJsonConfigError(null);
     setError(null);
   };
 
@@ -2937,8 +3037,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
       onSave(updatedServers);
       setIsAdding(false);
       setEditingIndex(null);
-      setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
-      setError(null);
+      resetServerForm();
 
       // Refresh status after adding
       setTimeout(fetchMcpStatus, 1000);
@@ -2961,7 +3060,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
     // If we were editing, cancel it to avoid index mismatches
     setIsAdding(false);
     setEditingIndex(null);
-    setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
+    resetServerForm();
 
     // Refresh status after deleting
     setTimeout(fetchMcpStatus, 500);
@@ -2979,7 +3078,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
   return (
     <div className="space-y-4">
       {/* Header with Refresh Button */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div className="text-xs text-neutral-500">
           {servers.length === 0 ? (
             'No servers configured'
@@ -2994,14 +3093,27 @@ function McpServersManager({ servers, onSave, isSaving }) {
             </>
           )}
         </div>
-        <button
-          onClick={fetchMcpStatus}
-          disabled={loadingStatus}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded-lg transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={loadingStatus ? "animate-spin" : ""} />
-          {loadingStatus ? 'Checking...' : 'Refresh Status'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setIsAdding(true);
+              setEditingIndex(null);
+              resetServerForm();
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
+          >
+            <Plus size={12} />
+            Add MCP Server
+          </button>
+          <button
+            onClick={fetchMcpStatus}
+            disabled={loadingStatus}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded-lg transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={loadingStatus ? "animate-spin" : ""} />
+            {loadingStatus ? 'Checking...' : 'Refresh Status'}
+          </button>
+        </div>
       </div>
 
       {/* Status Error Message */}
@@ -3151,112 +3263,160 @@ function McpServersManager({ servers, onSave, isSaving }) {
         )}
       </div>
 
-      {/* Add Button / Form */}
-      {!isAdding ? (
-        <button
-          onClick={() => {
-            setIsAdding(true);
-            setEditingIndex(null);
-            setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
-          }}
-          className="w-full py-3 border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 rounded-xl text-sm text-neutral-400 hover:text-emerald-400 transition-all flex items-center justify-center gap-2"
-        >
-          <Plus size={16} />
-          Add MCP Server
-        </button>
-      ) : (
-        <div className="p-6 bg-neutral-800/50 border border-neutral-700 rounded-xl space-y-4 animate-in slide-in-from-top-2">
-          <h4 className="text-sm font-medium text-neutral-200">
-            {editingIndex !== null ? 'Edit MCP Server' : 'New MCP Server'}
-          </h4>
-
-          <div className="space-y-3">
-            <div className="flex bg-neutral-900 p-1 rounded-lg border border-neutral-700 mb-4">
-              <button
-                onClick={() => setNewServer(prev => ({ ...prev, type: 'stdio' }))}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${newServer.type === 'stdio' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
-              >
-                Stdio (Local)
-              </button>
-              <button
-                onClick={() => setNewServer(prev => ({ ...prev, type: 'sse' }))}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${newServer.type === 'sse' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
-              >
-                SSE (Remote/URL)
-              </button>
-            </div>
-
-            {newServer.type === 'stdio' ? (
-              <>
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Executable Command</label>
-                  <input
-                    type="text"
-                    value={newServer.command}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, command: e.target.value }))}
-                    placeholder="e.g. npx, python, node"
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Arguments (one per line)</label>
-                  <textarea
-                    value={newServer.args}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, args: e.target.value }))}
-                    placeholder="-y&#10;@modelcontextprotocol/server-everything"
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-24 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Environment Variables (JSON)</label>
-                  <textarea
-                    value={newServer.env}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, env: e.target.value }))}
-                    placeholder='{"API_KEY": "secret"}'
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-20 font-mono"
-                  />
-                </div>
-              </>
-            ) : (
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Server SSE URL</label>
-                <input
-                  type="text"
-                  value={newServer.url}
-                  onChange={(e) => setNewServer(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder="http://localhost:39300/model_context_protocol/2024-11-05/sse"
-                  className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
-                />
+      <AnimatePresence>
+        {isAdding && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 top-4 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => {
+              setIsAdding(false);
+              setEditingIndex(null);
+              resetServerForm();
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              transition={{ duration: 0.16 }}
+              className="w-full max-w-xl max-h-[88vh] bg-neutral-900 border border-neutral-700 rounded-xl flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-neutral-700 bg-neutral-900">
+                <h4 className="text-sm font-medium text-neutral-200">
+                  {editingIndex !== null ? 'Edit MCP Server' : 'New MCP Server'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAdding(false);
+                    setEditingIndex(null);
+                    resetServerForm();
+                  }}
+                  className="p-1.5 rounded-md text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
+                >
+                  <X size={16} />
+                </button>
               </div>
-            )}
-          </div>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium block">Paste JSON Config (Optional)</label>
+                  <textarea
+                    value={jsonConfigInput}
+                    onChange={(e) => {
+                      setJsonConfigInput(e.target.value);
+                      if (jsonConfigError) setJsonConfigError(null);
+                    }}
+                    placeholder={'{"mcpServers":{"browsermcp":{"command":"npx","args":["@browsermcp/mcp@latest"]}}}'}
+                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-24 font-mono"
+                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-neutral-500">
+                      Accepts full config (`mcpServers`) or a single server object.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleExtractJsonConfig}
+                      className="px-3 py-1.5 text-xs bg-neutral-700 hover:bg-neutral-600 text-neutral-100 rounded-lg transition-colors"
+                    >
+                      Extract
+                    </button>
+                  </div>
+                  {jsonConfigError && <p className="text-xs text-red-400">{jsonConfigError}</p>}
+                </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              disabled={isSaving || (newServer.type === 'stdio' ? !newServer.command : !newServer.url)}
-              className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
-            >
-              {isSaving ? "Saving..." : (editingIndex !== null ? "Update Server" : "Add Server")}
-            </button>
-            <button
-              onClick={() => { 
-                setIsAdding(false); 
-                setEditingIndex(null);
-                setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
-                setError(null); 
-              }}
-              className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-sm font-medium rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+                <div className="space-y-3">
+                  <div className="flex bg-neutral-900 p-1 rounded-lg border border-neutral-700 mb-4">
+                  <button
+                    onClick={() => setNewServer(prev => ({ ...prev, type: 'stdio' }))}
+                    className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${newServer.type === 'stdio' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                  >
+                    Stdio (Local)
+                  </button>
+                  <button
+                    onClick={() => setNewServer(prev => ({ ...prev, type: 'sse' }))}
+                    className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${newServer.type === 'sse' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                  >
+                    SSE (Remote/URL)
+                  </button>
+                </div>
+
+                  {newServer.type === 'stdio' ? (
+                  <>
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Executable Command</label>
+                      <input
+                        type="text"
+                        value={newServer.command}
+                        onChange={(e) => setNewServer(prev => ({ ...prev, command: e.target.value }))}
+                        placeholder="e.g. npx, python, node"
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Arguments (one per line)</label>
+                      <textarea
+                        value={newServer.args}
+                        onChange={(e) => setNewServer(prev => ({ ...prev, args: e.target.value }))}
+                        placeholder="-y&#10;@modelcontextprotocol/server-everything"
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-24 font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Environment Variables (JSON)</label>
+                      <textarea
+                        value={newServer.env}
+                        onChange={(e) => setNewServer(prev => ({ ...prev, env: e.target.value }))}
+                        placeholder='{"API_KEY": "secret"}'
+                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-20 font-mono"
+                      />
+                    </div>
+                  </>
+                  ) : (
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Server SSE URL</label>
+                    <input
+                      type="text"
+                      value={newServer.url}
+                      onChange={(e) => setNewServer(prev => ({ ...prev, url: e.target.value }))}
+                      placeholder="http://localhost:39300/model_context_protocol/2024-11-05/sse"
+                      className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
+                    />
+                  </div>
+                  )}
+                </div>
+
+                {error && <p className="text-xs text-red-400">{error}</p>}
+              </div>
+
+              <div className="sticky bottom-0 z-10 flex gap-2 px-6 py-4 border-t border-neutral-700 bg-neutral-900">
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving || (newServer.type === 'stdio' ? !newServer.command : !newServer.url)}
+                  className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isSaving ? "Saving..." : (editingIndex !== null ? "Update Server" : "Add Server")}
+                </button>
+                <button
+                  onClick={() => { 
+                    setIsAdding(false); 
+                    setEditingIndex(null);
+                    resetServerForm();
+                  }}
+                  className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-sm font-medium rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <ConfirmationModal
         isOpen={isConfirmOpen}
@@ -3409,6 +3569,11 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
+  const resetApiForm = () => {
+    setError(null);
+    setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
+  };
+
   const handleSaveApi = () => {
     if (!newApi.name.trim() || !newApi.description.trim() || !newApi.url.trim()) {
       setError("Name, description, and URL are required");
@@ -3431,8 +3596,7 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
       onSave(updatedApis);
       setIsAdding(false);
       setEditingIndex(null);
-      setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
-      setError(null);
+      resetApiForm();
     } catch (e) {
       setError(newApi.body?.trim() && e instanceof SyntaxError ? "Invalid JSON for body" : "Invalid JSON for headers");
     }
@@ -3474,6 +3638,23 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-neutral-500">
+          {apis.length === 0 ? 'No external APIs configured' : `${apis.length} API tool${apis.length !== 1 ? 's' : ''} configured`}
+        </div>
+        <button
+          onClick={() => {
+            setIsAdding(true);
+            setEditingIndex(null);
+            resetApiForm();
+          }}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors"
+        >
+          <Plus size={12} />
+          Add API Tool
+        </button>
+      </div>
+
       <div className="space-y-3">
         {apis.length === 0 && !isAdding ? (
           <div className="text-center py-10 bg-neutral-800/20 rounded-xl border border-dashed border-neutral-700">
@@ -3537,26 +3718,46 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
         )}
       </div>
 
-      {!isAdding ? (
-        <button
-          onClick={() => {
-            setIsAdding(true);
-            setEditingIndex(null);
-            setError(null);
-            setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
-          }}
-          className="w-full py-3 border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 rounded-xl text-sm text-neutral-400 hover:text-emerald-400 transition-all flex items-center justify-center gap-2"
-        >
-          <Plus size={16} />
-          Add Custom API Tool
-        </button>
-      ) : (
-        <div className="p-6 bg-neutral-800/50 border border-neutral-700 rounded-xl space-y-4 animate-in slide-in-from-top-2">
-          <h4 className="text-sm font-medium text-neutral-200">
-            {editingIndex !== null ? 'Edit API Tool' : 'New API Tool'}
-          </h4>
+      <AnimatePresence>
+        {isAdding && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 top-4 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => {
+              setIsAdding(false);
+              setEditingIndex(null);
+              resetApiForm();
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.98, y: 8 }}
+              transition={{ duration: 0.16 }}
+              className="w-full max-w-xl max-h-[88vh] bg-neutral-900 border border-neutral-700 rounded-xl flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-neutral-700 bg-neutral-900">
+                <h4 className="text-sm font-medium text-neutral-200">
+                  {editingIndex !== null ? 'Edit API Tool' : 'New API Tool'}
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAdding(false);
+                    setEditingIndex(null);
+                    resetApiForm();
+                  }}
+                  className="p-1.5 rounded-md text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
 
-          <div className="grid grid-cols-2 gap-4">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Tool Name</label>
               <input
@@ -3581,9 +3782,9 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
                 <option value="DELETE">DELETE (query params)</option>
               </select>
             </div>
-          </div>
+              </div>
 
-          <div className="space-y-1.5">
+              <div className="space-y-1.5">
             <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Description (For AI context)</label>
             <input
               type="text"
@@ -3592,9 +3793,9 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
               placeholder="e.g. Use this tool to get current weather for a city."
               className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
             />
-          </div>
+              </div>
 
-          <div className="space-y-1.5">
+              <div className="space-y-1.5">
             <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">API URL (Supports {'{param}'} placeholders)</label>
             <input
               type="text"
@@ -3603,10 +3804,10 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
               placeholder="https://api.example.com/weather?q={city}"
               className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
             />
-          </div>
+              </div>
 
-          {(newApi.method === 'POST' || newApi.method === 'PUT' || newApi.method === 'PATCH') && (
-            <div className="space-y-1.5">
+              {(newApi.method === 'POST' || newApi.method === 'PUT' || newApi.method === 'PATCH') && (
+                <div className="space-y-1.5">
               <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Request body (JSON)</label>
               <textarea
                 value={newApi.body}
@@ -3615,10 +3816,10 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
                 className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-24 font-mono"
               />
               <p className="text-[10px] text-neutral-500">Optional. Use <code className="bg-neutral-800 px-1 rounded">{'{param}'}</code> placeholders; the AI will pass those as tool arguments.</p>
-            </div>
-          )}
+                </div>
+              )}
 
-          <div className="space-y-1.5">
+              <div className="space-y-1.5">
             <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Headers (JSON)</label>
             <textarea
               value={newApi.headers}
@@ -3626,32 +3827,34 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
               placeholder='{"Authorization": "Bearer secret_key"}'
               className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-20 font-mono"
             />
-          </div>
+              </div>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+              {error && <p className="text-xs text-red-400">{error}</p>}
+              </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={handleSaveApi}
-              disabled={isSaving}
-              className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
-            >
-              {isSaving ? "Saving..." : (editingIndex !== null ? "Update API Tool" : "Add API Tool")}
-            </button>
-            <button
-              onClick={() => {
-                setIsAdding(false);
-                setEditingIndex(null);
-                setError(null);
-                setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
-              }}
-              className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-sm font-medium rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+              <div className="sticky bottom-0 z-10 flex gap-2 px-6 py-4 border-t border-neutral-700 bg-neutral-900">
+                <button
+                  onClick={handleSaveApi}
+                  disabled={isSaving}
+                  className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isSaving ? "Saving..." : (editingIndex !== null ? "Update API Tool" : "Add API Tool")}
+                </button>
+                <button
+                  onClick={() => {
+                    setIsAdding(false);
+                    setEditingIndex(null);
+                    resetApiForm();
+                  }}
+                  className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-sm font-medium rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <ConfirmationModal
         isOpen={isConfirmOpen}

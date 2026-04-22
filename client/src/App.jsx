@@ -2356,6 +2356,14 @@ function SettingsWindowApp() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isReady) return undefined;
+    startRealtime(true);
+    return () => {
+      stopRealtime();
+    };
+  }, [isReady]);
+
   if (!isReady) {
     return <LoadingScreen onMouseDown={() => {}} onClose={handleCloseSettingsWindow} onMinimize={() => getCurrentWindow().minimize()} />;
   }
