@@ -174,6 +174,11 @@ export function NormalModeLayout({
     const filteredThreads = mergedThreads.filter(t =>
         (t.title || 'Untitled Chat').toLowerCase().includes(searchTerm.toLowerCase())
     );
+    const botReplyCount = messages.filter(
+        (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
+    ).length;
+    const toolTooltipPlacement = botReplyCount <= 2 ? "bottom" : "top";
+
     const getThreadFriendMeta = (threadId) => {
         if (!friendThreadMeta) return null;
         return friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
@@ -474,7 +479,7 @@ export function NormalModeLayout({
                                                         <div className="p-1.5 text-red-500 cursor-help">
                                                             <Info size={14} />
                                                         </div>
-                                                        <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm">
+                                                        <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
                                                             {m.errorMessage}
                                                         </div>
                                                     </div>
@@ -495,7 +500,7 @@ export function NormalModeLayout({
                                                 </div>
                                             )}
 
-                                            <div className={`min-w-0 max-w-full break-words overflow-x-auto rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
+                                            <div className={`min-w-0 max-w-full break-all overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
                                                 ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
                                                 : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
                                                 }`}>
@@ -530,7 +535,11 @@ export function NormalModeLayout({
                                                                         setTypesWrite={setTypesWrite}
                                                                     />
                                                                 ) : (
-                                                                    <ToolChip name={block.name} content={block.text} />
+                                                                    <ToolChip
+                                                                        name={block.name}
+                                                                        content={block.text}
+                                                                        tooltipPlacement={toolTooltipPlacement}
+                                                                    />
                                                                 )}
                                                             </div>
                                                         ))}

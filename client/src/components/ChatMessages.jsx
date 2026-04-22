@@ -18,6 +18,11 @@ export function ChatMessages({
   onOpenInNewChat,
   activeFriendMeta = null,
 }) {
+  const botReplyCount = messages.filter(
+    (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
+  ).length;
+  const toolTooltipPlacement = botReplyCount <= 2 ? "bottom" : "top";
+
   return (
     <main className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden bg-neutral-900/70 py-4 min-h-0">
       {activeFriendMeta?.isFriendChat && (
@@ -74,7 +79,7 @@ export function ChatMessages({
                       <div className="p-1.5 text-red-500 cursor-help">
                         <Info size={14} />
                       </div>
-                      <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm">
+                      <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
                         {m.errorMessage}
                       </div>
                     </div>
@@ -82,7 +87,7 @@ export function ChatMessages({
                     )}
                   </div>
                 )}
-                <div className={`min-w-0 max-w-full break-words overflow-x-auto rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>
+                <div className={`min-w-0 max-w-full break-all overflow-x-hidden rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>
                 {m.image_url && (
                   <div className="mb-2 overflow-hidden rounded-lg">
                     <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
@@ -114,7 +119,11 @@ export function ChatMessages({
                             setTypesWrite={setTypesWrite}
                           />
                         ) : (
-                          <ToolChip name={block.name} content={block.text} />
+                          <ToolChip
+                            name={block.name}
+                            content={block.text}
+                            tooltipPlacement={toolTooltipPlacement}
+                          />
                         )}
                       </div>
                     ))}

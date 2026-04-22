@@ -48,18 +48,24 @@ function parseTodoContent(raw) {
     return null;
 }
 
-export const ToolChip = ({ name, content }) => {
+export const ToolChip = ({ name, content, tooltipPlacement = "bottom" }) => {
     const [showPopup, setShowPopup] = useState(false);
     const hideTimeoutRef = useRef(null);
     const triggerRef = useRef(null);
+    const popupRef = useRef(null);
     const [popupPos, setPopupPos] = useState({ top: 0, left: 0 });
 
     const updatePopupPosition = useCallback(() => {
         const el = triggerRef.current;
         if (!el) return;
         const r = el.getBoundingClientRect();
-        setPopupPos({ top: r.bottom + 4, left: r.left });
-    }, []);
+        const isTop = tooltipPlacement === "top";
+        const popupHeight = popupRef.current?.offsetHeight || 0;
+        setPopupPos({
+            top: isTop ? r.top - popupHeight - 8 : r.bottom + 4,
+            left: r.left,
+        });
+    }, [tooltipPlacement]);
 
     const show = () => {
         if (hideTimeoutRef.current) {
@@ -106,11 +112,15 @@ export const ToolChip = ({ name, content }) => {
         <AnimatePresence>
             {showPopup && (
                 <motion.div
-                    initial={{ opacity: 0, y: -4, scale: 0.96 }}
+                    ref={popupRef}
+                    initial={{ opacity: 0, y: tooltipPlacement === "top" ? 4 : -4, scale: 0.96 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -4, scale: 0.96 }}
+                    exit={{ opacity: 0, y: tooltipPlacement === "top" ? 4 : -4, scale: 0.96 }}
                     transition={{ duration: 0.15 }}
-                    style={{ top: popupPos.top, left: popupPos.left }}
+                    style={{
+                        top: popupPos.top,
+                        left: popupPos.left,
+                    }}
                     className="fixed z-[1000] min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-64 overflow-y-auto"
                     onMouseEnter={show}
                     onMouseLeave={hide}
