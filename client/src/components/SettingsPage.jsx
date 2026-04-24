@@ -90,6 +90,7 @@ function SettingsPage({ onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('provider'); // 'provider', 'tools', 'orchestration', ...
+  const [capabilityTab, setCapabilityTab] = useState('builtin'); // 'builtin', 'mcp', 'external'
   const [savingKey, setSavingKey] = useState(null);
   const [logs, setLogs] = useState('');
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -1219,98 +1220,142 @@ key2,
                     <p className="text-sm text-neutral-500">Manage your assistant capabilities: built-in tools, MCP servers, and external APIs.</p>
                   </div>
 
-                  {/* Built-in tools as chips */}
-                  <div className="premium-card rounded-2xl p-6 space-y-6">
-                    <div className="flex items-center justify-between pb-4 border-b border-white/5">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
-                          <Wrench size={16} />
-                        </div>
-                        <h4 className="text-sm font-bold text-white tracking-wide uppercase">Built-in Tools</h4>
-                      </div>
-                      <span className="text-[10px] font-bold bg-white/5 border border-white/10 px-2 py-1 rounded-md text-neutral-400 tracking-wider">
-                        {enabledTools.length} ACTIVE
-                      </span>
+                  <div className=" rounded-2xl">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCapabilityTab('builtin')}
+                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold tracking-wide border transition-colors ${
+                          capabilityTab === 'builtin'
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                            : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <Wrench size={14} />
+                        Built-in Tools
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCapabilityTab('mcp')}
+                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold tracking-wide border transition-colors ${
+                          capabilityTab === 'mcp'
+                            ? 'bg-blue-500/15 border-blue-500/40 text-blue-300'
+                            : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <Plug2 size={14} />
+                        MCP Servers
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCapabilityTab('external')}
+                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold tracking-wide border transition-colors ${
+                          capabilityTab === 'external'
+                            ? 'bg-purple-500/15 border-purple-500/40 text-purple-300'
+                            : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
+                        }`}
+                      >
+                        <Link size={14} />
+                        External APIs
+                      </button>
                     </div>
+                  </div>
 
-                    <div className="flex flex-wrap gap-2.5">
-                      {AVAILABLE_TOOLS.map(tool => {
-                        const isMissingKey = tool.id === 'internet_search' && !settings.tavily_api_key;
-                        const isEnabled = !isMissingKey && enabledTools.includes(tool.id);
-                        const tooltipText = isMissingKey
-                          ? 'Add Tavily API key in General settings to enable'
-                          : tool.desc;
-                        return (
-                          <div key={tool.id} className="group relative">
-                            <button
-                              type="button"
-                              onClick={() => !isMissingKey && handleToolToggle(tool.id)}
-                              disabled={isMissingKey}
-                              className={`px-4 py-2 rounded-xl border text-xs font-semibold tracking-wide transition-all duration-300 ${isMissingKey
-                                ? 'opacity-40 cursor-not-allowed bg-neutral-900 border-white/5 text-neutral-600'
-                                : isEnabled
-                                  ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                                  : 'bg-white/[0.02] border-white/5 text-neutral-500 hover:bg-white/[0.05] hover:border-white/10 hover:text-neutral-300'
-                                }`}
-                            >
-                              {tool.label}
-                            </button>
-                            {/* Hover tooltip */}
-                            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-2 w-48 rounded-xl border border-white/10 bg-neutral-900 shadow-2xl text-[10px] leading-relaxed text-neutral-400 opacity-0 group-hover:opacity-100 transition-all duration-300 z-50 pointer-events-none scale-95 group-hover:scale-100 origin-top">
-                              {tooltipText}
-                            </div>
+                  {capabilityTab === 'builtin' && (
+                    <div className="premium-card rounded-2xl p-6 space-y-6">
+                      <div className="flex items-center justify-between pb-4 border-b border-white/5">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+                            <Wrench size={16} />
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* MCP Servers section */}
-                  <div className="premium-card rounded-2xl p-6 space-y-6">
-                    <div className="flex items-center gap-3 pb-4 border-b border-white/5">
-                      <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
-                        <Plug2 size={16} />
+                          <h4 className="text-sm font-bold text-white tracking-wide uppercase">Built-in Tools</h4>
+                        </div>
+                        <span className="text-[10px] font-bold bg-white/5 border border-white/10 px-2 py-1 rounded-md text-neutral-400 tracking-wider">
+                          {enabledTools.length} ACTIVE
+                        </span>
                       </div>
-                      <h4 className="text-sm font-bold text-white tracking-wide uppercase">MCP Servers</h4>
-                    </div>
-                    
-                    <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
-                      Model Context Protocol (MCP) allows your assistant to connect to local or remote services, providing access to specific files, databases, or APIs.
-                    </p>
 
-                    <div className="pt-2">
-                      <McpServersManager
-                        servers={settings.mcp_servers || []}
-                        onSave={(newServers) => handleSaveSetting('MCP_SERVERS', JSON.stringify(newServers))}
-                        isSaving={savingKey === 'MCP_SERVERS'}
-                      />
-                    </div>
-                  </div>
-
-                  {/* External APIs section */}
-                  <div className="premium-card rounded-2xl p-6 space-y-6">
-                    <div className="flex items-center gap-3 pb-4 border-b border-white/5">
-                      <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">
-                        <Link size={16} />
+                      <div className="flex flex-wrap gap-2.5">
+                        {AVAILABLE_TOOLS.map(tool => {
+                          const isMissingKey = tool.id === 'internet_search' && !settings.tavily_api_key;
+                          const isEnabled = !isMissingKey && enabledTools.includes(tool.id);
+                          const tooltipText = isMissingKey
+                            ? 'Add Tavily API key in General settings to enable'
+                            : tool.desc;
+                          return (
+                            <div key={tool.id} className="group relative">
+                              <button
+                                type="button"
+                                onClick={() => !isMissingKey && handleToolToggle(tool.id)}
+                                disabled={isMissingKey}
+                                className={`px-4 py-2 rounded-xl border text-xs font-semibold tracking-wide transition-all duration-300 ${isMissingKey
+                                  ? 'opacity-40 cursor-not-allowed bg-neutral-900 border-white/5 text-neutral-600'
+                                  : isEnabled
+                                    ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                                    : 'bg-white/[0.02] border-white/5 text-neutral-500 hover:bg-white/[0.05] hover:border-white/10 hover:text-neutral-300'
+                                  }`}
+                              >
+                                {tool.label}
+                              </button>
+                              {/* Hover tooltip */}
+                              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 px-3 py-2 w-48 rounded-xl border border-white/10 bg-neutral-900 shadow-2xl text-[10px] leading-relaxed text-neutral-400 opacity-0 group-hover:opacity-100 transition-all duration-300 z-50 pointer-events-none scale-95 group-hover:scale-100 origin-top">
+                                {tooltipText}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <h4 className="text-sm font-bold text-white tracking-wide uppercase">External APIs</h4>
                     </div>
+                  )}
 
-                    <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
-                      Connect custom API endpoints as tools for the agent. GET/DELETE use query params, while POST/PUT/PATCH send a body.
-                    </p>
-                    <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
-                      Use Request body (JSON) for fixed or templated payloads, for example <code className="bg-neutral-800 px-1 rounded">{'{"query": "{query}"}'}</code>.
-                    </p>
+                  {capabilityTab === 'mcp' && (
+                    <div className="premium-card rounded-2xl p-6 space-y-6">
+                      <div className="flex items-center gap-3 pb-4 border-b border-white/5">
+                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
+                          <Plug2 size={16} />
+                        </div>
+                        <h4 className="text-sm font-bold text-white tracking-wide uppercase">MCP Servers</h4>
+                      </div>
 
-                    <div className="pt-2">
-                      <ExternalApisManager
-                        apis={settings.external_apis || []}
-                        onSave={(updatedApis) => handleSaveSetting('EXTERNAL_APIS', JSON.stringify(updatedApis))}
-                        isSaving={savingKey === 'EXTERNAL_APIS'}
-                      />
+                      <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
+                        Model Context Protocol (MCP) allows your assistant to connect to local or remote services, providing access to specific files, databases, or APIs.
+                      </p>
+
+                      <div className="pt-2">
+                        <McpServersManager
+                          servers={settings.mcp_servers || []}
+                          onSave={(newServers) => handleSaveSetting('MCP_SERVERS', JSON.stringify(newServers))}
+                          isSaving={savingKey === 'MCP_SERVERS'}
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
+
+                  {capabilityTab === 'external' && (
+                    <div className="premium-card rounded-2xl p-6 space-y-6">
+                      <div className="flex items-center gap-3 pb-4 border-b border-white/5">
+                        <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">
+                          <Link size={16} />
+                        </div>
+                        <h4 className="text-sm font-bold text-white tracking-wide uppercase">External APIs</h4>
+                      </div>
+
+                      <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
+                        Connect custom API endpoints as tools for the agent. GET/DELETE use query params, while POST/PUT/PATCH send a body.
+                      </p>
+                      <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
+                        Use Request body (JSON) for fixed or templated payloads, for example <code className="bg-neutral-800 px-1 rounded">{'{"query": "{query}"}'}</code>.
+                      </p>
+
+                      <div className="pt-2">
+                        <ExternalApisManager
+                          apis={settings.external_apis || []}
+                          onSave={(updatedApis) => handleSaveSetting('EXTERNAL_APIS', JSON.stringify(updatedApis))}
+                          isSaving={savingKey === 'EXTERNAL_APIS'}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2813,9 +2858,30 @@ export { SettingsPage };
 export default SettingsPage;
 
 function McpServersManager({ servers, onSave, isSaving }) {
+  const createDefaultMcpServerJson = () => JSON.stringify({
+    mcpServers: {
+      browsermcp: {
+        command: 'npx',
+        args: ['@browsermcp/mcp@latest'],
+      },
+    },
+  }, null, 2);
+
+  const createMcpServerJsonFromServer = (server) => JSON.stringify({
+    mcpServers: {
+      server: server.url
+        ? { url: server.url }
+        : {
+            command: server.command || '',
+            args: Array.isArray(server.args) ? server.args : [],
+            env: server.env && typeof server.env === 'object' ? server.env : {},
+          },
+    },
+  }, null, 2);
+
   const [isAdding, setIsAdding] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
-  const [newServer, setNewServer] = useState({ type: 'stdio', command: '', args: '', env: '', url: '' });
+  const [newServerJson, setNewServerJson] = useState(createDefaultMcpServerJson());
   const [error, setError] = useState(null);
   const [mcpStatus, setMcpStatus] = useState(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
@@ -2855,15 +2921,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
 
   const handleEditClick = (index) => {
     const server = servers[index];
-    const isSse = !!server.url;
-    
-    setNewServer({
-      type: isSse ? 'sse' : 'stdio',
-      command: server.command || '',
-      args: server.args ? server.args.join('\n') : '',
-      env: server.env ? JSON.stringify(server.env, null, 2) : '',
-      url: server.url || ''
-    });
+    setNewServerJson(createMcpServerJsonFromServer(server));
     
     setEditingIndex(index);
     setIsAdding(true);
@@ -2871,26 +2929,48 @@ function McpServersManager({ servers, onSave, isSaving }) {
   };
 
   const handleSave = () => {
-    if (newServer.type === 'stdio' && !newServer.command.trim()) {
-      setError("Command is required");
-      return;
-    }
-    if (newServer.type === 'sse' && !newServer.url.trim()) {
-      setError("URL is required");
-      return;
-    }
-
     try {
+      const parsed = JSON.parse(newServerJson);
+      let serverCandidate = parsed;
+
+      if (parsed && typeof parsed === 'object' && parsed.mcpServers && typeof parsed.mcpServers === 'object') {
+        const entries = Object.entries(parsed.mcpServers).filter(([, value]) => value && typeof value === 'object');
+        if (entries.length !== 1) {
+          setError('JSON must contain exactly one server inside "mcpServers"');
+          return;
+        }
+        [, serverCandidate] = entries[0];
+      }
+
+      if (!serverCandidate || typeof serverCandidate !== 'object') {
+        setError('Invalid server JSON object');
+        return;
+      }
+
       let server;
-      if (newServer.type === 'stdio') {
+      if (serverCandidate.url) {
         server = {
-          command: newServer.command.trim(),
-          args: newServer.args ? newServer.args.split('\n').map(a => a.trim()).filter(a => a) : [],
-          env: newServer.env ? JSON.parse(newServer.env) : {}
+          url: String(serverCandidate.url).trim(),
         };
+        if (!server.url) {
+          setError('URL is required');
+          return;
+        }
       } else {
+        const command = typeof serverCandidate.command === 'string' ? serverCandidate.command.trim() : '';
+        if (!command) {
+          setError('Command is required');
+          return;
+        }
+
         server = {
-          url: newServer.url.trim()
+          command,
+          args: Array.isArray(serverCandidate.args)
+            ? serverCandidate.args.map((arg) => String(arg))
+            : [],
+          env: serverCandidate.env && typeof serverCandidate.env === 'object' && !Array.isArray(serverCandidate.env)
+            ? serverCandidate.env
+            : {},
         };
       }
 
@@ -2905,13 +2985,13 @@ function McpServersManager({ servers, onSave, isSaving }) {
       onSave(updatedServers);
       setIsAdding(false);
       setEditingIndex(null);
-      setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
+      setNewServerJson(createDefaultMcpServerJson());
       setError(null);
 
       // Refresh status after adding
       setTimeout(fetchMcpStatus, 1000);
     } catch (e) {
-      setError("Invalid JSON for environment variables");
+      setError('Invalid JSON format');
     }
   };
 
@@ -2929,7 +3009,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
     // If we were editing, cancel it to avoid index mismatches
     setIsAdding(false);
     setEditingIndex(null);
-    setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
+    setNewServerJson(createDefaultMcpServerJson());
 
     // Refresh status after deleting
     setTimeout(fetchMcpStatus, 500);
@@ -2947,7 +3027,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
   return (
     <div className="space-y-4">
       {/* Header with Refresh Button */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div className="text-xs text-neutral-500">
           {servers.length === 0 ? (
             'No servers configured'
@@ -2962,14 +3042,30 @@ function McpServersManager({ servers, onSave, isSaving }) {
             </>
           )}
         </div>
-        <button
-          onClick={fetchMcpStatus}
-          disabled={loadingStatus}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded-lg transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={12} className={loadingStatus ? "animate-spin" : ""} />
-          {loadingStatus ? 'Checking...' : 'Refresh Status'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchMcpStatus}
+            disabled={loadingStatus}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white rounded-lg transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={loadingStatus ? "animate-spin" : ""} />
+            {loadingStatus ? 'Checking...' : 'Refresh Status'}
+          </button>
+          {!isAdding && (
+            <button
+              onClick={() => {
+                setIsAdding(true);
+                setEditingIndex(null);
+                setNewServerJson(createDefaultMcpServerJson());
+                setError(null);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 text-neutral-400 hover:text-emerald-400 rounded-lg transition-all"
+            >
+              <Plus size={12} />
+              Add MCP Server
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Status Error Message */}
@@ -2985,7 +3081,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
       {/* Server List */}
       <div className="space-y-3">
         {servers.length === 0 ? (
-          <div className="p-8 border-2 border-dashed border-neutral-800 rounded-xl text-center">
+          <div className="p-8  rounded-xl text-center">
             <p className="text-sm text-neutral-500">No MCP servers configured yet.</p>
           </div>
         ) : (
@@ -3119,86 +3215,26 @@ function McpServersManager({ servers, onSave, isSaving }) {
         )}
       </div>
 
-      {/* Add Button / Form */}
-      {!isAdding ? (
-        <button
-          onClick={() => {
-            setIsAdding(true);
-            setEditingIndex(null);
-            setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
-          }}
-          className="w-full py-3 border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 rounded-xl text-sm text-neutral-400 hover:text-emerald-400 transition-all flex items-center justify-center gap-2"
-        >
-          <Plus size={16} />
-          Add MCP Server
-        </button>
-      ) : (
+      {/* Add / Edit Form */}
+      {isAdding && (
         <div className="p-6 bg-neutral-800/50 border border-neutral-700 rounded-xl space-y-4 animate-in slide-in-from-top-2">
           <h4 className="text-sm font-medium text-neutral-200">
             {editingIndex !== null ? 'Edit MCP Server' : 'New MCP Server'}
           </h4>
 
           <div className="space-y-3">
-            <div className="flex bg-neutral-900 p-1 rounded-lg border border-neutral-700 mb-4">
-              <button
-                onClick={() => setNewServer(prev => ({ ...prev, type: 'stdio' }))}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${newServer.type === 'stdio' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
-              >
-                Stdio (Local)
-              </button>
-              <button
-                onClick={() => setNewServer(prev => ({ ...prev, type: 'sse' }))}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${newServer.type === 'sse' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
-              >
-                SSE (Remote/URL)
-              </button>
+            <div>
+              <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">MCP Server JSON</label>
+              <textarea
+                value={newServerJson}
+                onChange={(e) => setNewServerJson(e.target.value)}
+                placeholder={`{\n  "mcpServers": {\n    "browsermcp": {\n      "command": "npx",\n      "args": ["@browsermcp/mcp@latest"]\n    }\n  }\n}`}
+                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-72 font-mono"
+              />
+              <p className="text-[10px] text-neutral-500 mt-1">
+                Paste one server in Cursor-style format. Supports either <code className="bg-neutral-800 px-1 rounded">{"{ mcpServers: { name: {...} } }"}</code> or a direct server object.
+              </p>
             </div>
-
-            {newServer.type === 'stdio' ? (
-              <>
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Executable Command</label>
-                  <input
-                    type="text"
-                    value={newServer.command}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, command: e.target.value }))}
-                    placeholder="e.g. npx, python, node"
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Arguments (one per line)</label>
-                  <textarea
-                    value={newServer.args}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, args: e.target.value }))}
-                    placeholder="-y&#10;@modelcontextprotocol/server-everything"
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-24 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Environment Variables (JSON)</label>
-                  <textarea
-                    value={newServer.env}
-                    onChange={(e) => setNewServer(prev => ({ ...prev, env: e.target.value }))}
-                    placeholder='{"API_KEY": "secret"}'
-                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 h-20 font-mono"
-                  />
-                </div>
-              </>
-            ) : (
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">Server SSE URL</label>
-                <input
-                  type="text"
-                  value={newServer.url}
-                  onChange={(e) => setNewServer(prev => ({ ...prev, url: e.target.value }))}
-                  placeholder="http://localhost:39300/model_context_protocol/2024-11-05/sse"
-                  className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
-                />
-              </div>
-            )}
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -3206,7 +3242,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
           <div className="flex gap-2">
             <button
               onClick={handleSave}
-              disabled={isSaving || (newServer.type === 'stdio' ? !newServer.command : !newServer.url)}
+              disabled={isSaving || !newServerJson.trim()}
               className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
             >
               {isSaving ? "Saving..." : (editingIndex !== null ? "Update Server" : "Add Server")}
@@ -3215,7 +3251,7 @@ function McpServersManager({ servers, onSave, isSaving }) {
               onClick={() => { 
                 setIsAdding(false); 
                 setEditingIndex(null);
-                setNewServer({ type: 'stdio', command: '', args: '', env: '', url: '' });
+                setNewServerJson(createDefaultMcpServerJson());
                 setError(null); 
               }}
               className="px-4 py-2 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 text-sm font-medium rounded-lg transition-colors"
@@ -3442,9 +3478,31 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs text-neutral-500">
+          {apis.length === 0
+            ? 'No external APIs configured'
+            : `${apis.length} API tool${apis.length !== 1 ? 's' : ''} configured`}
+        </div>
+        {!isAdding && (
+          <button
+            onClick={() => {
+              setIsAdding(true);
+              setEditingIndex(null);
+              setError(null);
+              setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 text-neutral-400 hover:text-emerald-400 rounded-lg transition-all"
+          >
+            <Plus size={12} />
+            Add API Tool
+          </button>
+        )}
+      </div>
+
       <div className="space-y-3">
         {apis.length === 0 && !isAdding ? (
-          <div className="text-center py-10 bg-neutral-800/20 rounded-xl border border-dashed border-neutral-700">
+          <div className="text-center py-10 rounded-xl">
             <Link size={32} className="mx-auto text-neutral-600 mb-3 opacity-20" />
             <p className="text-sm text-neutral-500">No external APIs configured yet.</p>
           </div>
@@ -3453,21 +3511,11 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
             <div key={idx} className="group bg-neutral-800/30 border border-neutral-700/50 rounded-xl overflow-hidden hover:border-neutral-600 transition-all">
               <div className="p-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
-                    <Globe size={18} />
-                  </div>
                   <div>
                     <h4 className="text-sm font-semibold text-neutral-100">{api.name}</h4>
                     <p className="text-[11px] text-neutral-500 line-clamp-1">{api.description}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-400 border border-neutral-700 font-mono">{api.method}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold tracking-wide ${
-                        api.enabled !== false
-                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                          : 'bg-neutral-900 border-neutral-700 text-neutral-500'
-                      }`}>
-                        {api.enabled !== false ? 'ENABLED' : 'DISABLED'}
-                      </span>
                       <span className="text-[10px] text-neutral-600 font-mono truncate max-w-[200px]">{api.url}</span>
                     </div>
                   </div>
@@ -3482,21 +3530,31 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
                     <Pencil size={15} />
                   </button>
                   <button
-                    onClick={() => handleToggleApi(idx)}
-                    disabled={isSaving}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-semibold tracking-wide border transition-colors ${
-                      api.enabled !== false
-                        ? 'border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10'
-                        : 'border-white/10 text-neutral-400 hover:bg-white/5'
-                    } disabled:opacity-50`}
-                  >
-                    {api.enabled !== false ? 'Disable' : 'Enable'}
-                  </button>
-                  <button
                     onClick={() => handleDeleteClick(idx)}
                     className="p-2 text-neutral-500 hover:text-red-400 transition-colors"
                   >
                     <Trash2 size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleToggleApi(idx)}
+                    disabled={isSaving}
+                    role="switch"
+                    aria-checked={api.enabled !== false}
+                    aria-label={`${api.enabled !== false ? 'Disable' : 'Enable'} ${api.name}`}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full border transition-colors disabled:opacity-50 ${
+                      api.enabled !== false
+                        ? 'border-emerald-500/40 bg-emerald-500/20'
+                        : 'border-white/10 bg-neutral-900'
+                    }`}
+                    title={api.enabled !== false ? 'Disable' : 'Enable'}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full transition-transform ${
+                        api.enabled !== false
+                          ? 'translate-x-6 bg-emerald-300'
+                          : 'translate-x-1 bg-neutral-400'
+                      }`}
+                    />
                   </button>
                 </div>
               </div>
@@ -3505,20 +3563,7 @@ function ExternalApisManager({ apis, onSave, isSaving }) {
         )}
       </div>
 
-      {!isAdding ? (
-        <button
-          onClick={() => {
-            setIsAdding(true);
-            setEditingIndex(null);
-            setError(null);
-            setNewApi({ name: '', description: '', url: '', method: 'GET', headers: '{}', body: '', enabled: true });
-          }}
-          className="w-full py-3 border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 rounded-xl text-sm text-neutral-400 hover:text-emerald-400 transition-all flex items-center justify-center gap-2"
-        >
-          <Plus size={16} />
-          Add Custom API Tool
-        </button>
-      ) : (
+      {isAdding && (
         <div className="p-6 bg-neutral-800/50 border border-neutral-700 rounded-xl space-y-4 animate-in slide-in-from-top-2">
           <h4 className="text-sm font-medium text-neutral-200">
             {editingIndex !== null ? 'Edit API Tool' : 'New API Tool'}
