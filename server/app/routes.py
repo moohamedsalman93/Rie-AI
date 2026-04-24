@@ -1112,6 +1112,7 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
     source_identity = _identity_payload()
     stream_id = str(uuid.uuid4())
     peer_stream_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive/stream"
+    peer_legacy_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
     peer_cancel_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive/stream/cancel"
     payload = {
         "from_device_id": source_identity["device_id"],
@@ -1135,6 +1136,28 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
     async def event_generator():
         full_response: List[str] = []
         stream_error: Optional[str] = None
+        forwarded_events = 0
+
+        async def _fallback_legacy_once(client: httpx.AsyncClient) -> None:
+            nonlocal stream_error
+            nonlocal forwarded_events
+            response = await client.post(peer_legacy_endpoint, json=payload)
+            if response.status_code >= 400:
+                base = f"Peer ask fallback failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                peer_snippet = _extract_peer_http_error_detail(response)
+                detail = f"{base}: {peer_snippet}" if peer_snippet else base
+                stream_error = detail
+                yield_payload = {"error": "peer_stream_failed", "details": detail}
+                yield f"data: {json.dumps(yield_payload)}\n\n"
+                return
+            body = response.json()
+            text = str(body.get("message", "")).strip()
+            if text:
+                full_response.append(text)
+                forwarded_events += 1
+                yield f"data: {json.dumps({'step': 'model', 'message': {'type': 'assistant', 'content': text}}, default=str)}\n\n"
+            yield f"data: {json.dumps({'step': 'end', 'done': True}, default=str)}\n\n"
+
         try:
             start_payload = {
                 "step": "start",
@@ -1144,10 +1167,16 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
                 "friend_name": fname,
             }
             yield f"data: {json.dumps(start_payload)}\n\n"
+            forwarded_events += 1
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=PEER_HTTP_ASK_TIMEOUT, connect=10.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=PEER_HTTP_ASK_TIMEOUT, connect=10.0, read=45.0)) as client:
                 async with client.stream("POST", peer_stream_endpoint, json=payload) as response:
                     if response.status_code >= 400:
+                        # Backward compatibility: remote peer may not have stream endpoint yet.
+                        if response.status_code in (404, 405):
+                            async for item in _fallback_legacy_once(client):
+                                yield item
+                            return
                         base = f"Peer ask stream failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
                         peer_snippet = _extract_peer_http_error_detail(response)
                         detail = f"{base}: {peer_snippet}" if peer_snippet else base
@@ -1172,7 +1201,13 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
                         if evt.get("error"):
                             details = str(evt.get("details") or evt.get("error"))
                             stream_error = details
+                        forwarded_events += 1
                         yield f"data: {json.dumps(evt, default=str)}\n\n"
+                    # If the peer returned 200 but emitted nothing parseable as SSE, fallback once.
+                    if forwarded_events <= 1:
+                        async for item in _fallback_legacy_once(client):
+                            yield item
+                        return
         except asyncio.CancelledError:
             stream_error = "Friend stream cancelled"
             raise
