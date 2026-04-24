@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, askFriend, deleteThread } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread } from "./services/chatApi";
 import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
@@ -202,6 +202,7 @@ function MainApp() {
   const isPlayingRef = useRef(false);
   const sentenceBufferRef = useRef("");
   const isRecordingRef = useRef(isRecording);
+  const friendStreamStateRef = useRef({});
   const messages = sessions[activeThreadId] || initialMessages;
   const isLoading = streamingThreads.has(activeThreadId);
   const isLoadingRef = useRef(isLoading);
@@ -784,6 +785,10 @@ function MainApp() {
       try {
         const token = localStorage.getItem('rie_token');
         if (friendTarget?.id) {
+          friendStreamStateRef.current[threadId] = {
+            friendId: friendTarget.id,
+            streamId: null,
+          };
           const approval = await getFriendApproval(friendTarget.id, threadId);
           if (!approval?.approved) {
             const yes = window.confirm(`Allow asking ${friendTarget.name} in this chat? This is required only once per chat.`);
@@ -799,44 +804,39 @@ function MainApp() {
             }
           }
           try {
-            const reply = await askFriend(friendTarget.id, trimmed, threadId);
-            const canonicalThreadId = String(reply?.thread_id || threadId);
-            if (canonicalThreadId !== String(threadId)) {
-              handleRekeyThread(threadId, canonicalThreadId);
-            }
-            const friendMessage = reply?.message?.trim()
-              ? `${friendTarget.name}: ${reply.message}`
-              : `${friendTarget.name}: No response`;
-            setSessions((prev) => {
-              const newSessions = { ...prev };
-              const targetThreadId = newSessions[canonicalThreadId] ? canonicalThreadId : String(threadId);
-              if (newSessions[targetThreadId]) {
-                newSessions[targetThreadId] = newSessions[targetThreadId].map((m) => {
-                  if (m.id === botMessageId) {
-                    return {
-                      ...m,
-                      text: friendMessage,
-                      blocks: [{ type: "text", text: friendMessage }],
-                    };
-                  }
-                  return m;
+            await streamFriendChat(
+              friendTarget.id,
+              trimmed,
+              threadId,
+              (data) => {
+                if (data?.step === "start") {
+                  friendStreamStateRef.current[threadId] = {
+                    friendId: friendTarget.id,
+                    streamId: data.stream_id || null,
+                  };
+                }
+                processStreamChunk(data, botMessageId, threadId, userMessageId);
+              },
+              () => {
+                setStreamingThreads(prev => {
+                  const next = new Set(prev);
+                  next.delete(threadId);
+                  return next;
                 });
-              }
-              return newSessions;
-            });
-            setStreamingThreads(prev => {
-              const next = new Set(prev);
-              next.delete(threadId);
-              return next;
-            });
-            setCurrentTool(null);
-            delete abortControllersRef.current[threadId];
-            if (canonicalThreadId !== String(threadId)) {
-              delete abortControllersRef.current[canonicalThreadId];
-            }
+                setCurrentTool(null);
+                delete abortControllersRef.current[threadId];
+                delete friendStreamStateRef.current[threadId];
+              },
+              (friendErr) => {
+                resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
+                delete friendStreamStateRef.current[threadId];
+              },
+              signal
+            );
             return;
           } catch (friendErr) {
             resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
+            delete friendStreamStateRef.current[threadId];
             return;
           }
         }
@@ -974,6 +974,14 @@ function MainApp() {
     if (abortControllersRef.current[threadId]) {
       abortControllersRef.current[threadId].abort();
       delete abortControllersRef.current[threadId];
+    }
+
+    const friendStreamState = friendStreamStateRef.current[threadId];
+    if (friendStreamState?.friendId) {
+      cancelFriendStream(friendStreamState.friendId, threadId, friendStreamState.streamId).catch((err) =>
+        console.error("Failed to cancel friend stream:", err)
+      );
+      delete friendStreamStateRef.current[threadId];
     }
 
     // Explicitly cancel on backend

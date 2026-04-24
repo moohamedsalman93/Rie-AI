@@ -478,6 +478,100 @@ class AgentManager:
             return await peer_agent.ainvoke(input_data, config=config, context=context)
         finally:
             reset_agent_context(tokens)
+
+    async def stream_peer_inbound(
+        self,
+        *,
+        messages: Optional[list] = None,
+        thread_id: Optional[str] = None,
+        receive_profile: str = "chat",
+        effective_tool_ids: Optional[List[str]] = None,
+        memory_user_id: str = "default_user",
+        client_timezone: Optional[str] = None,
+        client_local_datetime_iso: Optional[str] = None,
+    ) -> AsyncIterator[dict]:
+        """Stream an inbound peer turn with policy-scoped tools."""
+        await self._ensure_checkpoint_and_store()
+        ids = effective_tool_ids or []
+        tools_map = await self._async_load_all_tools_map()
+        tools_to_use: List[Any] = []
+        for tid in ids:
+            t = tools_map.get(tid)
+            if t is not None:
+                tools_to_use.append(t)
+        if not tools_to_use:
+            raise RuntimeError(
+                "Peer policy allows no usable tools. Adjust Connectivity access for this friend."
+            )
+
+        peer_agent = await self._get_or_create_peer_inbound_agent(
+            receive_profile, ids, tools_to_use
+        )
+
+        config = {"configurable": {}}
+        if thread_id:
+            config["configurable"]["thread_id"] = thread_id
+
+        input_data: Any = None
+        if messages is not None:
+            clock = _client_clock_system_content(client_timezone, client_local_datetime_iso)
+            if clock:
+                input_data = {"messages": [{"role": "system", "content": clock}, *messages]}
+            else:
+                input_data = {"messages": messages}
+
+        context = Context(user_id=memory_user_id)
+        stream_modes = ["updates", "messages"]
+        stream_gen = peer_agent.astream(
+            input_data,
+            config=config,
+            context=context,
+            stream_mode=stream_modes,
+        )
+
+        logger = logging.getLogger(__name__)
+        current_task = asyncio.current_task()
+        if thread_id and current_task:
+            self._active_tasks[thread_id] = current_task
+
+        eff_chat = "chat" if receive_profile == "chat" else "agent"
+        tokens = set_agent_context(
+            thread_id,
+            eff_chat,
+            "flash",
+            friend_target_id=None,
+            friend_target_name=None,
+        )
+        try:
+            async for chunk in stream_gen:
+                if isinstance(chunk, tuple):
+                    if len(chunk) == 3:
+                        _stream_ns, mode, payload = chunk
+                    elif len(chunk) == 2:
+                        mode, payload = chunk
+                    else:
+                        continue
+
+                    if mode == "updates":
+                        if isinstance(payload, dict):
+                            yield payload
+                    elif mode == "messages":
+                        yield {"__lg_messages__": payload}
+                    continue
+
+                if isinstance(chunk, dict):
+                    yield chunk
+        except asyncio.CancelledError:
+            logger.info("Peer inbound stream cancelled for thread_id=%s", thread_id)
+            raise
+        except APIConnectionError as e:
+            raise RuntimeError("upstream_connection_error") from e
+        except httpx.ConnectError as e:
+            raise RuntimeError("upstream_connection_error") from e
+        finally:
+            if thread_id in self._active_tasks:
+                del self._active_tasks[thread_id]
+            reset_agent_context(tokens)
     
     def _create_llm(self) -> Optional[BaseChatModel]:
         """Create and return a Groq LLM instance (potentially rotating)"""

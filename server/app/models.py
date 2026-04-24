@@ -341,6 +341,11 @@ class PeerAskRequest(BaseModel):
     thread_id: Optional[str] = None
 
 
+class PeerStreamCancelRequest(BaseModel):
+    thread_id: str
+    stream_id: Optional[str] = None
+
+
 class PeerReceiveRequest(BaseModel):
     from_device_id: str
     from_fingerprint: str

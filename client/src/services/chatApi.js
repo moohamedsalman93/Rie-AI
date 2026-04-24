@@ -521,6 +521,66 @@ export async function askFriend(friendId, query, threadId = null) {
   return response.json();
 }
 
+export async function streamFriendChat(
+  friendId,
+  query,
+  threadId,
+  onChunk,
+  onDone,
+  onError,
+  signal = null
+) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask/stream`, {
+    method: "POST",
+    headers: getHeaders(),
+    signal,
+    body: JSON.stringify({ friend_id: friendId, query, thread_id: threadId }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to ask friend");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const data = JSON.parse(line.substring(6));
+          if (onChunk) onChunk(data);
+        } catch (e) {
+          console.error("Error parsing friend stream SSE data", e);
+        }
+      }
+    }
+    if (onDone) onDone();
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    if (onError) onError(error);
+    else console.error("Friend stream error:", error);
+  }
+}
+
+export async function cancelFriendStream(friendId, threadId, streamId = null) {
+  if (!friendId || !threadId) return { status: "ignored", cancelled: false };
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask/stream/cancel`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ thread_id: threadId, stream_id: streamId }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to cancel friend stream");
+  }
+  return response.json();
+}
+
 export async function checkFriendStatus(friendId) {
   const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/status`, {
     method: "GET",

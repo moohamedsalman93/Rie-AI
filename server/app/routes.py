@@ -26,6 +26,7 @@ from app.models import (
     FriendApprovalRequest, FriendEndpointUpdateRequest,
     FriendPeerAccessPatch, PeerAccessCatalogResponse,
     PeerQueryEventItem,
+    PeerStreamCancelRequest,
 )
 from app.agent import agent_manager
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
@@ -86,6 +87,9 @@ import io
 import base64
 
 router = APIRouter()
+
+_friend_stream_lock = asyncio.Lock()
+_friend_stream_registry: Dict[str, Dict[str, Any]] = {}
 
 
 def _friend_record_from_row(row: Dict[str, Any]) -> FriendRecord:
@@ -709,6 +713,37 @@ def _peer_log_http_exception_detail(exc: HTTPException) -> str:
     return str(d)
 
 
+async def _friend_stream_register(stream_id: str, info: Dict[str, Any]) -> None:
+    async with _friend_stream_lock:
+        _friend_stream_registry[stream_id] = info
+
+
+async def _friend_stream_unregister(stream_id: str) -> None:
+    async with _friend_stream_lock:
+        _friend_stream_registry.pop(stream_id, None)
+
+
+async def _friend_stream_lookup(
+    *,
+    stream_id: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    friend_id: Optional[str] = None,
+) -> Optional[tuple[str, Dict[str, Any]]]:
+    async with _friend_stream_lock:
+        if stream_id:
+            info = _friend_stream_registry.get(stream_id)
+            if info:
+                return stream_id, info
+            return None
+        for sid, info in _friend_stream_registry.items():
+            if thread_id and info.get("thread_id") != thread_id:
+                continue
+            if friend_id and info.get("friend_id") != friend_id:
+                continue
+            return sid, info
+    return None
+
+
 def _peer_flatten_message_content(msg: Any) -> str:
     """Plain text from a LangChain message object or dict."""
     if isinstance(msg, dict):
@@ -1044,6 +1079,147 @@ async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     )
 
 
+@router.post("/connectivity/friends/{friend_id}/ask/stream")
+async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
+    if friend_id != data.friend_id:
+        raise HTTPException(status_code=400, detail="Friend ID mismatch")
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+
+    q_log = (data.query or "").strip()
+    thread_id = (data.thread_id or "").strip() or str(uuid.uuid4())
+    fid = friend["id"]
+    fname = friend["name"]
+    await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+    await run_in_threadpool(save_message, thread_id, "user", q_log or "(empty)")
+
+    try:
+        target_url = connectivity_manager.resolve_peer(friend)
+    except RuntimeError as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            str(exc),
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    source_identity = _identity_payload()
+    stream_id = str(uuid.uuid4())
+    peer_stream_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive/stream"
+    peer_cancel_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive/stream/cancel"
+    payload = {
+        "from_device_id": source_identity["device_id"],
+        "from_fingerprint": source_identity["fingerprint"],
+        "query": data.query,
+        "thread_id": thread_id,
+    }
+    await _friend_stream_register(
+        stream_id,
+        {
+            "stream_id": stream_id,
+            "thread_id": thread_id,
+            "friend_id": fid,
+            "friend_name": fname,
+            "peer_cancel_endpoint": peer_cancel_endpoint,
+            "peer_cancel_payload": {"thread_id": thread_id, "stream_id": stream_id},
+            "task": asyncio.current_task(),
+        },
+    )
+
+    async def event_generator():
+        full_response: List[str] = []
+        stream_error: Optional[str] = None
+        try:
+            start_payload = {
+                "step": "start",
+                "stream_id": stream_id,
+                "thread_id": thread_id,
+                "friend_id": fid,
+                "friend_name": fname,
+            }
+            yield f"data: {json.dumps(start_payload)}\n\n"
+
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=PEER_HTTP_ASK_TIMEOUT, connect=10.0)) as client:
+                async with client.stream("POST", peer_stream_endpoint, json=payload) as response:
+                    if response.status_code >= 400:
+                        base = f"Peer ask stream failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                        peer_snippet = _extract_peer_http_error_detail(response)
+                        detail = f"{base}: {peer_snippet}" if peer_snippet else base
+                        stream_error = detail
+                        yield f"data: {json.dumps({'error': 'peer_stream_failed', 'details': detail})}\n\n"
+                        return
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        if not data_str:
+                            continue
+                        try:
+                            evt = json.loads(data_str)
+                        except Exception:
+                            continue
+                        msg = evt.get("message", {}) if isinstance(evt, dict) else {}
+                        if evt.get("step") == "model" and isinstance(msg, dict):
+                            content = msg.get("content")
+                            if isinstance(content, str) and content:
+                                full_response.append(content)
+                        if evt.get("error"):
+                            details = str(evt.get("details") or evt.get("error"))
+                            stream_error = details
+                        yield f"data: {json.dumps(evt, default=str)}\n\n"
+        except asyncio.CancelledError:
+            stream_error = "Friend stream cancelled"
+            raise
+        except httpx.TimeoutException:
+            stream_error = "Peer ask stream timed out [timeout]"
+            yield f"data: {json.dumps({'error': 'timeout', 'details': stream_error})}\n\n"
+        except httpx.ConnectError:
+            stream_error = "Peer ask stream endpoint unreachable [unreachable]"
+            yield f"data: {json.dumps({'error': 'unreachable', 'details': stream_error})}\n\n"
+        except Exception as exc:
+            stream_error = f"Failed to reach peer stream [network_error]: {exc}"
+            yield f"data: {json.dumps({'error': 'network_error', 'details': stream_error})}\n\n"
+        finally:
+            final_text = "".join(full_response).strip()
+            if final_text:
+                await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+                await run_in_threadpool(save_message, thread_id, "assistant", final_text)
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "outbound",
+                    fid,
+                    fname,
+                    q_log or "(empty)",
+                    "ok",
+                    final_text,
+                    None,
+                )
+            elif stream_error:
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "outbound",
+                    fid,
+                    fname,
+                    q_log or "(empty)",
+                    "error",
+                    None,
+                    stream_error,
+                )
+            await _friend_stream_unregister(stream_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
+    )
+
+
 @router.get("/connectivity/friends/{friend_id}/status", response_model=FriendStatusResponse)
 async def connectivity_friend_status(friend_id: str):
     friend = get_friend_by_id(friend_id)
@@ -1321,6 +1497,192 @@ async def connectivity_peer_receive(data: PeerReceiveRequest):
         responder_device_id=identity["device_id"],
         responder_public_url=identity.get("public_url"),
     )
+
+
+@router.post("/connectivity/peer/receive/stream")
+async def connectivity_peer_receive_stream(data: PeerReceiveRequest):
+    friend = get_friend_by_device_id(data.from_device_id)
+    identity = _identity_payload()
+    query = (data.query or "").strip()
+    peer_query = query if query else "Hello"
+    thread_id = (data.thread_id or "").strip() or f"peer:{data.from_device_id}"
+    stream_id = str(uuid.uuid4())
+    fid: Optional[str] = friend["id"] if friend else None
+    fname: Optional[str] = friend["name"] if friend else None
+    if fid and fname:
+        await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+
+    if not friend:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            None,
+            None,
+            peer_query,
+            "error",
+            None,
+            "Unknown peer",
+        )
+        raise HTTPException(status_code=403, detail="Unknown peer")
+    if friend["fingerprint"] != data.from_fingerprint:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            "Fingerprint mismatch",
+        )
+        raise HTTPException(status_code=403, detail="Fingerprint mismatch")
+    if query == "status_ping":
+        payload = {
+            "step": "end",
+            "done": True,
+            "status": "online",
+            "message": "reachable",
+            "thread_id": thread_id,
+            "responder_device_id": identity["device_id"],
+            "responder_public_url": identity.get("public_url"),
+        }
+        return StreamingResponse(
+            iter([f"data: {json.dumps(payload)}\n\n"]),
+            media_type="text/event-stream",
+            headers=_SSE_CHAT_HEADERS,
+        )
+
+    await run_in_threadpool(save_message, thread_id, "user", peer_query)
+    policy = friend_row_peer_policy(friend)
+    full_catalog = _get_runtime_tool_catalog_ids()
+    effective_ids = compute_effective_tool_ids(policy, full_catalog)
+    memory_user_id = f"peer:{data.from_device_id}" if policy.memory_enabled else "default_user"
+
+    async def peer_event_generator():
+        full_response: List[str] = []
+        stream_error: Optional[str] = None
+        try:
+            start_payload = {
+                "step": "start",
+                "stream_id": stream_id,
+                "thread_id": thread_id,
+                "friend_id": fid,
+                "friend_name": fname,
+            }
+            yield f"data: {json.dumps(start_payload)}\n\n"
+            async for chunk in agent_manager.stream_peer_inbound(
+                messages=[{"role": "user", "content": peer_query}],
+                thread_id=thread_id,
+                receive_profile=policy.receive_profile,
+                effective_tool_ids=effective_ids,
+                memory_user_id=memory_user_id,
+            ):
+                if "__lg_messages__" in chunk:
+                    pair = chunk["__lg_messages__"]
+                    llm_chunk = pair[0] if isinstance(pair, tuple) and len(pair) >= 1 else pair
+                    serialized = _serialize_message(llm_chunk)
+                    if not serialized:
+                        continue
+                    if serialized.get("type") not in ("ai", "assistant"):
+                        continue
+                    content = serialized.get("content")
+                    if isinstance(content, str) and content:
+                        full_response.append(content)
+                    yield f"data: {json.dumps({'step': 'model', 'message': serialized}, default=str)}\n\n"
+                    continue
+
+                if "__interrupt__" in chunk:
+                    continue
+            yield f"data: {json.dumps({'step': 'end', 'done': True})}\n\n"
+        except asyncio.CancelledError:
+            stream_error = "Peer stream cancelled"
+            raise
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "peer policy" in msg or "no usable tools" in msg:
+                stream_error = "Peer access policy blocks all tools for this friend. Update Connectivity settings."
+                yield f"data: {json.dumps({'error': 'peer_policy_blocked', 'details': stream_error})}\n\n"
+            elif "not configured" in msg:
+                stream_error = "Receiver agent is not configured"
+                yield f"data: {json.dumps({'error': 'agent_not_configured', 'details': stream_error})}\n\n"
+            elif "upstream_connection_error" in msg:
+                stream_error = "Receiver model provider is unreachable [unreachable]"
+                yield f"data: {json.dumps({'error': 'upstream_connection_error', 'details': stream_error})}\n\n"
+            else:
+                stream_error = str(exc)
+                yield f"data: {json.dumps({'error': 'peer_stream_error', 'details': stream_error})}\n\n"
+        except Exception as exc:
+            stream_error = f"Receiver failed to generate response [peer_server_error]: {exc}"
+            yield f"data: {json.dumps({'error': 'peer_server_error', 'details': stream_error})}\n\n"
+        finally:
+            reply_text = "".join(full_response).strip()
+            if reply_text:
+                if fid and fname:
+                    await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+                await run_in_threadpool(save_message, thread_id, "assistant", reply_text)
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "inbound",
+                    fid,
+                    fname,
+                    peer_query,
+                    "ok",
+                    reply_text,
+                    None,
+                )
+            elif stream_error:
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "inbound",
+                    fid,
+                    fname,
+                    peer_query,
+                    "error",
+                    None,
+                    stream_error,
+                )
+
+    return StreamingResponse(
+        peer_event_generator(),
+        media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
+    )
+
+
+@router.post("/connectivity/peer/receive/stream/cancel")
+async def connectivity_peer_receive_stream_cancel(data: PeerStreamCancelRequest):
+    cancelled = await agent_manager.cancel_run(data.thread_id)
+    return {"status": "success" if cancelled else "ignored", "cancelled": cancelled}
+
+
+@router.post("/connectivity/friends/{friend_id}/ask/stream/cancel")
+async def connectivity_friend_ask_stream_cancel(friend_id: str, data: PeerStreamCancelRequest):
+    matched = await _friend_stream_lookup(
+        stream_id=data.stream_id,
+        thread_id=data.thread_id,
+        friend_id=friend_id,
+    )
+    if not matched:
+        return {"status": "ignored", "cancelled": False}
+
+    stream_id, info = matched
+    task = info.get("task")
+    if task and not task.done():
+        task.cancel()
+
+    peer_cancel_endpoint = info.get("peer_cancel_endpoint")
+    peer_cancel_payload = info.get("peer_cancel_payload") or {"thread_id": data.thread_id, "stream_id": stream_id}
+    peer_cancelled = False
+    if isinstance(peer_cancel_endpoint, str) and peer_cancel_endpoint.strip():
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(peer_cancel_endpoint, json=peer_cancel_payload)
+                peer_cancelled = resp.status_code < 400
+        except Exception:
+            peer_cancelled = False
+
+    await _friend_stream_unregister(stream_id)
+    return {"status": "success", "cancelled": True, "peer_cancelled": peer_cancelled}
 
 
 @router.get("/connectivity/peer-query-history", response_model=List[PeerQueryEventItem])
