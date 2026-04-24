@@ -1141,6 +1141,8 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
         async def _fallback_legacy_once(client: httpx.AsyncClient) -> None:
             nonlocal stream_error
             nonlocal forwarded_events
+            yield f"data: {json.dumps({'step': 'meta', 'peer_mode': 'fallback'})}\n\n"
+            forwarded_events += 1
             response = await client.post(peer_legacy_endpoint, json=payload)
             if response.status_code >= 400:
                 base = f"Peer ask fallback failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
@@ -1171,6 +1173,9 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
 
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=PEER_HTTP_ASK_TIMEOUT, connect=10.0, read=45.0)) as client:
                 async with client.stream("POST", peer_stream_endpoint, json=payload) as response:
+                    if response.status_code < 400:
+                        yield f"data: {json.dumps({'step': 'meta', 'peer_mode': 'stream'})}\n\n"
+                        forwarded_events += 1
                     if response.status_code >= 400:
                         # Backward compatibility: remote peer may not have stream endpoint yet.
                         if response.status_code in (404, 405):
@@ -1204,7 +1209,7 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
                         forwarded_events += 1
                         yield f"data: {json.dumps(evt, default=str)}\n\n"
                     # If the peer returned 200 but emitted nothing parseable as SSE, fallback once.
-                    if forwarded_events <= 1:
+                    if forwarded_events <= 2:
                         async for item in _fallback_legacy_once(client):
                             yield item
                         return

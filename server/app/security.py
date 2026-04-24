@@ -13,6 +13,8 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 # Connectivity peer routes are authenticated by known device id + fingerprint.
 PEER_AUTH_EXEMPT_PATHS = (
     "/connectivity/peer/receive",
+    "/connectivity/peer/receive/stream",
+    "/connectivity/peer/receive/stream/cancel",
     "/connectivity/pair/finalize",
 )
 
