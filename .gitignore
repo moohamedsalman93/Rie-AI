@@ -76,3 +76,4 @@ htmlcov/
 *.db-wal
 
 server/chroma_ltm
+.cursor

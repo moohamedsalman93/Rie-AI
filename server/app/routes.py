@@ -79,6 +79,7 @@ from app.connectivity.ngrok_installer import (
     detect_existing_ngrok,
     install_ngrok_windows,
     start_tunnel,
+    stop_tunnel,
     get_tunnel_runtime_status,
 )
 from app.connectivity.ngrok_setup import persist_ngrok_setup
@@ -619,11 +620,54 @@ async def update_settings(data: SettingsUpdate):
         validated_subagents = _validate_subagents_config(json.dumps(derived_subagents))
         derived_subagents_value = json.dumps(validated_subagents)
 
+    ngrok_toggle_message: Optional[str] = None
+
     # Update DB
     update_setting(data.key, value_to_store)
-    if data.key == "CONNECTIVITY_NGROK_ENABLED" and str(value_to_store).strip().lower() != "true":
-        # Disable must stop advertising stale remote endpoint data.
-        update_setting("CONNECTIVITY_PUBLIC_URL", "")
+    if data.key == "CONNECTIVITY_NGROK_ENABLED":
+        enabled = str(value_to_store).strip().lower() == "true"
+        if not enabled:
+            pid_raw = (get_setting("CONNECTIVITY_NGROK_TUNNEL_PID") or "").strip()
+            pid_hint = int(pid_raw) if pid_raw.isdigit() else None
+            stop_result = await run_in_threadpool(stop_tunnel, pid_hint)
+            update_setting("CONNECTIVITY_PUBLIC_URL", "")
+            update_setting("CONNECTIVITY_NGROK_TUNNEL_PID", "")
+            ngrok_toggle_message = stop_result.get("message") or "ngrok stopped"
+        else:
+            token = (get_setting("CONNECTIVITY_NGROK_AUTH_TOKEN") or "").strip()
+            domain = (get_setting("CONNECTIVITY_NGROK_DOMAIN") or "").strip() or None
+            install_path = (get_setting("CONNECTIVITY_NGROK_INSTALL_PATH") or "").strip()
+            if not install_path:
+                detected = await run_in_threadpool(detect_existing_ngrok)
+                install_path = (detected.get("path") or "").strip()
+            if token and install_path:
+                try:
+                    start_result = await run_in_threadpool(start_tunnel, install_path, token, domain)
+                except Exception as exc:
+                    start_result = {
+                        "ok": False,
+                        "running": False,
+                        "pid": None,
+                        "public_url": None,
+                        "message": f"ngrok start failed: {exc}",
+                    }
+                if start_result.get("ok"):
+                    await run_in_threadpool(
+                        persist_ngrok_setup,
+                        install_path,
+                        start_result.get("public_url"),
+                        start_result.get("pid"),
+                        domain,
+                    )
+                    ngrok_toggle_message = "ngrok tunnel started from saved settings"
+                else:
+                    update_setting("CONNECTIVITY_PUBLIC_URL", "")
+                    update_setting("CONNECTIVITY_NGROK_TUNNEL_PID", "")
+                    ngrok_toggle_message = start_result.get("message") or "ngrok tunnel failed to start"
+            else:
+                update_setting("CONNECTIVITY_PUBLIC_URL", "")
+                update_setting("CONNECTIVITY_NGROK_TUNNEL_PID", "")
+                ngrok_toggle_message = "ngrok enabled; complete setup by saving auth token and install path"
     if derived_subagents_value is not None:
         update_setting("SUBAGENTS_CONFIG", derived_subagents_value)
     
@@ -647,6 +691,11 @@ async def update_settings(data: SettingsUpdate):
         return {
             "status": "success",
             "message": "Updated SUBAGENT_PLANNER_GRAPH and auto-synced SUBAGENTS_CONFIG",
+        }
+    if data.key == "CONNECTIVITY_NGROK_ENABLED" and ngrok_toggle_message:
+        return {
+            "status": "success",
+            "message": f"Updated {data.key}: {ngrok_toggle_message}",
         }
     return {"status": "success", "message": f"Updated {data.key}"}
 
@@ -1831,15 +1880,18 @@ async def connectivity_friend_approval_set(friend_id: str, data: FriendApprovalR
 async def connectivity_ngrok_status():
     detected = detect_existing_ngrok()
     runtime = get_tunnel_runtime_status()
-    public_url = runtime.get("public_url") or settings.CONNECTIVITY_PUBLIC_URL
-    ready_state = "ready" if (detected.get("installed") and settings.CONNECTIVITY_NGROK_ENABLED and runtime.get("running") and public_url) else "not_ready"
+    is_enabled = settings.CONNECTIVITY_NGROK_ENABLED
+    runtime_running = bool(runtime.get("running"))
+    runtime_url = runtime.get("public_url")
+    public_url = runtime_url if (is_enabled and runtime_running) else None
+    ready_state = "ready" if (detected.get("installed") and is_enabled and runtime_running and public_url) else "not_ready"
     return NgrokStatusResponse(
         installed=bool(detected.get("installed")),
         path=detected.get("path") or settings.CONNECTIVITY_NGROK_INSTALL_PATH,
         version=detected.get("version"),
-        enabled=settings.CONNECTIVITY_NGROK_ENABLED,
+        enabled=is_enabled,
         public_url=public_url,
-        tunnel_running=bool(runtime.get("running")),
+        tunnel_running=runtime_running,
         tunnel_pid=runtime.get("pid"),
         domain=settings.CONNECTIVITY_NGROK_DOMAIN,
         ready_state=ready_state,

@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -226,6 +227,78 @@ def start_tunnel(
             "pid": proc.pid,
             "public_url": None,
             "message": "Timed out waiting for ngrok tunnel startup",
+        }
+
+
+def _terminate_pid(pid: int, timeout_seconds: float = 5.0) -> bool:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                )
+            except Exception:
+                return False
+        else:
+            return False
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True
+        except Exception:
+            return True
+        time.sleep(0.15)
+    return False
+
+
+def stop_tunnel(pid_hint: Optional[int] = None) -> Dict[str, Any]:
+    global _tunnel_process, _tunnel_pid, _tunnel_url
+    with _tunnel_lock:
+        stopped = False
+        message = "ngrok tunnel is not running"
+        active_pid = _tunnel_pid
+
+        if _is_running(_tunnel_process):
+            assert _tunnel_process is not None
+            active_pid = _tunnel_process.pid
+            try:
+                _tunnel_process.terminate()
+                _tunnel_process.wait(timeout=5)
+            except Exception:
+                try:
+                    _tunnel_process.kill()
+                    _tunnel_process.wait(timeout=3)
+                except Exception:
+                    pass
+            stopped = not _is_running(_tunnel_process)
+            message = "ngrok tunnel stopped" if stopped else "ngrok tunnel did not stop cleanly"
+
+        if not stopped and pid_hint:
+            stopped = _terminate_pid(int(pid_hint))
+            if stopped:
+                active_pid = int(pid_hint)
+                message = "ngrok tunnel stopped via persisted PID"
+            else:
+                message = "failed to stop ngrok tunnel via persisted PID"
+
+        _tunnel_process = None
+        _tunnel_pid = None
+        _tunnel_url = None
+        running = bool(discover_https_url_for_local_port())
+        return {
+            "ok": stopped or not running,
+            "running": running,
+            "pid": active_pid,
+            "public_url": None,
+            "message": message if not running else "ngrok tunnel still appears active",
         }
 
 
