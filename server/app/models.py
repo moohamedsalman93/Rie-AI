@@ -359,6 +359,7 @@ class PeerAskResponse(BaseModel):
     thread_id: Optional[str] = None
     responder_device_id: Optional[str] = None
     responder_public_url: Optional[str] = None
+    failure_code: Optional[str] = None
 
 
 class FriendStatusResponse(BaseModel):

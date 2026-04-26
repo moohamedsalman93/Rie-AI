@@ -138,6 +138,9 @@ function SettingsPage({ onClose }) {
   const [peerAccessTools, setPeerAccessTools] = useState(() => new Set());
   const [peerAccessUseAllDefault, setPeerAccessUseAllDefault] = useState(true);
   const [peerAccessSaving, setPeerAccessSaving] = useState(false);
+  const friendStatusPollInFlightRef = useRef(false);
+  const FRIEND_STATUS_POLL_MS = 30000;
+  const FRIEND_STATUS_STALE_MS = 90000;
 
   // Rie Auth State
   const [rieToken, setRieToken] = useState(null);
@@ -540,6 +543,62 @@ function SettingsPage({ onClose }) {
       setCheckingFriendId(null);
     }
   };
+
+  useEffect(() => {
+    if (activeTab !== 'connectivity' || friends.length === 0) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const pollFriendStatuses = async () => {
+      if (friendStatusPollInFlightRef.current) return;
+      friendStatusPollInFlightRef.current = true;
+      try {
+        const friendIds = friends.map((friend) => friend.id).filter(Boolean);
+        if (friendIds.length === 0) return;
+
+        const settled = await Promise.allSettled(
+          friendIds.map(async (friendId) => {
+            const result = await checkFriendStatus(friendId);
+            return [friendId, result];
+          })
+        );
+        if (cancelled) return;
+
+        setFriendStatusById((prev) => {
+          const next = { ...prev };
+          settled.forEach((entry, index) => {
+            const friendId = friendIds[index];
+            if (!friendId) return;
+            if (entry.status === 'fulfilled') {
+              const [, result] = entry.value;
+              next[friendId] = result;
+            } else {
+              next[friendId] = {
+                status: 'offline',
+                message: entry.reason?.message || 'Failed to refresh status',
+                checked_at: new Date().toISOString(),
+                reachable: false,
+                failure_code: 'network_error',
+                failure_stage: 'network',
+              };
+            }
+          });
+          return next;
+        });
+      } finally {
+        friendStatusPollInFlightRef.current = false;
+      }
+    };
+
+    pollFriendStatuses();
+    const intervalId = window.setInterval(pollFriendStatuses, FRIEND_STATUS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeTab, friends]);
 
   const handleRemoveFriend = async (friendId, friendName) => {
     const displayName = (friendName || "this paired device").trim() || "this paired device";
@@ -1708,8 +1767,12 @@ key2,
                       <ul className="mt-6 space-y-3">
                         {friends.map((friend) => {
                           const statusRow = friendStatusById[friend.id];
-                          const reachable = statusRow?.reachable === true;
+                          const checkedAtMs = statusRow?.checked_at ? Date.parse(statusRow.checked_at) : NaN;
+                          const isFresh = Number.isFinite(checkedAtMs) && (Date.now() - checkedAtMs) <= FRIEND_STATUS_STALE_MS;
                           const hasStatus = !!statusRow;
+                          const isStale = hasStatus && !isFresh;
+                          const reachable = statusRow?.reachable === true && !isStale;
+                          const statusLabel = !hasStatus || isStale ? 'unknown' : (reachable ? 'online' : 'offline');
                           const initials = (friend.name || '?')
                             .trim()
                             .split(/\s+/)
@@ -1730,14 +1793,14 @@ key2,
                                         </span>
                                         <span
                                           className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                                            !hasStatus
+                                            statusLabel === 'unknown'
                                               ? 'border-neutral-600 bg-neutral-800/80 text-neutral-400'
-                                              : reachable
+                                              : statusLabel === 'online'
                                               ? 'border-emerald-500/25 bg-emerald-950/45 text-emerald-200/90'
                                               : 'border-red-500/25 bg-red-950/35 text-red-200/85'
                                           }`}
                                         >
-                                          {!hasStatus ? 'unknown' : reachable ? 'online' : 'offline'}
+                                          {statusLabel}
                                         </span>
                                       </div>
                                       <p
@@ -1757,6 +1820,7 @@ key2,
                                           Checked{' '}
                                           <span className="text-neutral-400">
                                             {statusRow?.checked_at ? new Date(statusRow.checked_at).toLocaleString() : '—'}
+                                            {isStale ? ' (stale)' : ''}
                                           </span>
                                         </span>
                                       </div>
