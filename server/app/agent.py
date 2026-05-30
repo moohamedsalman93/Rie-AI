@@ -46,24 +46,40 @@ from app.remote_friend_tools import remote_friend_ask_tool
 from app.runtime_context import set_agent_context, reset_agent_context
 
 
-def _client_clock_system_content(
+def _client_device_system_content(
     client_timezone: Optional[str],
     client_local_datetime_iso: Optional[str],
+    client_latitude: Optional[float] = None,
+    client_longitude: Optional[float] = None,
+    client_location_accuracy_m: Optional[float] = None,
 ) -> Optional[str]:
-    """Ephemeral system text so the model uses the user's real local clock (scheduling, relative dates)."""
-    if not client_timezone and not client_local_datetime_iso:
-        return None
-    parts = []
+    """Ephemeral system text: local clock and/or GPS for scheduling and location-aware answers."""
+    parts: list[str] = []
     if client_local_datetime_iso:
         parts.append(
             f"User device local date and time (authoritative 'now'): {client_local_datetime_iso}"
         )
     if client_timezone:
         parts.append(f"User device IANA timezone: {client_timezone}")
-    parts.append(
-        "Use this when interpreting relative dates (tomorrow, next Monday, etc.) and when calling "
-        "schedule_chat_task; pass run_at_iso in ISO 8601 consistent with this timezone."
-    )
+    if client_timezone or client_local_datetime_iso:
+        parts.append(
+            "Use this when interpreting relative dates (tomorrow, next Monday, etc.) and when calling "
+            "schedule_chat_task; pass run_at_iso in ISO 8601 consistent with this timezone."
+        )
+    if client_latitude is not None and client_longitude is not None:
+        loc = (
+            f"User approximate geographic position (WGS84): "
+            f"latitude {client_latitude:.6f}, longitude {client_longitude:.6f}"
+        )
+        if client_location_accuracy_m is not None:
+            loc += f" (accuracy ~{int(client_location_accuracy_m)} m)"
+        parts.append(loc)
+        parts.append(
+            "Use for nearby places, local weather, travel context, and 'where am I' questions. "
+            "Do not share exact coordinates with other people unless the user explicitly asks."
+        )
+    if not parts:
+        return None
     return "\n".join(parts)
 
 
@@ -81,7 +97,9 @@ Rules:
 - Reminders and timed tasks inside Rie (anything that should appear in the app's "Scheduled" sidebar or notify through Rie): you MUST call the tool schedule_chat_task with run_at_iso in ISO 8601 and the correct intent. Do not use run_terminal_command, schtasks, PowerShell, or Windows Task Scheduler for user reminders — those will NOT register in Rie and the user will see "Nothing scheduled".
 - Only tell the user you scheduled or set a reminder after schedule_chat_task returns successfully (or the tool output confirms it). Never invent a fake task name or claim a PowerShell popup was created for this.
 - When a system message states the user's device local date and time, treat it as the true current moment for that conversation (do not assume a different year or day).
-- Only use `use_vision=True` when standard textual state info is insufficient, for complex UI interactions, or when troubleshooting problems. 
+- Only use `use_vision=True` when standard textual state info is insufficient, for complex UI interactions, or when troubleshooting problems.
+- When the user asks for an image, photo, picture, or wallpaper: call internet_search with include_images=True (or rely on image intent in the query), then show results inline using markdown images `![short description](direct_image_url)` from the search `images` field. Do not reply with only a table of website links.
+- When running a script file (.py, .sh, .bash), use run_terminal_command with the appropriate interpreter: Python via `python "path\\to\\script.py"` (or `py -3 "..."` if python is unavailable); shell scripts via `bash "path/to/script.sh"` (Git Bash or WSL on Windows). Prefer Python or Bash for scripts; use raw PowerShell only for one-off Windows tasks (registry, services, Get-*, etc.).
 
 Style:
 - Be friendly in general interactions; use emojis when appropriate 🙂
@@ -433,6 +451,9 @@ class AgentManager:
         memory_user_id: str = "default_user",
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
     ) -> dict:
         """Run an inbound peer /connectivity/peer/receive turn with a cached per-policy agent."""
         await self._ensure_checkpoint_and_store()
@@ -460,9 +481,15 @@ class AgentManager:
 
         input_data: Any = None
         if messages is not None:
-            clock = _client_clock_system_content(client_timezone, client_local_datetime_iso)
-            if clock:
-                input_data = {"messages": [{"role": "system", "content": clock}, *messages]}
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                input_data = {"messages": [{"role": "system", "content": device_ctx}, *messages]}
             else:
                 input_data = {"messages": messages}
 
@@ -489,6 +516,9 @@ class AgentManager:
         memory_user_id: str = "default_user",
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
     ) -> AsyncIterator[dict]:
         """Stream an inbound peer turn with policy-scoped tools."""
         await self._ensure_checkpoint_and_store()
@@ -514,9 +544,15 @@ class AgentManager:
 
         input_data: Any = None
         if messages is not None:
-            clock = _client_clock_system_content(client_timezone, client_local_datetime_iso)
-            if clock:
-                input_data = {"messages": [{"role": "system", "content": clock}, *messages]}
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                input_data = {"messages": [{"role": "system", "content": device_ctx}, *messages]}
             else:
                 input_data = {"messages": messages}
 
@@ -617,10 +653,10 @@ class AgentManager:
 
         try:
             llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-pro",
+                model=settings.GEMINI_MODEL,
                 temperature=0,
             )
-            print("DEBUG: Gemini LLM (Generative AI API) created successfully")
+            print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL}")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Gemini LLM: {e}")
@@ -1242,6 +1278,45 @@ class AgentManager:
             raise RuntimeError("Model returned empty instruction.")
         return instruction[:1400]
 
+    async def generate_chat_thread_title(self, user_messages: List[str]) -> str:
+        """Summarize the first two user turns into a short chat title."""
+        if not self._llm:
+            await self._initialize_agent_async(chat_mode="chat", speed_mode="flash")
+        if not self._llm:
+            raise RuntimeError("LLM is not initialized. Please verify provider settings.")
+
+        lines = []
+        for i, text in enumerate(user_messages[:2], start=1):
+            cleaned = (text or "").strip()
+            if "\n\n[Clipboard Content]:" in cleaned:
+                cleaned = cleaned.split("\n\n[Clipboard Content]:")[0].strip()
+            if cleaned:
+                lines.append(f"{i}. {cleaned[:500]}")
+
+        if len(lines) < 2:
+            raise ValueError("Need at least two user messages to generate a title.")
+
+        system_text = (
+            "Write a short chat title (3–8 words) that captures the conversation topic. "
+            "Return plain text only: no quotes, no markdown, no trailing punctuation."
+        )
+        user_text = "User messages:\n" + "\n".join(lines)
+
+        response = await self._llm.ainvoke(
+            [
+                SystemMessage(content=system_text),
+                HumanMessage(content=user_text),
+            ]
+        )
+        content = getattr(response, "content", "")
+        if isinstance(content, list):
+            text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+            content = "\n".join([p for p in text_parts if p])
+        title = (content or "").strip().strip('"\'')
+        if not title:
+            raise RuntimeError("Model returned empty title.")
+        return title[:60]
+
     async def invoke(
         self,
         messages: Optional[list] = None,
@@ -1253,6 +1328,9 @@ class AgentManager:
         speed_mode: Optional[str] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
         friend_target_id: Optional[str] = None,
         friend_target_name: Optional[str] = None,
     ) -> dict:
@@ -1285,9 +1363,15 @@ class AgentManager:
         if decisions is not None:
             input_data = Command(resume={"decisions": decisions})
         elif messages is not None:
-            clock = _client_clock_system_content(client_timezone, client_local_datetime_iso)
-            if clock:
-                input_data = {"messages": [{"role": "system", "content": clock}, *messages]}
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                input_data = {"messages": [{"role": "system", "content": device_ctx}, *messages]}
             else:
                 input_data = {"messages": messages}
 
@@ -1303,6 +1387,44 @@ class AgentManager:
         finally:
             reset_agent_context(tokens)
 
+    async def seed_thread_history(self, thread_id: str, messages: list[dict]) -> None:
+        """Seed LangGraph checkpoint state from forked history without running the LLM."""
+        if not messages or not thread_id:
+            return
+
+        if self._agent is None:
+            await self._initialize_agent_async(chat_mode="agent", speed_mode="thinking")
+        if not self._agent:
+            return
+
+        processed: list[dict] = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user" and msg.get("image_url"):
+                processed.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": content},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": msg["image_url"]},
+                            },
+                        ],
+                    }
+                )
+            else:
+                processed.append({"role": role, "content": content})
+
+        if not processed:
+            return
+
+        config = {"configurable": {"thread_id": thread_id}}
+        await self._agent.aupdate_state(config, {"messages": processed})
+
     async def stream(
         self,
         messages: Optional[list] = None,
@@ -1315,6 +1437,9 @@ class AgentManager:
         speed_mode: Optional[str] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
         friend_target_id: Optional[str] = None,
         friend_target_name: Optional[str] = None,
     ) -> AsyncIterator[dict]:
@@ -1349,9 +1474,15 @@ class AgentManager:
         if decisions is not None:
              input_data = Command(resume={"decisions": decisions})
         elif messages is not None:
-            clock_content = _client_clock_system_content(client_timezone, client_local_datetime_iso)
-            if clock_content:
-                processed_messages.append({"role": "system", "content": clock_content})
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                processed_messages.append({"role": "system", "content": device_ctx})
             if is_voice:
                 # Inject hidden instructions for human-like voice response
                 processed_messages.append({

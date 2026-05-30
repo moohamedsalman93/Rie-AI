@@ -3,7 +3,7 @@ export const WINDOW_SIZES = {
   CHAT: { width: 360, height: 520 },
   NORMAL: { width: 988, height: 629 },
   BUBBLE: { width: 180, height: 50 },
-  SETTINGS: { width: 988, height: 629 },
+  SETTINGS: { width: 920, height: 600 },
   LOADING: { width: 520, height: 420 },
 };
 

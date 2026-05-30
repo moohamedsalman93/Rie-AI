@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import logo from "../assets/logo.png";
+import { BetaLabel } from "./BetaLabel";
 
 const LOADING_STEPS = [
     {
@@ -66,9 +67,12 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
                     <div className="flex items-center gap-3" data-tauri-drag-region>
                         <img src={logo} alt="Rie-AI" className="w-8 h-8 object-contain" />
                         <div>
-                            <h2 className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500 mb-1 leading-none">
-                                Rie AI
-                            </h2>
+                            <div className="flex items-center gap-1.5 mb-1">
+                                <h2 className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500 leading-none">
+                                    Rie AI
+                                </h2>
+                                <BetaLabel className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 font-bold" />
+                            </div>
                             <h1 className="text-lg font-semibold text-white tracking-tight leading-none">
                                 Preparing Workspace
                             </h1>

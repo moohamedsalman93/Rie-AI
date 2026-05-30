@@ -138,7 +138,7 @@ Common keys:
 - `GOOGLE_API_KEY`
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
-- `TAVILY_API_KEY`
+- `TAVILY_API_KEY`, `BRAVE_SEARCH_API_KEY`, `WEB_SEARCH_PROVIDER` (`tavily`, `brave`, or `duckduckgo`)
 - `RIE_ACCESS_TOKEN`
 - `OLLAMA_MODEL`, `OLLAMA_API_URL`, `OLLAMA_API_KEY`
 - `LLM_PROVIDER` and model preferences

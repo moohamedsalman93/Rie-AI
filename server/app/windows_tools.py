@@ -45,7 +45,13 @@ class AppToolInput(BaseModel):
     window_size: Optional[List[int]] = Field(None, description="Window size [width, height]")
 
 class PowershellToolInput(BaseModel):
-    command: str = Field(..., description="PowerShell command to execute")
+    command: str = Field(
+        ...,
+        description=(
+            "Shell command to run (PowerShell host). "
+            "For .py / .sh scripts use python path\\script.py or bash path/script.sh."
+        ),
+    )
 
 class StateToolInput(BaseModel):
     use_vision: bool = Field(False, description="Include screenshot in state. ONLY use this for complex problems, troubleshooting, or when textual info is insufficient.")
@@ -351,6 +357,7 @@ WINDOWS_TOOLS = {
         name="run_terminal_command",
         description=(
             "Execute a terminal command on the Windows system. "
+            "For script files, invoke via python or bash rather than rewriting as PowerShell. "
             "Do not use this for user reminders or timed notifications — use schedule_chat_task instead so they appear in Rie's Scheduled panel."
         ),
         args_schema=PowershellToolInput,

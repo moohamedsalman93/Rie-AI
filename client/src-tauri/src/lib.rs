@@ -1,3 +1,6 @@
+mod audio;
+mod location;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn exit_app(app_handle: tauri::AppHandle) {
@@ -118,6 +121,7 @@ pub fn run() {
             // Manage backend state
             app.manage(BackendState(std::sync::Mutex::new(None)));
             app.manage(AppToken(app_token.clone()));
+            app.manage(audio::NativeAudioRecorder::default());
 
 
             // Create tray menu
@@ -186,7 +190,14 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, exit_app, get_app_token])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            exit_app,
+            get_app_token,
+            audio::start_native_recording,
+            audio::stop_native_recording,
+            location::get_native_location,
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

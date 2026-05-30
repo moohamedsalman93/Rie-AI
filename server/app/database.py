@@ -334,6 +334,34 @@ def create_thread(title: str, thread_id: Optional[str] = None) -> str:
     conn.close()
     return thread_id
 
+def update_thread_title(thread_id: str, title: str) -> None:
+    """Update a thread's display title."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        "UPDATE threads SET title = ?, updated_at = ? WHERE id = ?",
+        (title.strip()[:120], now, thread_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def count_user_messages(thread_id: str) -> int:
+    """Count user messages in a thread."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM messages WHERE thread_id = ? AND role = 'user' AND TRIM(COALESCE(content, '')) != ''",
+        (thread_id,),
+    )
+    count = cursor.fetchone()[0]
+    conn.close()
+    return int(count or 0)
+
+
 def save_message(thread_id: str, role: str, content: str, image_url: Optional[str] = None):
     """Save a message to a thread"""
     db_path = get_db_path()
@@ -345,7 +373,7 @@ def save_message(thread_id: str, role: str, content: str, image_url: Optional[st
     # Ensure thread exists (create basic one if not found, though ideally should exist)
     cursor.execute("SELECT id FROM threads WHERE id = ?", (thread_id,))
     if not cursor.fetchone():
-        create_thread("New Chat", thread_id)
+        create_thread("Untitled Chat", thread_id)
         
     cursor.execute(
         "INSERT INTO messages (thread_id, role, content, image_url, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -430,6 +458,78 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
         
     conn.close()
     return messages
+
+
+def fork_thread_messages(
+    new_thread_id: str,
+    source_thread_id: Optional[str] = None,
+    until_message_id: Optional[Any] = None,
+    messages_override: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """Copy messages into a new thread before until_message_id (exclusive)."""
+    to_insert: List[Dict[str, Any]] = []
+
+    if messages_override:
+        for m in messages_override:
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if role == "assistant" and not content:
+                continue
+            if role not in ("user", "assistant"):
+                continue
+            if role == "user" and not content and not m.get("image_url"):
+                continue
+            to_insert.append(
+                {
+                    "role": role,
+                    "content": content or ("(image)" if m.get("image_url") else ""),
+                    "image_url": m.get("image_url"),
+                }
+            )
+    elif source_thread_id:
+        rows = get_thread_messages(source_thread_id)
+        until_str = str(until_message_id) if until_message_id is not None else None
+        for row in rows:
+            if until_str is not None and str(row["id"]) == until_str:
+                break
+            to_insert.append(
+                {
+                    "role": row["role"],
+                    "content": row["content"],
+                    "image_url": row.get("image_url"),
+                }
+            )
+    else:
+        return []
+
+    title = "Branched chat"
+    for m in to_insert:
+        if m["role"] == "user" and m.get("content"):
+            text = m["content"]
+            title = text[:30] + ("..." if len(text) > 30 else "")
+            break
+
+    create_thread(title, new_thread_id)
+
+    for m in to_insert:
+        save_message(
+            new_thread_id,
+            m["role"],
+            m["content"],
+            m.get("image_url"),
+        )
+
+    if source_thread_id:
+        friend_row = get_friend_thread(source_thread_id)
+        if friend_row:
+            upsert_friend_thread(
+                new_thread_id,
+                friend_row["friend_id"],
+                friend_row["friend_name"],
+            )
+
+    return to_insert
+
 
 def delete_thread(thread_id: str):
     """Delete a thread and its messages"""

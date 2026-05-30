@@ -35,11 +35,31 @@ class ChatMessage(BaseModel):
         default=None,
         description="User's local date and time as ISO 8601 with numeric offset (from browser)",
     )
+    client_latitude: Optional[float] = Field(
+        default=None,
+        description="User device latitude (WGS84) when location sharing is enabled",
+    )
+    client_longitude: Optional[float] = Field(
+        default=None,
+        description="User device longitude (WGS84) when location sharing is enabled",
+    )
+    client_location_accuracy_m: Optional[float] = Field(
+        default=None,
+        description="Reported GPS accuracy in meters, if available",
+    )
 
 
 class CancelRequest(BaseModel):
     """Request model for cancelling a running chat stream"""
     thread_id: str = Field(..., description="The thread ID of the stream to cancel")
+
+
+class ForkThreadRequest(BaseModel):
+    """Fork a thread with history through a given user message."""
+    new_thread_id: str
+    source_thread_id: Optional[str] = None
+    until_message_id: Optional[Union[int, str]] = None
+    messages: Optional[List[Dict[str, Any]]] = None
 
 
 class SpeakRequest(BaseModel):
@@ -118,6 +138,8 @@ class HealthResponse(BaseModel):
     message: str
     agent_configured: bool
     tavily_configured: bool
+    web_search_configured: bool
+    web_search_provider: str
 
 class SettingsUpdate(BaseModel):
     """Request model for updating settings"""
@@ -131,7 +153,9 @@ class SettingsResponse(BaseModel):
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
-    
+    brave_search_api_key: Optional[str] = None
+    web_search_provider: str = "tavily"
+
     # Advanced Settings
     llm_provider: Optional[str] = None
     vertex_project: Optional[str] = None
@@ -171,7 +195,8 @@ class SettingsResponse(BaseModel):
     langsmith_project: str = "Rie-AI"
     langsmith_endpoint: str = "https://api.smith.langchain.com"
     voice_reply: bool = True
-    
+    share_location: bool = True
+
     # TTS Settings
     tts_provider: str = "edge-tts"
     tts_voice: str = "en-US-EmmaNeural"
@@ -212,8 +237,11 @@ class ResumeChatRequest(BaseModel):
     speed_mode: Optional[str] = None  # "thinking" or "flash"
     client_timezone: Optional[str] = None
     client_local_datetime_iso: Optional[str] = None
- 
- 
+    client_latitude: Optional[float] = None
+    client_longitude: Optional[float] = None
+    client_location_accuracy_m: Optional[float] = None
+
+
 class ScheduleTaskRequest(BaseModel):
     """Request model for scheduling a chat message"""
     text: str

@@ -3,6 +3,7 @@
  */
 
 import { getConversationContext } from "./memoryService";
+import { getClientLocationPayload } from "../utils/locationUtils";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:14300";
 
@@ -29,6 +30,18 @@ export function getClientDatetimePayload() {
     client_local_datetime_iso: localIso,
     ...(tz ? { client_timezone: tz } : {}),
   };
+}
+
+/**
+ * Device clock + optional GPS for the backend (scheduling, nearby, weather).
+ * @returns {Promise<Record<string, unknown>>}
+ */
+export async function getClientContextPayload() {
+  const [datetime, location] = await Promise.all([
+    Promise.resolve(getClientDatetimePayload()),
+    getClientLocationPayload(),
+  ]);
+  return { ...datetime, ...location };
 }
 
 /**
@@ -148,7 +161,7 @@ export async function resumeChat(
     token: token,
     chat_mode: chatMode,
     speed_mode: speedMode,
-    ...getClientDatetimePayload(),
+    ...(await getClientContextPayload()),
   };
 
   try {
@@ -256,7 +269,7 @@ export async function streamChat(
     speed_mode: speedMode,
     friend_target_id: friendTarget?.id || null,
     friend_target_name: friendTarget?.name || null,
-    ...getClientDatetimePayload(),
+    ...(await getClientContextPayload()),
   };
   try {
     const response = await fetch(`${API_BASE_URL}/chat/stream`, {
@@ -302,7 +315,8 @@ export async function streamChat(
 
 /**
  * Check if the API is available and configured
- * @returns {Promise<{message: string, agent_configured: boolean, tavily_configured: boolean}>}
+ * @returns {Promise<{message: string, agent_configured: boolean, tavily_configured: boolean, web_search_configured: boolean, web_search_provider: string}>}
+ * Prefer `web_search_configured` for active-provider readiness; `tavily_configured` only reflects a Tavily API key.
  */
 export async function checkApiHealth() {
   try {
@@ -795,6 +809,33 @@ export async function deleteThread(threadId) {
 }
 
 /**
+ * Fork a thread with history through a given user message.
+ * @param {{ newThreadId: string, sourceThreadId?: string, untilMessageId?: string|number, messages: Array<{role: string, content: string, image_url?: string}> }} params
+ */
+export async function forkThread({
+  newThreadId,
+  sourceThreadId = null,
+  untilMessageId = null,
+  messages = [],
+}) {
+  const response = await fetch(`${API_BASE_URL}/history/fork`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      new_thread_id: newThreadId,
+      source_thread_id: sourceThreadId || null,
+      until_message_id: untilMessageId ?? null,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fork thread");
+  }
+  return response.json();
+}
+
+/**
  * Capture a screenshot from the backend
  * @returns {Promise<{image: string}>} - base64 encoded image string
  */
@@ -815,9 +856,9 @@ export async function getScreenshot() {
  * @param {Blob} audioBlob
  * @returns {Promise<{text: string}>}
  */
-export async function transcribeAudio(audioBlob) {
+export async function transcribeAudio(audioBlob, filename = "recording.webm") {
   const formData = new FormData();
-  formData.append("file", audioBlob, "recording.webm");
+  formData.append("file", audioBlob, filename);
 
   const headers = getHeaders();
   delete headers["Content-Type"]; // Let browser set boundary for FormData
@@ -871,6 +912,22 @@ export async function getOllamaModels() {
 
   if (!response.ok) {
     await throwHttpError(response, "Failed to fetch Ollama models");
+  }
+  return response.json();
+}
+
+/**
+ * Fetch available Gemini models from Google Generative Language API
+ * @returns {Promise<{models: Array<string>}>}
+ */
+export async function getGeminiModels() {
+  const response = await fetch(`${API_BASE_URL}/gemini/models`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch Gemini models");
   }
   return response.json();
 }

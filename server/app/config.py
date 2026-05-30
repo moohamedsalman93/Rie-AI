@@ -89,6 +89,15 @@ class Settings:
         return self._get("TAVILY_API_KEY")
 
     @property
+    def BRAVE_SEARCH_API_KEY(self) -> Optional[str]:
+        return self._get("BRAVE_SEARCH_API_KEY")
+
+    @property
+    def WEB_SEARCH_PROVIDER(self) -> str:
+        """Web search provider: tavily, brave, or duckduckgo."""
+        return (self._get("WEB_SEARCH_PROVIDER") or "tavily").strip().lower()
+
+    @property
     def GOOGLE_API_KEY(self) -> Optional[str]:
         return self._get("GOOGLE_API_KEY")
 
@@ -316,6 +325,11 @@ class Settings:
         return self._get("VOICE_REPLY", "true").lower() == "true"
 
     @property
+    def SHARE_LOCATION(self) -> bool:
+        """Whether the client may send GPS coordinates with chat requests."""
+        return self._get("SHARE_LOCATION", "true").lower() == "true"
+
+    @property
     def TTS_PROVIDER(self) -> str:
         """
         TTS Provider: 'edge-tts' or 'groq'
@@ -477,6 +491,18 @@ class Settings:
     def has_tavily_key(self) -> bool:
         """Check if Tavily API key is configured"""
         return bool(self.TAVILY_API_KEY)
+
+    @property
+    def has_web_search_configured(self) -> bool:
+        """Whether the active web search provider is ready to use."""
+        provider = self.WEB_SEARCH_PROVIDER
+        if provider == "tavily":
+            return self.has_tavily_key
+        if provider == "brave":
+            return bool(self.BRAVE_SEARCH_API_KEY)
+        if provider == "duckduckgo":
+            return True
+        return self.has_tavily_key
 
 
     @property

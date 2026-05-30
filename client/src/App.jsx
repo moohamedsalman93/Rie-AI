@@ -7,7 +7,10 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread } from "./services/chatApi";
+import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
+import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
+import { isTauri, startNativeRecording, stopNativeRecording } from "./utils/tauriNative";
 import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
@@ -26,6 +29,7 @@ import {
 } from "./constants/appConfig";
 import { useWindowManager } from "./hooks/useWindowManager";
 import { useAttachments } from "./hooks/useAttachments";
+import { extractUrls } from "./utils/urlUtils";
 
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
 function mergeScheduleNotificationLog(prev, incoming) {
@@ -424,6 +428,22 @@ function MainApp() {
         return;
       }
 
+      if (data.step === "url_preview" && Array.isArray(data.previews) && data.previews.length > 0) {
+        setSessions((prev) => {
+          const newSessions = { ...prev };
+          if (newSessions[threadId]) {
+            newSessions[threadId] = newSessions[threadId].map((m) => {
+              if (m.id === userMessageId) {
+                return { ...m, url_previews: data.previews };
+              }
+              return m;
+            });
+          }
+          return newSessions;
+        });
+        return;
+      }
+
       if (data.step === "interrupt") {
         const hitl = data.hitl;
         const firstActionName = hitl?.action_requests?.[0]?.name;
@@ -716,12 +736,16 @@ function MainApp() {
         ? { id: friendMeta.friendId, name: friendMeta.friendName || "Friend" }
         : null;
 
+      const detectedUrls = !friendTarget ? extractUrls(trimmed) : [];
       const userMessage = {
         id: Date.now(),
         from: "user",
         text: trimmed,
         image_url: imageToUse,
         clipboard: clipboardToUse,
+        ...(detectedUrls.length > 0
+          ? { url_previews: detectedUrls.map((url) => ({ url, loading: true })) }
+          : {}),
       };
 
       setSessions((prev) => ({
@@ -916,11 +940,15 @@ function MainApp() {
         currentAudioRef.current.pause();
         currentAudioRef.current = null;
       }
-      // Reset queues
       audioQueueRef.current = [];
       isPlayingRef.current = false;
       sentenceBufferRef.current = "";
 
+      if (isTauri()) {
+        await startNativeRecording();
+        setIsRecording(true);
+        return;
+      }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
@@ -933,18 +961,17 @@ function MainApp() {
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         try {
           const { text } = await transcribeAudio(audioBlob);
           if (text) {
-            handleSend(text, true); // Mark as voice to enable auto-speak
+            handleSend(text, true);
           }
         } catch (err) {
           console.error("Transcription failed:", err);
           setError("Transcription failed. Please try again.");
         } finally {
-          // Stop all tracks to release the microphone
-          stream.getTracks().forEach(track => track.stop());
+          stream.getTracks().forEach((track) => track.stop());
         }
       };
 
@@ -956,12 +983,33 @@ function MainApp() {
     }
   }, [isRecording, handleSend]);
 
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
+  const stopRecording = useCallback(async () => {
+    if (!isRecording) return;
+
+    if (isTauri()) {
+      setIsRecording(false);
+      try {
+        const audioBlob = await stopNativeRecording();
+        const { text } = await transcribeAudio(audioBlob, "recording.wav");
+        if (text) {
+          handleSend(text, true);
+        }
+      } catch (err) {
+        console.error("Transcription failed:", err);
+        setError(
+          err?.message?.includes("denied") || err?.toString?.().includes("denied")
+            ? "Microphone access denied. Allow Rie-AI under Windows Settings → Privacy → Microphone."
+            : "Transcription failed. Please try again."
+        );
+      }
+      return;
+    }
+
+    if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
-  }, [isRecording]);
+  }, [isRecording, handleSend]);
 
     const handleCancelRequest = useCallback((targetThreadId = null) => {
     // If invoked from onClick, first arg is the event; ignore non-strings
@@ -1129,17 +1177,47 @@ function MainApp() {
     setIsMenuOpen(false);
   }, []);
 
-  const handleOpenMessageInNewChat = useCallback((message) => {
+  const handleOpenMessageInNewChat = useCallback(async (message) => {
     if (!message || message.from !== "user") return;
+    const sourceThreadId = activeThreadId;
+    const threadMessages = sessions[sourceThreadId] || [];
+    const branchMessages = sliceMessagesForBranch(threadMessages, message.id);
+    if (branchMessages === null) return;
+
     const newThreadId = crypto.randomUUID();
-    setSessions(prev => ({ ...prev, [newThreadId]: initialMessages }));
+    const forkPayloads = messagesToForkPayloads(branchMessages);
+
+    try {
+      await forkThread({
+        newThreadId,
+        sourceThreadId,
+        untilMessageId: message.id,
+        messages: forkPayloads,
+      });
+    } catch (err) {
+      console.error("Failed to fork thread:", err);
+      setError("Failed to branch chat with history.");
+      return;
+    }
+
+    setSessions((prev) => ({ ...prev, [newThreadId]: branchMessages }));
     setActiveThreadId(newThreadId);
     saveThreadId(newThreadId);
     threadIdRef.current = newThreadId;
+
+    const sourceMeta =
+      friendThreadMeta[sourceThreadId] || friendThreadMeta[String(sourceThreadId)];
+    if (sourceMeta) {
+      persistFriendMeta((prev) => ({
+        ...prev,
+        [newThreadId]: { ...sourceMeta },
+      }));
+    }
+
     setAttachedImage(message.image_url || null);
     setInput(message.text || "");
     setIsMenuOpen(false);
-  }, []);
+  }, [activeThreadId, sessions, friendThreadMeta, persistFriendMeta]);
 
   const handleSelectThread = useCallback(async (threadId) => {
     if (!threadId) return;
@@ -1690,6 +1768,13 @@ function MainApp() {
           voiceReplyRef.current = settings.voice_reply;
         }
 
+        if (settings.hasOwnProperty('share_location')) {
+          setShareLocationEnabled(settings.share_location);
+          if (settings.share_location) {
+            prefetchClientLocation();
+          }
+        }
+
         if (settings.tts_provider) {
           ttsProviderRef.current = settings.tts_provider;
         }
@@ -1719,6 +1804,12 @@ function MainApp() {
           const settings = await getSettings();
           if (settings.hasOwnProperty('voice_reply')) {
             voiceReplyRef.current = settings.voice_reply;
+          }
+          if (settings.hasOwnProperty('share_location')) {
+            setShareLocationEnabled(settings.share_location);
+            if (settings.share_location) {
+              prefetchClientLocation();
+            }
           }
           if (settings.window_mode) {
             setWindowMode(settings.window_mode);
@@ -2221,7 +2312,14 @@ function SettingsWindowApp() {
     return <LoadingScreen onMouseDown={() => {}} onClose={handleCloseSettingsWindow} onMinimize={() => getCurrentWindow().minimize()} />;
   }
 
-  return <SettingsPage onClose={handleCloseSettingsWindow} />;
+  const settingsParams = new URLSearchParams(window.location.search);
+  return (
+    <SettingsPage
+      onClose={handleCloseSettingsWindow}
+      initialTab={settingsParams.get('tab') || undefined}
+      initialSubTab={settingsParams.get('subtab') || undefined}
+    />
+  );
 }
 
 function PlannerWindowApp() {

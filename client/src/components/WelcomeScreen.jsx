@@ -16,6 +16,7 @@ import {
     AlertTriangle,
 } from "lucide-react";
 import logo from "../assets/logo.png";
+import { BetaLabel } from "./BetaLabel";
 
 export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }) {
     const [step, setStep] = useState(0);
@@ -39,8 +40,11 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
                     </motion.div>
 
                     <div className="space-y-3">
-                        <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-blue-500">
-                            Welcome to Rie-AI
+                        <h1 className="flex items-center justify-center gap-2 text-4xl font-bold">
+                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-blue-500">
+                                Welcome to Rie-AI
+                            </span>
+                            <BetaLabel className="shrink-0 text-lg font-normal" />
                         </h1>
                         <p className="text-neutral-300 max-w-md mx-auto leading-relaxed">
                             A desktop AI copilot for chat, coding, and system tasks.

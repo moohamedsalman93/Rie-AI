@@ -7,7 +7,7 @@ import queue
 import threading
 import time
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, AsyncIterator
+from typing import Any, Dict, List, Optional, AsyncIterator
 import logging
 import httpx
 
@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 
 from app.models import (
     ChatMessage, HealthResponse, SettingsUpdate, SettingsResponse, 
-    CancelRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
+    CancelRequest, ForkThreadRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
     ScheduleTaskRequest, ScheduledTaskResponse, ScheduleNotificationItem,
     SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
     DeviceIdentity, FriendRecord, PairingRequest, PairingInitResponse, PairingConfirmRequest, PairingConfirmResponse, PeerAskRequest, PeerReceiveRequest, PeerAskResponse,
@@ -29,6 +29,11 @@ from app.models import (
     PeerStreamCancelRequest,
 )
 from app.agent import agent_manager
+from app.url_preview import (
+    extract_urls,
+    fetch_url_previews,
+    format_previews_for_agent,
+)
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
 from app.config import settings
 from app.windows_tools import WINDOWS_TOOLS
@@ -39,9 +44,12 @@ from app.database import (
     update_setting,
     get_setting,
     create_thread,
+    update_thread_title,
+    count_user_messages,
     save_message,
     get_threads,
     get_thread_messages,
+    fork_thread_messages,
     delete_thread,
     delete_last_message,
     vacuum_checkpoint_db,
@@ -440,7 +448,6 @@ async def get_rie_usage():
     if not settings.RIE_ACCESS_TOKEN:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    import httpx
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -463,12 +470,61 @@ async def get_rie_usage():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+GEMINI_MODEL_FALLBACK = [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
+
+
+@router.get("/gemini/models")
+async def get_gemini_models():
+    """
+    Fetch available Gemini models from the Generative Language API (uses configured Google API key).
+    """
+    api_key = settings.GOOGLE_API_KEY
+    if not api_key or api_key == "your_gemini_api_key_here":
+        return {"models": GEMINI_MODEL_FALLBACK}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={"key": api_key},
+                timeout=10.0,
+            )
+            if response.status_code != 200:
+                logging.error("Failed to fetch Gemini models: %s", response.text)
+                return {"models": GEMINI_MODEL_FALLBACK}
+
+            data = response.json()
+            models: List[str] = []
+            for model in data.get("models", []):
+                methods = model.get("supportedGenerationMethods") or []
+                if "generateContent" not in methods:
+                    continue
+                name = model.get("name", "")
+                if name.startswith("models/"):
+                    name = name[len("models/") :]
+                if name:
+                    models.append(name)
+
+            models.sort()
+            return {"models": models if models else GEMINI_MODEL_FALLBACK}
+    except Exception as e:
+        logging.error("Failed to fetch Gemini models: %s", e)
+        return {"models": GEMINI_MODEL_FALLBACK}
+
+
 @router.get("/ollama/models")
 async def get_ollama_models():
     """
     Fetch list of downloaded models from Ollama instance (uses configured endpoint and optional API key).
     """
-    import httpx
     try:
         headers = {}
         if settings.OLLAMA_API_KEY:
@@ -522,7 +578,9 @@ async def get_settings():
         openai_api_key=mask_key(settings.OPENAI_API_KEY),
         anthropic_api_key=mask_key(settings.ANTHROPIC_API_KEY),
         tavily_api_key=mask_key(settings.TAVILY_API_KEY),
-        
+        brave_search_api_key=mask_key(settings.BRAVE_SEARCH_API_KEY),
+        web_search_provider=settings.WEB_SEARCH_PROVIDER,
+
         llm_provider=settings.LLM_PROVIDER,
         vertex_project=settings.VERTEX_PROJECT,
         vertex_location=settings.VERTEX_LOCATION,
@@ -549,6 +607,7 @@ async def get_settings():
         langsmith_project=settings.LANGSMITH_PROJECT,
         langsmith_endpoint=settings.LANGSMITH_ENDPOINT,
         voice_reply=settings.VOICE_REPLY,
+        share_location=settings.SHARE_LOCATION,
         rie_access_token=mask_key(settings.RIE_ACCESS_TOKEN),
         tts_provider=settings.TTS_PROVIDER,
         tts_voice=settings.TTS_VOICE,
@@ -568,6 +627,23 @@ async def get_settings():
     )
 
 
+def _looks_like_masked_secret(value: str) -> bool:
+    """Detect masked API keys returned by GET /settings (e.g. tvly****abcd)."""
+    if not value:
+        return False
+    if len(value) <= 8:
+        return set(value) == {"*"}
+    middle = value[4:-4]
+    return bool(middle) and all(ch == "*" for ch in middle)
+
+
+_SECRET_SETTING_KEYS = frozenset({
+    "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY", "LANGSMITH_API_KEY",
+    "RIE_ACCESS_TOKEN", "OLLAMA_API_KEY", "CONNECTIVITY_NGROK_AUTH_TOKEN",
+})
+
+
 @router.post("/settings")
 async def update_settings(data: SettingsUpdate):
     """
@@ -576,13 +652,14 @@ async def update_settings(data: SettingsUpdate):
     # Allowed keys to prevent arbitrary DB writes
     ALLOWED_KEYS = {
         "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", 
-        "ANTHROPIC_API_KEY", "TAVILY_API_KEY", 
+        "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY",
+        "WEB_SEARCH_PROVIDER",
         "VERTEX_PROJECT", "VERTEX_LOCATION", "VERTEX_CREDENTIALS_PATH",
         "LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
-        "VOICE_REPLY", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
+        "VOICE_REPLY", "SHARE_LOCATION", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
         "OLLAMA_MODEL", "OLLAMA_API_URL", "OLLAMA_API_KEY", "EXTERNAL_APIS",
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
         "SUBAGENTS_CONFIG",
@@ -607,8 +684,23 @@ async def update_settings(data: SettingsUpdate):
         if mode not in {"disable", "always", "let_decide"}:
             raise HTTPException(status_code=400, detail="HITL_MODE must be 'disable', 'always' or 'let_decide'")
         value_to_store = mode
+    elif data.key == "WEB_SEARCH_PROVIDER":
+        provider = (data.value or "").strip().lower()
+        if provider not in {"tavily", "brave", "duckduckgo"}:
+            raise HTTPException(
+                status_code=400,
+                detail="WEB_SEARCH_PROVIDER must be 'tavily', 'brave', or 'duckduckgo'",
+            )
+        value_to_store = provider
     else:
         value_to_store = data.value
+
+    if data.key in _SECRET_SETTING_KEYS and _looks_like_masked_secret(str(value_to_store or "")):
+        return {
+            "status": "success",
+            "message": f"{data.key} unchanged (masked display value was not saved)",
+        }
+
     derived_subagents_value: Optional[str] = None
     if data.key == "SUBAGENTS_CONFIG":
         validated = _validate_subagents_config(data.value)
@@ -677,7 +769,6 @@ async def update_settings(data: SettingsUpdate):
     # Re-initialize agent if possible (Async)
     # This might fail if other keys are missing, but that's expected
     try:
-        import asyncio
         # We don't want to block the request on re-init, 
         # but we can trigger it or just let the next request do it.
         # Since initialize_agent is now async, we'll let the next request handle it
@@ -2033,7 +2124,9 @@ async def root():
     return HealthResponse(
         message="Welcome to Rie BE Chat API",
         agent_configured=agent_configured,
-        tavily_configured=settings.has_tavily_key
+        tavily_configured=settings.has_tavily_key,
+        web_search_configured=settings.has_web_search_configured,
+        web_search_provider=settings.WEB_SEARCH_PROVIDER,
     )
 
 
@@ -2053,6 +2146,9 @@ async def debug():
         "anthropic_api_key_present": bool(settings.ANTHROPIC_API_KEY),
         "openai_api_key_present": bool(settings.OPENAI_API_KEY),
         "tavily_api_key_present": bool(settings.TAVILY_API_KEY),
+        "brave_search_api_key_present": bool(settings.BRAVE_SEARCH_API_KEY),
+        "web_search_provider": settings.WEB_SEARCH_PROVIDER,
+        "web_search_configured": settings.has_web_search_configured,
         "has_llm_api_key": settings.has_llm_api_key,
         "agent_configured": agent_manager.is_configured,
         "groq_model": settings.GROQ_MODEL,
@@ -2147,6 +2243,26 @@ async def get_history_messages(thread_id: str):
     """Get messages for a specific thread"""
     messages = await run_in_threadpool(get_thread_messages, thread_id)
     return messages
+
+
+@router.post("/history/fork")
+async def fork_history_thread(data: ForkThreadRequest):
+    """Fork a thread with conversation history through a user message."""
+    forked = await run_in_threadpool(
+        fork_thread_messages,
+        data.new_thread_id,
+        data.source_thread_id,
+        data.until_message_id,
+        data.messages,
+    )
+    if agent_manager.is_configured and forked:
+        await agent_manager.seed_thread_history(data.new_thread_id, forked)
+    return {
+        "status": "success",
+        "thread_id": data.new_thread_id,
+        "message_count": len(forked),
+    }
+
 
 @router.delete("/history/{thread_id}")
 async def delete_history_thread(thread_id: str):
@@ -2295,6 +2411,9 @@ async def chat_resume(data: ResumeChatRequest):
             speed_mode=speed_mode,
             client_timezone=data.client_timezone,
             client_local_datetime_iso=data.client_local_datetime_iso,
+            client_latitude=data.client_latitude,
+            client_longitude=data.client_longitude,
+            client_location_accuracy_m=data.client_location_accuracy_m,
         ),
         media_type="text/event-stream",
         headers=_SSE_CHAT_HEADERS,
@@ -2389,6 +2508,9 @@ async def _agent_stream_generator(
     speed_mode: Optional[str] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
+    client_latitude: Optional[float] = None,
+    client_longitude: Optional[float] = None,
+    client_location_accuracy_m: Optional[float] = None,
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
 ) -> AsyncIterator[str]:
@@ -2445,6 +2567,9 @@ async def _agent_stream_generator(
                     speed_mode=speed_mode,
                     client_timezone=client_timezone,
                     client_local_datetime_iso=client_local_datetime_iso,
+                    client_latitude=client_latitude,
+                    client_longitude=client_longitude,
+                    client_location_accuracy_m=client_location_accuracy_m,
                     friend_target_id=friend_target_id,
                     friend_target_name=friend_target_name,
                 ):
@@ -2608,6 +2733,9 @@ async def _agent_stream_generator_with_save(
     speed_mode: Optional[str] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
+    client_latitude: Optional[float] = None,
+    client_longitude: Optional[float] = None,
+    client_location_accuracy_m: Optional[float] = None,
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
 ) -> AsyncIterator[str]:
@@ -2627,6 +2755,9 @@ async def _agent_stream_generator_with_save(
         speed_mode,
         client_timezone,
         client_local_datetime_iso,
+        client_latitude,
+        client_longitude,
+        client_location_accuracy_m,
         friend_target_id,
         friend_target_name,
     ):
@@ -2655,6 +2786,82 @@ async def _agent_stream_generator_with_save(
 
 
 
+
+
+DEFAULT_THREAD_TITLE = "Untitled Chat"
+
+
+def _strip_clipboard_from_message(text: str) -> str:
+    if "\n\n[Clipboard Content]:" in text:
+        return text.split("\n\n[Clipboard Content]:")[0].strip()
+    return text.strip()
+
+
+async def _update_thread_title_after_second_message(thread_id: str) -> None:
+    """Generate an LLM title once the user has sent two messages."""
+    try:
+        messages = await run_in_threadpool(get_thread_messages, thread_id)
+        user_texts = [
+            _strip_clipboard_from_message(m["content"])
+            for m in messages
+            if m.get("role") == "user" and (m.get("content") or "").strip()
+        ]
+        if len(user_texts) < 2:
+            return
+        title = await agent_manager.generate_chat_thread_title(user_texts[:2])
+        await run_in_threadpool(update_thread_title, thread_id, title)
+        logging.info("Updated thread %s title to: %s", thread_id, title)
+    except Exception as exc:
+        logging.warning("Failed to generate thread title for %s: %s", thread_id, exc)
+
+
+async def _chat_stream_with_url_previews(
+    message: str,
+    *,
+    thread_id: str,
+    image_url: Optional[str],
+    is_voice: bool,
+    project_root: Optional[str],
+    token: Optional[str],
+    chat_mode: Optional[str],
+    speed_mode: Optional[str],
+    client_timezone: Optional[str],
+    client_local_datetime_iso: Optional[str],
+    client_latitude: Optional[float],
+    client_longitude: Optional[float],
+    client_location_accuracy_m: Optional[float],
+    friend_target_id: Optional[str],
+    friend_target_name: Optional[str],
+) -> AsyncIterator[str]:
+    """Emit URL preview SSE events, enrich the user message, then stream the agent."""
+    agent_message = message
+    urls = extract_urls(message)
+    if urls:
+        previews = await fetch_url_previews(urls)
+        if previews:
+            yield f"data: {json.dumps({'step': 'url_preview', 'previews': previews}, default=str)}\n\n"
+            preview_context = format_previews_for_agent(previews)
+            if preview_context:
+                agent_message = f"{message}{preview_context}"
+
+    messages = [{"role": "user", "content": agent_message, "image_url": image_url}]
+    async for chunk in _agent_stream_generator_with_save(
+        messages,
+        thread_id=thread_id,
+        is_voice=is_voice,
+        project_root=project_root,
+        token=token,
+        chat_mode=chat_mode,
+        speed_mode=speed_mode,
+        client_timezone=client_timezone,
+        client_local_datetime_iso=client_local_datetime_iso,
+        client_latitude=client_latitude,
+        client_longitude=client_longitude,
+        client_location_accuracy_m=client_location_accuracy_m,
+        friend_target_id=friend_target_id,
+        friend_target_name=friend_target_name,
+    ):
+        yield chunk
 
 
 @router.post("/chat/stream")
@@ -2689,20 +2896,22 @@ async def chat_stream_post(
     else:
         logging.info("No clipboard content attached")
 
-    # 1. Ensure thread exists
-    title = message[:30] + "..." if len(message) > 30 else message
-    real_thread_id = await run_in_threadpool(create_thread, title, thread_id)
+    # 1. Ensure thread exists (title stays generic until 2nd user message)
+    real_thread_id = await run_in_threadpool(create_thread, DEFAULT_THREAD_TITLE, thread_id)
 
-    # 2. Save User Message
+    # 2. Save User Message (original text only; previews are injected for the agent at stream time)
     await run_in_threadpool(save_message, real_thread_id, "user", message, image_url)
 
-    # 3. Stream and Save Assistant Message
-    messages = [{"role": "user", "content": message, "image_url": image_url}]
+    user_count = await run_in_threadpool(count_user_messages, real_thread_id)
+    if user_count == 2:
+        asyncio.create_task(_update_thread_title_after_second_message(real_thread_id))
 
+    # 3. Stream URL previews (if any), then agent response
     return StreamingResponse(
-        _agent_stream_generator_with_save(
-            messages,
+        _chat_stream_with_url_previews(
+            message,
             thread_id=real_thread_id,
+            image_url=image_url,
             is_voice=is_voice,
             project_root=project_root,
             token=token,
@@ -2710,6 +2919,9 @@ async def chat_stream_post(
             speed_mode=speed_mode,
             client_timezone=chat_message.client_timezone,
             client_local_datetime_iso=chat_message.client_local_datetime_iso,
+            client_latitude=chat_message.client_latitude,
+            client_longitude=chat_message.client_longitude,
+            client_location_accuracy_m=chat_message.client_location_accuracy_m,
             friend_target_id=friend_target_id,
             friend_target_name=friend_target_name,
         ),

@@ -3,6 +3,7 @@ import { GitBranch, Info, RotateCw } from 'lucide-react';
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ToolChip } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
+import { LinkPreview } from "./LinkPreview";
 
 export function ChatMessages({
   messages,
@@ -66,7 +67,7 @@ export function ChatMessages({
                         onOpenInNewChat?.(m);
                       }}
                       className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors"
-                      title="Open in new chat"
+                      title="Branch to new chat with history"
                     >
                       <GitBranch size={14} />
                     </button>
@@ -100,6 +101,9 @@ export function ChatMessages({
                   <div className="mb-2 overflow-hidden rounded-lg">
                     <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
                   </div>
+                )}
+                {m.url_previews?.length > 0 && (
+                  <LinkPreview previews={m.url_previews} />
                 )}
                 {m.clipboard && (
                   <div className="mb-2 rounded-lg bg-blue-500/10 border border-blue-500/20 p-2.5">

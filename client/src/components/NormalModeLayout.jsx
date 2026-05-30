@@ -4,6 +4,7 @@ import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users } from 'luc
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
+import { LinkPreview } from './LinkPreview';
 import { ToolChip } from './ToolChip';
 import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
@@ -110,9 +111,24 @@ export function NormalModeLayout({
         }
     }, [terminalLogs, isTerminalOpen]);
 
+    const userMessageCount = useMemo(() => {
+        const list = sessionsByThread?.[currentThreadId] || [];
+        return list.filter((m) => m?.from === "user" && m?.text?.trim()).length;
+    }, [sessionsByThread, currentThreadId]);
+
+    const wasStreamingRef = useRef(false);
+
     useEffect(() => {
         loadThreads();
-    }, [currentThreadId]);
+    }, [currentThreadId, userMessageCount]);
+
+    useEffect(() => {
+        const isStreaming = streamingThreads?.has?.(currentThreadId);
+        if (wasStreamingRef.current && !isStreaming) {
+            loadThreads();
+        }
+        wasStreamingRef.current = Boolean(isStreaming);
+    }, [streamingThreads, currentThreadId]);
 
     const loadThreads = async () => {
         setLoading(true);
@@ -160,10 +176,9 @@ export function NormalModeLayout({
             .filter((threadId) => !known.has(String(threadId)))
             .map((threadId) => {
                 const list = sessionsByThread[threadId] || [];
-                const firstUser = list.find((m) => m?.from === "user" && m?.text?.trim());
                 return {
                     id: threadId,
-                    title: firstUser?.text?.slice(0, 42) || "Untitled Chat",
+                    title: "Untitled Chat",
                     created_at: null,
                     updated_at: null,
                 };
@@ -224,7 +239,21 @@ export function NormalModeLayout({
 
                 {/* Right: Window Controls */}
                 <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-end">
-                    
+
+                    {!isHistoryVisible && (
+                        <button
+                            onClick={onNewChat}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                            title="New Chat"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                        </button>
+                    )}
+
                     <button
                         onClick={() => setIsHistoryVisible(!isHistoryVisible)}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -468,7 +497,7 @@ export function NormalModeLayout({
                                                             onOpenMessageInNewChat?.(m);
                                                         }}
                                                         className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
-                                                        title="Open in new chat"
+                                                        title="Branch to new chat with history"
                                                     >
                                                         <GitBranch size={14} />
                                                     </button>
@@ -501,7 +530,7 @@ export function NormalModeLayout({
                                                             onOpenMessageInNewChat?.(m);
                                                         }}
                                                         className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
-                                                        title="Open in new chat"
+                                                        title="Branch to new chat with history"
                                                     >
                                                         <GitBranch size={14} />
                                                     </button>
@@ -516,6 +545,9 @@ export function NormalModeLayout({
                                                     <div className="mb-2 overflow-hidden rounded-lg">
                                                         <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
                                                     </div>
+                                                )}
+                                                {m.url_previews?.length > 0 && (
+                                                    <LinkPreview previews={m.url_previews} />
                                                 )}
                                                 {m.clipboard && (
                                                     <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">

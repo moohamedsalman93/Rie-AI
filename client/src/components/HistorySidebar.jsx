@@ -77,10 +77,9 @@ export function HistorySidebar({
             .filter((threadId) => !known.has(String(threadId)))
             .map((threadId) => {
                 const list = sessionsByThread[threadId] || [];
-                const firstUser = list.find((m) => m?.from === "user" && m?.text?.trim());
                 return {
                     id: threadId,
-                    title: firstUser?.text?.slice(0, 42) || "Untitled Chat",
+                    title: "Untitled Chat",
                     created_at: null,
                     updated_at: null,
                 };
