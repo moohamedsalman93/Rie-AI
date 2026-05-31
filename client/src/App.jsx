@@ -29,6 +29,7 @@ import {
 } from "./constants/appConfig";
 import { useWindowManager } from "./hooks/useWindowManager";
 import { useAttachments } from "./hooks/useAttachments";
+import { useKnowledgeAttachment } from "./hooks/useKnowledgeAttachment";
 import { extractUrls } from "./utils/urlUtils";
 
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
@@ -157,6 +158,15 @@ function MainApp() {
   } = windowManager;
 
   const attachments = useAttachments();
+  const knowledgeAttachment = useKnowledgeAttachment();
+  const {
+    attachedKnowledge,
+    loadThreadKnowledge,
+    attachKnowledge,
+    detachKnowledge,
+    getNewKnowledgeIds,
+    markAllLocked,
+  } = knowledgeAttachment;
   const {
     attachedImage,
     setAttachedImage,
@@ -331,6 +341,10 @@ function MainApp() {
       setShowWelcome(false);
       setIsSettingsOpen(true);
     }
+  }, []);
+
+  const handleCompleteOnboarding = useCallback(() => {
+    setShowWelcome(false);
   }, []);
 
   const handleCloseApp = useCallback(async () => {
@@ -703,7 +717,7 @@ function MainApp() {
   const handleSend = useCallback(async (overrideText = null, isVoice = false, overrideImage = null) => {
     const textToSend = (typeof overrideText === 'string') ? overrideText : input;
     const trimmed = textToSend.trim();
-    const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage;
+    const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage || attachedKnowledge.length > 0;
     if (!trimmed && !hasAttachments || isLoading) return;
 
     // Stop and clear audio
@@ -808,6 +822,7 @@ function MainApp() {
 
       try {
         const token = localStorage.getItem('rie_token');
+        const newKnowledgeIds = getNewKnowledgeIds();
         if (friendTarget?.id) {
           friendStreamStateRef.current[threadId] = {
             friendId: friendTarget.id,
@@ -877,6 +892,8 @@ function MainApp() {
             });
             setCurrentTool(null);
             delete abortControllersRef.current[threadId];
+            markAllLocked();
+            loadThreadKnowledge(threadId);
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
           },
           (err) => {
@@ -897,7 +914,8 @@ function MainApp() {
           clipboardToUse,
           chatMode,
           speedMode,
-          friendTarget || undefined
+          friendTarget || undefined,
+          newKnowledgeIds.length ? newKnowledgeIds : null
         );
       } catch (err) {
         console.error("Chat error:", err);
@@ -930,7 +948,7 @@ function MainApp() {
     } else {
       await performSend();
     }
-  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread]);
+  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, attachedKnowledge, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread, getNewKnowledgeIds, markAllLocked, loadThreadKnowledge]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -1174,8 +1192,9 @@ function MainApp() {
     saveThreadId(newThreadId);
     threadIdRef.current = newThreadId;
     setAttachedImage(null);
+    loadThreadKnowledge(newThreadId);
     setIsMenuOpen(false);
-  }, []);
+  }, [loadThreadKnowledge]);
 
   const handleOpenMessageInNewChat = useCallback(async (message) => {
     if (!message || message.from !== "user") return;
@@ -1231,6 +1250,8 @@ function MainApp() {
 
     saveThreadId(threadId);
 
+    loadThreadKnowledge(threadId);
+
     // If session already exists in memory and not empty, don't refetch
     if (sessions[threadId] && sessions[threadId].length > 0) {
       return;
@@ -1268,7 +1289,7 @@ function MainApp() {
         return next;
       });
     }
-  }, [sessions, friendThreadMeta]);
+  }, [sessions, friendThreadMeta, loadThreadKnowledge]);
 
   const handleDeleteThread = useCallback(async (threadId) => {
     if (!threadId) return;
@@ -1659,6 +1680,7 @@ function MainApp() {
             setSessions(prev => ({ ...prev, [storedThreadId]: formatted }));
             setActiveThreadId(storedThreadId);
             threadIdRef.current = storedThreadId;
+            loadThreadKnowledge(storedThreadId);
             return;
           }
         } catch (e) {
@@ -2097,7 +2119,7 @@ function MainApp() {
             >
               {showWelcome ? (
                 <WelcomeScreen
-                  onGetStarted={handleOpenSettingsWindow}
+                  onGetStarted={handleCompleteOnboarding}
                   onMouseDown={handleDragStart}
                   onClose={handleCloseApp}
                   onMinimize={() => getWindow().minimize()}
@@ -2169,6 +2191,9 @@ function MainApp() {
                   activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
                   onSelectFriendChat={handleSelectFriendChat}
                   onStartFriendChat={handleStartFriendChat}
+                  attachedKnowledge={attachedKnowledge}
+                  onAttachKnowledge={attachKnowledge}
+                  onDetachKnowledge={detachKnowledge}
                 />
               )}
             </motion.div>
@@ -2267,6 +2292,9 @@ function MainApp() {
               activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
               onSelectFriendChat={handleSelectFriendChat}
               onStartFriendChat={handleStartFriendChat}
+              attachedKnowledge={attachedKnowledge}
+              onAttachKnowledge={attachKnowledge}
+              onDetachKnowledge={detachKnowledge}
             />
           )}
         </AnimatePresence>

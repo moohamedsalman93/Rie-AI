@@ -2,7 +2,6 @@
  * API service for communicating with server chat backend
  */
 
-import { getConversationContext } from "./memoryService";
 import { getClientLocationPayload } from "../utils/locationUtils";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:14300";
@@ -42,20 +41,6 @@ export async function getClientContextPayload() {
     getClientLocationPayload(),
   ]);
   return { ...datetime, ...location };
-}
-
-/**
- * Convert frontend messages to backend format
- * @param {Array} messages - Array of message objects with {id, from, text}
- * @returns {Array} Array of message objects with {role, content}
- */
-function formatMessagesForBackend(messages) {
-  return messages
-    .filter((msg) => msg.from !== undefined && msg.text !== undefined)
-    .map((msg) => ({
-      role: msg.from === "user" ? "user" : "assistant",
-      content: msg.text,
-    }));
 }
 
 let appToken = null;
@@ -255,7 +240,8 @@ export async function streamChat(
   clipboardText = null,
   chatMode = "agent",
   speedMode = "thinking",
-  friendTarget = null
+  friendTarget = null,
+  knowledgeIds = null
 ) {
   const payload = {
     message,
@@ -269,6 +255,7 @@ export async function streamChat(
     speed_mode: speedMode,
     friend_target_id: friendTarget?.id || null,
     friend_target_name: friendTarget?.name || null,
+    ...(knowledgeIds?.length ? { knowledge_ids: knowledgeIds } : {}),
     ...(await getClientContextPayload()),
   };
   try {

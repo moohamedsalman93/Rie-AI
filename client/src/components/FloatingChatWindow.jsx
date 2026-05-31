@@ -88,6 +88,9 @@ export function FloatingChatWindow({
   onStartFriendChat = () => {},
   isFriendsQuickOpen = false,
   onToggleFriendsQuick = () => {},
+  attachedKnowledge = [],
+  onAttachKnowledge = () => {},
+  onDetachKnowledge = () => {},
 }) {
   return (
     <motion.section
@@ -137,14 +140,7 @@ export function FloatingChatWindow({
 
       {showWelcome ? (
         <WelcomeScreen
-          onGetStarted={() => {
-            if (onOpenSettingsWindow) {
-              onOpenSettingsWindow();
-              return;
-            }
-            setShowWelcome(false);
-            setIsSettingsOpen(true);
-          }}
+          onGetStarted={() => setShowWelcome(false)}
           onMouseDown={onDragStart}
           onMinimize={onMinimize}
           onClose={onCloseApp}
@@ -202,6 +198,7 @@ export function FloatingChatWindow({
                 onSend={onSend}
                 onOpenInNewChat={onOpenMessageInNewChat}
                 activeFriendMeta={activeFriendMeta}
+                attachedKnowledge={attachedKnowledge}
               />
             </div>
           </div>
@@ -232,6 +229,9 @@ export function FloatingChatWindow({
             onCancelRequest={onCancelRequest}
             textareaRef={textareaRef}
             isWindowDraggingFile={isWindowDraggingFile}
+            attachedKnowledge={attachedKnowledge}
+            onAttachKnowledge={onAttachKnowledge}
+            onDetachKnowledge={onDetachKnowledge}
           />
 
           <Terminal

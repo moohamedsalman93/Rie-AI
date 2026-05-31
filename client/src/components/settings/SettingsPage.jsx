@@ -7,6 +7,7 @@ import { setShareLocationEnabled, prefetchClientLocation } from '../../utils/loc
 import { SettingInput } from './SettingInput';
 import { McpServersManager } from './McpServersManager';
 import { ExternalApisManager } from './ExternalApisManager';
+import { KnowledgeManager } from './KnowledgeManager';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
@@ -2070,6 +2071,16 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         </>
                       );
                     })()}
+                  </div>
+
+                  <div className="premium-card rounded-xl p-5 space-y-4">
+                    <h3 className="text-sm font-bold text-violet-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
+                      Custom Knowledge
+                    </h3>
+                    <p className="text-[10px] text-neutral-500">
+                      Create named knowledge packs with custom instructions and files. Attach them in chat to inject context into the assistant.
+                    </p>
+                    <KnowledgeManager />
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">

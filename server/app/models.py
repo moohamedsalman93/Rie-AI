@@ -47,6 +47,47 @@ class ChatMessage(BaseModel):
         default=None,
         description="Reported GPS accuracy in meters, if available",
     )
+    knowledge_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Custom knowledge pack ids newly attached this turn",
+    )
+
+
+class KnowledgePackCreate(BaseModel):
+    name: str = Field(..., description="Display name for the knowledge pack")
+    instructions: str = Field("", description="Custom instructions for this knowledge")
+
+
+class KnowledgePackUpdate(BaseModel):
+    name: Optional[str] = None
+    instructions: Optional[str] = None
+
+
+class KnowledgeAssetResponse(BaseModel):
+    id: str
+    pack_id: str
+    filename: str
+    asset_type: str
+    summary: Optional[str] = None
+    created_at: str
+
+
+class KnowledgePackResponse(BaseModel):
+    id: str
+    name: str
+    instructions: Optional[str] = None
+    created_at: str
+    updated_at: str
+    asset_count: int = 0
+    assets: Optional[List[KnowledgeAssetResponse]] = None
+
+
+class ThreadKnowledgeItem(BaseModel):
+    thread_id: str
+    knowledge_id: str
+    knowledge_name: str
+    is_locked: bool = False
+    attached_at: str
 
 
 class CancelRequest(BaseModel):

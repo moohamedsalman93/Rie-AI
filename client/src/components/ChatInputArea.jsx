@@ -1,5 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
+import { KnowledgeAttachmentChips } from "./KnowledgeAttachmentChips";
+import { KnowledgePickerModal } from "./KnowledgePickerModal";
 
 export function ChatInputArea({
   input,
@@ -28,10 +30,14 @@ export function ChatInputArea({
   textareaRef,
   isWindowDraggingFile,
   chatMode,
+  attachedKnowledge = [],
+  onAttachKnowledge,
+  onDetachKnowledge,
 }) {
   const [dragCounter, setDragCounter] = useState(0);
+  const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
   const isDragging = dragCounter > 0;
-  const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot;
+  const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0;
 
   const attachImageFile = (file) => {
     if (!file || !file.type?.startsWith("image/")) return;
@@ -196,6 +202,7 @@ export function ChatInputArea({
               </div>
             </motion.div>
           )}
+          <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} />
         </AnimatePresence>
 
         <div className="flex items-end gap-2">
@@ -283,9 +290,35 @@ export function ChatInputArea({
                       <span className="font-medium text-[13px]">Read Clipboard</span>
                     </div>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAttachmentPopoverOpen(false);
+                      setIsKnowledgePickerOpen(true);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
+                  >
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                      </svg>
+                    </div>
+                    <div className="flex flex-col items-start translate-y-[1px]">
+                      <span className="font-medium text-[13px]">Custom Knowledge</span>
+                    </div>
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
+
+            <KnowledgePickerModal
+              isOpen={isKnowledgePickerOpen}
+              onClose={() => setIsKnowledgePickerOpen(false)}
+              onSelect={(pack) => onAttachKnowledge?.(pack)}
+              attachedIds={attachedKnowledge.map((k) => k.id)}
+              variant="popover"
+            />
           </div>
 
           {/* Text input container */}

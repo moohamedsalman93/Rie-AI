@@ -4,6 +4,7 @@ Database module for managing application settings and chat history
 """
 import sqlite3
 import os
+import json
 from pathlib import Path
 import sys
 import uuid
@@ -29,6 +30,16 @@ def get_checkpoint_db_path() -> str:
     """Get the path to the checkpointer SQLite database file as a string"""
     path = get_db_path()
     return str(path.parent / "checkpoints.db")
+
+
+def get_knowledge_storage_dir() -> Path:
+    """Directory for custom knowledge asset files."""
+    if getattr(sys, 'frozen', False):
+        base_path = Path(os.getenv('LOCALAPPDATA', os.path.expanduser('~'))) / 'Rie-AI' / 'knowledge'
+    else:
+        base_path = Path(__file__).parent.parent / 'knowledge'
+    base_path.mkdir(parents=True, exist_ok=True)
+    return base_path
 
 def vacuum_checkpoint_db() -> dict:
     """
@@ -229,6 +240,53 @@ def init_db():
 
     cursor.execute(
         """
+        CREATE TABLE IF NOT EXISTS knowledge_packs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            instructions TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS knowledge_assets (
+            id TEXT PRIMARY KEY,
+            pack_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            asset_type TEXT NOT NULL CHECK(asset_type IN ('text', 'image')),
+            storage_path TEXT NOT NULL,
+            summary TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(pack_id) REFERENCES knowledge_packs(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS thread_knowledge (
+            thread_id TEXT NOT NULL,
+            knowledge_id TEXT NOT NULL,
+            knowledge_name TEXT NOT NULL,
+            context_snapshot TEXT,
+            is_locked INTEGER NOT NULL DEFAULT 0,
+            attached_at TEXT NOT NULL,
+            PRIMARY KEY(thread_id, knowledge_id),
+            FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE,
+            FOREIGN KEY(knowledge_id) REFERENCES knowledge_packs(id)
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_assets_pack ON knowledge_assets(pack_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_thread_knowledge_thread ON thread_knowledge(thread_id)"
+    )
+
+    cursor.execute(
+        """
         CREATE TABLE IF NOT EXISTS peer_query_events (
             id TEXT PRIMARY KEY,
             direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound')),
@@ -398,9 +456,15 @@ def get_threads() -> List[Dict[str, Any]]:
         SELECT
             t.*,
             ft.friend_id AS friend_id,
-            ft.friend_name AS friend_name
+            ft.friend_name AS friend_name,
+            tk_agg.knowledge_names AS knowledge_names
         FROM threads t
         LEFT JOIN friend_threads ft ON ft.thread_id = t.id
+        LEFT JOIN (
+            SELECT thread_id, json_group_array(knowledge_name) AS knowledge_names
+            FROM thread_knowledge
+            GROUP BY thread_id
+        ) tk_agg ON tk_agg.thread_id = t.id
         ORDER BY t.updated_at DESC
         """
     )
@@ -408,6 +472,15 @@ def get_threads() -> List[Dict[str, Any]]:
     
     threads = []
     for row in rows:
+        knowledge_names = []
+        raw_names = row["knowledge_names"]
+        if raw_names:
+            try:
+                parsed = json.loads(raw_names)
+                if isinstance(parsed, list):
+                    knowledge_names = [n for n in parsed if n]
+            except (json.JSONDecodeError, TypeError):
+                knowledge_names = []
         threads.append({
             "id": row["id"],
             "title": row["title"],
@@ -416,6 +489,8 @@ def get_threads() -> List[Dict[str, Any]]:
             "is_friend_chat": bool(row["friend_id"]),
             "friend_id": row["friend_id"],
             "friend_name": row["friend_name"],
+            "is_knowledge_chat": len(knowledge_names) > 0,
+            "knowledge_names": knowledge_names,
         })
         
     conn.close()
@@ -539,6 +614,7 @@ def delete_thread(thread_id: str):
     
     cursor.execute("DELETE FROM messages WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM friend_threads WHERE thread_id = ?", (thread_id,))
+    cursor.execute("DELETE FROM thread_knowledge WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM threads WHERE id = ?", (thread_id,))
     
     conn.commit()
@@ -1098,3 +1174,257 @@ def update_friend_public_url(friend_id: str, public_url: Optional[str]) -> Optio
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+# --- Custom knowledge packs ---
+
+
+def create_knowledge_pack(name: str, instructions: str = "") -> Dict[str, Any]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    pack_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        """
+        INSERT INTO knowledge_packs (id, name, instructions, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (pack_id, name.strip(), (instructions or "").strip(), now, now),
+    )
+    conn.commit()
+    cursor.execute("SELECT * FROM knowledge_packs WHERE id = ?", (pack_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+def update_knowledge_pack(pack_id: str, name: Optional[str] = None, instructions: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_packs WHERE id = ?", (pack_id,))
+    existing = cursor.fetchone()
+    if not existing:
+        conn.close()
+        return None
+    now = datetime.utcnow().isoformat()
+    new_name = name.strip() if name is not None else existing["name"]
+    new_instructions = instructions.strip() if instructions is not None else (existing["instructions"] or "")
+    cursor.execute(
+        "UPDATE knowledge_packs SET name = ?, instructions = ?, updated_at = ? WHERE id = ?",
+        (new_name, new_instructions, now, pack_id),
+    )
+    conn.commit()
+    cursor.execute("SELECT * FROM knowledge_packs WHERE id = ?", (pack_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_knowledge_pack(pack_id: str) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_packs WHERE id = ?", (pack_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_knowledge_packs() -> List[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT kp.*, COUNT(ka.id) AS asset_count
+        FROM knowledge_packs kp
+        LEFT JOIN knowledge_assets ka ON ka.pack_id = kp.id
+        GROUP BY kp.id
+        ORDER BY kp.updated_at DESC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_knowledge_pack(pack_id: str) -> bool:
+    """Delete pack if not referenced by locked threads."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM thread_knowledge WHERE knowledge_id = ? AND is_locked = 1 LIMIT 1",
+        (pack_id,),
+    )
+    if cursor.fetchone():
+        conn.close()
+        return False
+    cursor.execute("DELETE FROM thread_knowledge WHERE knowledge_id = ?", (pack_id,))
+    cursor.execute("DELETE FROM knowledge_assets WHERE pack_id = ?", (pack_id,))
+    cursor.execute("DELETE FROM knowledge_packs WHERE id = ?", (pack_id,))
+    conn.commit()
+    conn.close()
+    pack_dir = get_knowledge_storage_dir() / pack_id
+    if pack_dir.exists():
+        import shutil
+        shutil.rmtree(pack_dir, ignore_errors=True)
+    return True
+
+
+def create_knowledge_asset(
+    pack_id: str,
+    filename: str,
+    asset_type: str,
+    storage_path: str,
+    summary: Optional[str] = None,
+) -> Dict[str, Any]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    asset_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        """
+        INSERT INTO knowledge_assets (id, pack_id, filename, asset_type, storage_path, summary, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (asset_id, pack_id, filename, asset_type, storage_path, summary, now),
+    )
+    cursor.execute(
+        "UPDATE knowledge_packs SET updated_at = ? WHERE id = ?",
+        (now, pack_id),
+    )
+    conn.commit()
+    cursor.execute("SELECT * FROM knowledge_assets WHERE id = ?", (asset_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+def get_knowledge_assets(pack_id: str) -> List[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM knowledge_assets WHERE pack_id = ? ORDER BY created_at ASC",
+        (pack_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_knowledge_asset_summary(asset_id: str, summary: str) -> None:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE knowledge_assets SET summary = ? WHERE id = ?", (summary, asset_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_knowledge_asset(asset_id: str) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_assets WHERE id = ?", (asset_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    cursor.execute("DELETE FROM knowledge_assets WHERE id = ?", (asset_id,))
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        "UPDATE knowledge_packs SET updated_at = ? WHERE id = ?",
+        (now, row["pack_id"]),
+    )
+    conn.commit()
+    conn.close()
+    return dict(row)
+
+
+def get_thread_knowledge(thread_id: str) -> List[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM thread_knowledge WHERE thread_id = ? ORDER BY attached_at ASC",
+        (thread_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        d = dict(row)
+        d["is_locked"] = bool(d.get("is_locked"))
+        result.append(d)
+    return result
+
+
+def upsert_thread_knowledge(
+    thread_id: str,
+    knowledge_id: str,
+    knowledge_name: str,
+    context_snapshot: Optional[str] = None,
+) -> None:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        """
+        INSERT INTO thread_knowledge (thread_id, knowledge_id, knowledge_name, context_snapshot, is_locked, attached_at)
+        VALUES (?, ?, ?, ?, 0, ?)
+        ON CONFLICT(thread_id, knowledge_id) DO UPDATE SET
+            knowledge_name = excluded.knowledge_name,
+            context_snapshot = COALESCE(thread_knowledge.context_snapshot, excluded.context_snapshot)
+        """,
+        (thread_id, knowledge_id, knowledge_name, context_snapshot, now),
+    )
+    conn.commit()
+    conn.close()
+
+
+def lock_thread_knowledge(thread_id: str, snapshots: Optional[Dict[str, str]] = None) -> None:
+    """Lock all knowledge on a thread; save snapshots only for rows not yet locked."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    snapshots = snapshots or {}
+    cursor.execute(
+        "SELECT knowledge_id, is_locked, context_snapshot FROM thread_knowledge WHERE thread_id = ?",
+        (thread_id,),
+    )
+    for row in cursor.fetchall():
+        kid = row[0]
+        already_locked = bool(row[1])
+        existing_snap = row[2]
+        snap = snapshots.get(kid)
+        if already_locked and existing_snap:
+            cursor.execute(
+                "UPDATE thread_knowledge SET is_locked = 1 WHERE thread_id = ? AND knowledge_id = ?",
+                (thread_id, kid),
+            )
+        elif snap:
+            cursor.execute(
+                "UPDATE thread_knowledge SET is_locked = 1, context_snapshot = ? WHERE thread_id = ? AND knowledge_id = ?",
+                (snap, thread_id, kid),
+            )
+        else:
+            cursor.execute(
+                "UPDATE thread_knowledge SET is_locked = 1 WHERE thread_id = ? AND knowledge_id = ?",
+                (thread_id, kid),
+            )
+    conn.commit()
+    conn.close()

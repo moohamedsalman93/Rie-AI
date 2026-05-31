@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ChevronRight, Users } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
+import { KnowledgeHistoryBadge } from './KnowledgeAttachmentChips';
 
 export function HistorySidebar({
     isOpen,
@@ -141,6 +142,7 @@ export function HistorySidebar({
                                     <div className="flex items-center gap-1.5 mb-0.5">
                                         <div className="font-medium text-xs truncate">{thread.title || "Untitled Chat"}</div>
                                         {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>}
+                                        <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
                                         {streamingThreads.has(thread.id) && <span className="h-1 w-1 rounded-full bg-emerald-500 animate-pulse" />}
                                     </div>
                                     <div className="text-[9px] opacity-40">{formatDate(thread.updated_at || thread.created_at)}</div>

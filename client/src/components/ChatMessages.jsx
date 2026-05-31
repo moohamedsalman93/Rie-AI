@@ -4,6 +4,7 @@ import { MarkdownMessage } from "./MarkdownMessage";
 import { ToolChip } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
 import { LinkPreview } from "./LinkPreview";
+import { KnowledgeChatBanner } from "./KnowledgeAttachmentChips";
 
 export function ChatMessages({
   messages,
@@ -18,6 +19,7 @@ export function ChatMessages({
   onSend,
   onOpenInNewChat,
   activeFriendMeta = null,
+  attachedKnowledge = [],
 }) {
   const botReplyCount = messages.filter(
     (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
@@ -40,6 +42,7 @@ export function ChatMessages({
           <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
         </div>
       )}
+      <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
       <AnimatePresence>
         {messages.map((m) => {
           // Skip empty bot messages that haven't started streaming blocks yet,

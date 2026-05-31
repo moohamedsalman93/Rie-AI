@@ -27,6 +27,7 @@ from app.models import (
     FriendPeerAccessPatch, PeerAccessCatalogResponse,
     PeerQueryEventItem,
     PeerStreamCancelRequest,
+    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, ThreadKnowledgeItem,
 )
 from app.agent import agent_manager
 from app.url_preview import (
@@ -73,6 +74,20 @@ from app.database import (
     append_peer_query_event,
     list_peer_query_events,
     clear_peer_query_events,
+    create_knowledge_pack,
+    update_knowledge_pack,
+    get_knowledge_pack,
+    delete_knowledge_pack,
+    delete_knowledge_asset,
+    get_thread_knowledge,
+)
+from app.knowledge import (
+    list_packs_summary,
+    get_pack_detail,
+    save_and_summarize_asset,
+    remove_asset_file,
+    prepare_thread_knowledge_for_stream,
+    lock_thread_knowledge_after_stream,
 )
 from app.peer_access import (
     compute_effective_tool_ids,
@@ -2271,6 +2286,128 @@ async def delete_history_thread(thread_id: str):
     return {"status": "success"}
 
 
+# --- Custom knowledge packs ---
+
+
+@router.get("/knowledge", response_model=List[KnowledgePackResponse])
+async def list_knowledge_packs():
+    rows = await run_in_threadpool(list_packs_summary)
+    return [
+        KnowledgePackResponse(
+            id=r["id"],
+            name=r["name"],
+            instructions=r.get("instructions"),
+            created_at=r["created_at"],
+            updated_at=r["updated_at"],
+            asset_count=int(r.get("asset_count") or 0),
+        )
+        for r in rows
+    ]
+
+
+@router.post("/knowledge", response_model=KnowledgePackResponse)
+async def create_knowledge_pack_route(body: KnowledgePackCreate):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    row = await run_in_threadpool(create_knowledge_pack, name, body.instructions or "")
+    return KnowledgePackResponse(
+        id=row["id"],
+        name=row["name"],
+        instructions=row.get("instructions"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        asset_count=0,
+    )
+
+
+@router.get("/knowledge/{pack_id}", response_model=KnowledgePackResponse)
+async def get_knowledge_pack_route(pack_id: str):
+    detail = await run_in_threadpool(get_pack_detail, pack_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Knowledge pack not found")
+    return KnowledgePackResponse(
+        id=detail["id"],
+        name=detail["name"],
+        instructions=detail.get("instructions"),
+        created_at=detail["created_at"],
+        updated_at=detail["updated_at"],
+        asset_count=detail.get("asset_count", 0),
+        assets=detail.get("assets"),
+    )
+
+
+@router.put("/knowledge/{pack_id}", response_model=KnowledgePackResponse)
+async def update_knowledge_pack_route(pack_id: str, body: KnowledgePackUpdate):
+    row = await run_in_threadpool(
+        update_knowledge_pack, pack_id, body.name, body.instructions
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Knowledge pack not found")
+    assets = await run_in_threadpool(get_pack_detail, pack_id)
+    return KnowledgePackResponse(
+        id=row["id"],
+        name=row["name"],
+        instructions=row.get("instructions"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        asset_count=assets.get("asset_count", 0) if assets else 0,
+    )
+
+
+@router.delete("/knowledge/{pack_id}")
+async def delete_knowledge_pack_route(pack_id: str):
+    ok = await run_in_threadpool(delete_knowledge_pack, pack_id)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete knowledge pack referenced by locked conversations",
+        )
+    return {"status": "success"}
+
+
+@router.post("/knowledge/{pack_id}/assets")
+async def upload_knowledge_asset(pack_id: str, file: UploadFile = File(...)):
+    pack = await run_in_threadpool(get_knowledge_pack, pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Knowledge pack not found")
+    filename = file.filename or "upload"
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    try:
+        asset = await save_and_summarize_asset(pack_id, filename, file_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return asset
+
+
+@router.delete("/knowledge/{pack_id}/assets/{asset_id}")
+async def delete_knowledge_asset_route(pack_id: str, asset_id: str):
+    asset = await run_in_threadpool(delete_knowledge_asset, asset_id)
+    if not asset or asset.get("pack_id") != pack_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    await run_in_threadpool(remove_asset_file, asset)
+    return {"status": "success"}
+
+
+@router.get("/threads/{thread_id}/knowledge", response_model=List[ThreadKnowledgeItem])
+async def get_thread_knowledge_route(thread_id: str):
+    rows = await run_in_threadpool(get_thread_knowledge, thread_id)
+    return [
+        ThreadKnowledgeItem(
+            thread_id=r["thread_id"],
+            knowledge_id=r["knowledge_id"],
+            knowledge_name=r["knowledge_name"],
+            is_locked=bool(r.get("is_locked")),
+            attached_at=r["attached_at"],
+        )
+        for r in rows
+    ]
+
+
 @router.post("/maintenance/prune-checkpoints")
 async def prune_checkpoints():
     """
@@ -2513,6 +2650,7 @@ async def _agent_stream_generator(
     client_location_accuracy_m: Optional[float] = None,
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
+    knowledge_context: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """
     Wrap the Deep Agent `.stream()` generator into Server‑Sent Events (SSE) lines.
@@ -2572,6 +2710,7 @@ async def _agent_stream_generator(
                     client_location_accuracy_m=client_location_accuracy_m,
                     friend_target_id=friend_target_id,
                     friend_target_name=friend_target_name,
+                    knowledge_context=knowledge_context,
                 ):
                     # Token-level LLM chunks (LangGraph stream_mode includes "messages")
                     if "__lg_messages__" in chunk:
@@ -2738,6 +2877,9 @@ async def _agent_stream_generator_with_save(
     client_location_accuracy_m: Optional[float] = None,
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
+    knowledge_context: Optional[str] = None,
+    knowledge_lock_thread_id: Optional[str] = None,
+    knowledge_snapshots: Optional[Dict[str, str]] = None,
 ) -> AsyncIterator[str]:
     """
     Wraps the stream generator to accumulate and save the assistant's response.
@@ -2760,6 +2902,7 @@ async def _agent_stream_generator_with_save(
         client_location_accuracy_m,
         friend_target_id,
         friend_target_name,
+        knowledge_context,
     ):
         yield chunk
         # Parse chunk to extract content
@@ -2783,6 +2926,13 @@ async def _agent_stream_generator_with_save(
     if full_response:
         final_text = "".join(full_response)
         await run_in_threadpool(save_message, thread_id, "assistant", final_text)
+
+    if knowledge_lock_thread_id and knowledge_snapshots is not None and full_response:
+        await run_in_threadpool(
+            lock_thread_knowledge_after_stream,
+            knowledge_lock_thread_id,
+            knowledge_snapshots,
+        )
 
 
 
@@ -2832,6 +2982,9 @@ async def _chat_stream_with_url_previews(
     client_location_accuracy_m: Optional[float],
     friend_target_id: Optional[str],
     friend_target_name: Optional[str],
+    knowledge_context: Optional[str] = None,
+    knowledge_lock_thread_id: Optional[str] = None,
+    knowledge_snapshots: Optional[Dict[str, str]] = None,
 ) -> AsyncIterator[str]:
     """Emit URL preview SSE events, enrich the user message, then stream the agent."""
     agent_message = message
@@ -2860,6 +3013,9 @@ async def _chat_stream_with_url_previews(
         client_location_accuracy_m=client_location_accuracy_m,
         friend_target_id=friend_target_id,
         friend_target_name=friend_target_name,
+        knowledge_context=knowledge_context,
+        knowledge_lock_thread_id=knowledge_lock_thread_id,
+        knowledge_snapshots=knowledge_snapshots,
     ):
         yield chunk
 
@@ -2888,6 +3044,7 @@ async def chat_stream_post(
     speed_mode = chat_message.speed_mode
     friend_target_id = chat_message.friend_target_id
     friend_target_name = chat_message.friend_target_name
+    knowledge_ids = chat_message.knowledge_ids or []
 
     # If clipboard text is provided, append it to the message
     if clipboard_text:
@@ -2898,6 +3055,17 @@ async def chat_stream_post(
 
     # 1. Ensure thread exists (title stays generic until 2nd user message)
     real_thread_id = await run_in_threadpool(create_thread, DEFAULT_THREAD_TITLE, thread_id)
+
+    knowledge_context = ""
+    knowledge_snapshots: Dict[str, str] = {}
+    try:
+        knowledge_context, knowledge_snapshots = await run_in_threadpool(
+            prepare_thread_knowledge_for_stream,
+            real_thread_id,
+            knowledge_ids if knowledge_ids else None,
+        )
+    except Exception as exc:
+        logging.warning("Failed to prepare thread knowledge: %s", exc)
 
     # 2. Save User Message (original text only; previews are injected for the agent at stream time)
     await run_in_threadpool(save_message, real_thread_id, "user", message, image_url)
@@ -2924,6 +3092,9 @@ async def chat_stream_post(
             client_location_accuracy_m=chat_message.client_location_accuracy_m,
             friend_target_id=friend_target_id,
             friend_target_name=friend_target_name,
+            knowledge_context=knowledge_context or None,
+            knowledge_lock_thread_id=real_thread_id if knowledge_context else None,
+            knowledge_snapshots=knowledge_snapshots if knowledge_context else None,
         ),
         media_type="text/event-stream",
         headers=_SSE_CHAT_HEADERS,

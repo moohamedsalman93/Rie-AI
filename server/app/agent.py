@@ -1442,6 +1442,7 @@ class AgentManager:
         client_location_accuracy_m: Optional[float] = None,
         friend_target_id: Optional[str] = None,
         friend_target_name: Optional[str] = None,
+        knowledge_context: Optional[str] = None,
     ) -> AsyncIterator[dict]:
         """Stream the agent with messages or resume with decisions (Async/thread-aware)."""
         # Check if modes changed and re-initialize if needed
@@ -1488,6 +1489,11 @@ class AgentManager:
                 processed_messages.append({
                     "role": "system", 
                     "content": "You are responding via voice. Use natural human fillers like 'hmm', 'uh', 'well', and expressive punctuation like '!' and '?' to sound more conversational. Keep responses relatively concise and engaging. Do not use markdown like bold or code blocks unless requested."
+                })
+            if knowledge_context and knowledge_context.strip():
+                processed_messages.append({
+                    "role": "system",
+                    "content": f"[Custom Knowledge Context]\n{knowledge_context.strip()}",
                 })
 
             for msg in messages:

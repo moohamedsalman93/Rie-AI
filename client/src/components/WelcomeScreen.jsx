@@ -108,7 +108,7 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
                     <div className="space-y-2">
                         <h2 className="text-2xl font-bold text-emerald-400">You are ready</h2>
                         <p className="text-neutral-400 text-sm max-w-sm mx-auto">
-                            Continue to Settings to finish configuration and start chatting.
+                            Open chat and start your first conversation. You can configure providers anytime from Settings.
                         </p>
                     </div>
                 </div>
