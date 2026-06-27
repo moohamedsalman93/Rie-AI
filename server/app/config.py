@@ -335,6 +335,22 @@ class Settings:
         return self._get("EXCLUDE_FROM_CAPTURE", "true").lower() == "true"
 
     @property
+    def FLOATING_CHAT_OPACITY(self) -> float:
+        """The opacity of the floating chat window (between 0.1 and 1.0)."""
+        try:
+            val = self._get("FLOATING_CHAT_OPACITY")
+            if val is not None:
+                return float(val)
+        except Exception:
+            pass
+        return 0.85
+
+    @property
+    def SHOW_BUBBLE(self) -> bool:
+        """Whether to show the floating bubble when minimized."""
+        return self._get("SHOW_BUBBLE", "true").lower() == "true"
+
+    @property
     def TTS_PROVIDER(self) -> str:
         """
         TTS Provider: 'edge-tts' or 'groq'

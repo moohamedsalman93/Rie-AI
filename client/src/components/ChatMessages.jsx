@@ -35,7 +35,12 @@ export function ChatMessages({
   const shouldShowThinkingShimmer = isLoading && !hasStreamingContent;
 
   return (
-    <main className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden bg-neutral-900/70 py-4 min-h-0">
+    <main
+      className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden py-4 min-h-0"
+      style={{
+        backgroundColor: `rgba(0, 0, 0, var(--floating-chat-opacity, 0.7))`
+      }}
+    >
       {activeFriendMeta?.isFriendChat && (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
           <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
@@ -43,6 +48,21 @@ export function ChatMessages({
         </div>
       )}
       <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
+      {(!messages || messages.length === 0) && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.3 }}
+          className="flex-1 flex flex-col items-center justify-center text-center p-6 select-none pointer-events-none my-auto"
+        >
+          <h2 className="text-base font-bold text-white/90 mb-1.5 tracking-wide">
+            How can I help you today?
+          </h2>
+          <p className="text-xs text-neutral-400 max-w-[240px] leading-relaxed">
+            Ask questions, run terminal commands, or attach project context to get started.
+          </p>
+        </motion.div>
+      )}
       <AnimatePresence>
         {messages.map((m) => {
           // Skip empty bot messages that haven't started streaming blocks yet,

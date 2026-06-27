@@ -56,7 +56,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit } from '@tauri-apps/api/event';
 import { WINDOW_SIZES } from '../../constants/appConfig';
 
 function SettingsPage({ onClose, initialTab, initialSubTab }) {
@@ -485,6 +485,11 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
       // 1. Save all changed settings
       for (const [key, value] of Object.entries(pendingChanges)) {
         await updateSetting(key, value);
+        try {
+          await emit("settings-updated", { key, value });
+        } catch (e) {
+          console.error(`Failed to emit settings-updated for ${key}:`, e);
+        }
       }
 
       // 2. Autostart plugin
@@ -2010,6 +2015,59 @@ Separate keywords by commas. Commands containing these words will be blocked."
                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.exclude_from_capture ?? true) ? 'translate-x-6' : 'translate-x-1'
                             }`}
                         />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="premium-card rounded-xl p-5 space-y-4">
+                    <h3 className="text-sm font-bold text-emerald-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
+                      <Sparkles size={16} />
+                      Appearance &amp; Customization
+                    </h3>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Floating Chat Transparency</h4>
+                          <p className="text-[10px] text-neutral-500 max-w-md">
+                            Adjust the transparency/opacity of the floating chat window.
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs font-semibold text-emerald-400">
+                            {Math.round((settings.floating_chat_opacity ?? 0.85) * 100)}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <input
+                          type="range"
+                          min="10"
+                          max="100"
+                          step="5"
+                          value={Math.round((settings.floating_chat_opacity ?? 0.85) * 100)}
+                          onChange={(e) => handleLocalSettingChange('FLOATING_CHAT_OPACITY', String(parseFloat(e.target.value) / 100))}
+                          disabled={isSavingAll}
+                          className="flex-1 accent-emerald-500 h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                        />
+                      </div>
+
+                      <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Show Floating Bubble</h4>
+                          <p className="text-[10px] text-neutral-500 max-w-xs">
+                            Display the floating bubble on your screen when minimized. Disable to hide it completely (restore via system tray or global shortcut Alt+Shift+A).
+                          </p>
+                        </div>
+                        <div
+                          onClick={() => handleLocalSettingChange('SHOW_BUBBLE', String(!(settings.show_bubble ?? true)))}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.show_bubble ?? true) ? 'bg-emerald-500' : 'bg-neutral-700'
+                            }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.show_bubble ?? true) ? 'translate-x-6' : 'translate-x-1'
+                              }`}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>

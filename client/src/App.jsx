@@ -105,6 +105,7 @@ function MainApp() {
   //#region State
   const [isOpen, setIsOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState({});
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [input, setInput] = useState("");
@@ -928,38 +929,49 @@ function MainApp() {
       setIsCapturing(true);
       try {
         const win = getWindow();
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("set_foreground_lock", { lock: false });
-        } catch (e) {
-          console.error("Failed to unlock foreground for capture:", e);
+        const shouldHide = settings.exclude_from_capture !== false;
+
+        if (shouldHide) {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_foreground_lock", { lock: false });
+          } catch (e) {
+            console.error("Failed to unlock foreground for capture:", e);
+          }
+          await win.hide();
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
-        await win.hide();
-        await new Promise(resolve => setTimeout(resolve, 300));
+
         const response = await getScreenshot();
-        await win.show();
-        await win.unminimize();
-        await win.setFocus();
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("set_foreground_lock", { lock: true });
-        } catch (e) {
-          console.error("Failed to lock foreground post-capture:", e);
+
+        if (shouldHide) {
+          await win.show();
+          await win.unminimize();
+          await win.setFocus();
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_foreground_lock", { lock: true });
+          } catch (e) {
+            console.error("Failed to lock foreground post-capture:", e);
+          }
         }
 
         const capturedImage = response?.image || null;
         await performSend(capturedImage);
       } catch (err) {
         console.error("Delayed capture failed:", err);
-        const win = getWindow();
-        await win.show();
-        await win.unminimize();
-        await win.setFocus();
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("set_foreground_lock", { lock: true });
-        } catch (e) {
-          console.error("Failed to lock foreground post-capture-fail:", e);
+        const shouldHide = settings.exclude_from_capture !== false;
+        if (shouldHide) {
+          const win = getWindow();
+          await win.show();
+          await win.unminimize();
+          await win.setFocus();
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_foreground_lock", { lock: true });
+          } catch (e) {
+            console.error("Failed to lock foreground post-capture-fail:", e);
+          }
         }
         await performSend(null);
       } finally {
@@ -1764,6 +1776,71 @@ function MainApp() {
     };
   }, [processFilePath, isLoading]);
 
+  // Listen for settings-updated events from settings window
+  useEffect(() => {
+    const unlistenPromise = listen("settings-updated", (event) => {
+      const { key, value } = event.payload;
+      const field = key.toLowerCase();
+      const parsedValue =
+        key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'HITL_ENABLED' || key === 'LANGSMITH_TRACING' || key === 'CONNECTIVITY_NGROK_ENABLED' || key === 'SHOW_BUBBLE'
+          ? (value === 'true' || value === true)
+          : value;
+
+      setSettings((prev) => ({ ...prev, [field]: parsedValue }));
+
+      if (key === 'EXCLUDE_FROM_CAPTURE') {
+        const applyAffinity = async () => {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_window_capture_excluded", { exclude: parsedValue });
+          } catch (e) {
+            console.error("Failed to update capture affinity in main window:", e);
+          }
+        };
+        applyAffinity();
+      } else if (key === 'SHARE_LOCATION') {
+        setShareLocationEnabled(parsedValue);
+        if (parsedValue) {
+          prefetchClientLocation();
+        }
+      } else if (key === 'WINDOW_MODE') {
+        setWindowMode(parsedValue);
+      } else if (key === 'CHAT_MODE') {
+        setChatMode(parsedValue);
+      } else if (key === 'SPEED_MODE') {
+        setSpeedMode(parsedValue);
+      } else if (key === 'VOICE_REPLY') {
+        voiceReplyRef.current = parsedValue;
+      } else if (key === 'TTS_PROVIDER') {
+        ttsProviderRef.current = parsedValue;
+      } else if (key === 'TTS_VOICE') {
+        ttsVoiceRef.current = parsedValue;
+      }
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  // Listen for tray show events
+  useEffect(() => {
+    let unlisten;
+    const setupListener = async () => {
+      try {
+        unlisten = await listen("tray-show", () => {
+          handleOpen();
+        });
+      } catch (err) {
+        console.error("Failed to listen to tray-show:", err);
+      }
+    };
+    setupListener();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [handleOpen]);
+
 
   // Initial configuration and window mode check
   useEffect(() => {
@@ -1796,7 +1873,9 @@ function MainApp() {
           }
         }
 
-        const settings = await getSettings();
+        const settingsData = await getSettings();
+        setSettings(settingsData);
+        const settings = settingsData;
         const hasAnyKey = settings.google_api_key ||
           settings.groq_api_key ||
           settings.vertex_project ||
@@ -1865,7 +1944,9 @@ function MainApp() {
     if (!isSettingsOpen && !isAppInitializing) {
       const reloadSettings = async () => {
         try {
-          const settings = await getSettings();
+          const settingsData = await getSettings();
+          setSettings(settingsData);
+          const settings = settingsData;
           if (settings.hasOwnProperty('voice_reply')) {
             voiceReplyRef.current = settings.voice_reply;
           }
@@ -2128,6 +2209,10 @@ function MainApp() {
             if (!isOpen) {
               try {
                 const win = getWindow();
+                if (settings.show_bubble === false) {
+                  await win.hide();
+                  return;
+                }
                 const pos = await getWindowPosition();
                 if (side === "right") {
                   const shiftX = WINDOW_SIZES.CHAT.width - WINDOW_SIZES.BUBBLE.width;
@@ -2254,6 +2339,7 @@ function MainApp() {
           ) : (
             <FloatingChatWindow
               key="chat"
+              settings={settings}
               showWelcome={showWelcome}
               setShowWelcome={setShowWelcome}
               isSettingsOpen={isSettingsOpen}

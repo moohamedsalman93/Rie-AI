@@ -238,6 +238,8 @@ class SettingsResponse(BaseModel):
     voice_reply: bool = True
     share_location: bool = True
     exclude_from_capture: bool = True
+    floating_chat_opacity: float = 0.85
+    show_bubble: bool = True
 
     # TTS Settings
     tts_provider: str = "edge-tts"

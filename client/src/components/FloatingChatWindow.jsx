@@ -91,6 +91,7 @@ export function FloatingChatWindow({
   attachedKnowledge = [],
   onAttachKnowledge = () => {},
   onDetachKnowledge = () => {},
+  settings = {},
 }) {
   return (
     <motion.section
@@ -103,6 +104,9 @@ export function FloatingChatWindow({
         ease: [0.23, 1, 0.32, 1] // Custom easeOutQuint for premium feel
       }}
       className="pointer-events-auto w-full relative h-full flex flex-col overflow-hidden bg-transparent rounded-xl z-0"
+      style={{
+        '--floating-chat-opacity': settings?.floating_chat_opacity ?? 0.85
+      }}
     >
       <ChatHeader
         apiStatus={apiStatus}

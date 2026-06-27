@@ -13,35 +13,47 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn set_foreground_lock(window: tauri::Window, lock: bool) -> Result<(), String> {
+fn set_foreground_lock(app: tauri::AppHandle, lock: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use tauri::Manager;
         use windows::Win32::UI::WindowsAndMessaging::{LockSetForegroundWindow, LSFW_LOCK, LSFW_UNLOCK};
         
-        let _hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        let lock_code = if lock { LSFW_LOCK } else { LSFW_UNLOCK };
-        unsafe {
-            LockSetForegroundWindow(lock_code).map_err(|e| e.to_string())?;
+        if let Some(window) = app.get_webview_window("main") {
+            let _hwnd = window.hwnd().map_err(|e| e.to_string())?;
+            let lock_code = if lock { LSFW_LOCK } else { LSFW_UNLOCK };
+            unsafe {
+                LockSetForegroundWindow(lock_code).map_err(|e| e.to_string())?;
+            }
         }
     }
-    let _ = window;
+    let _ = app;
     let _ = lock;
     Ok(())
 }
 
 #[tauri::command]
-fn set_window_capture_excluded(window: tauri::Window, exclude: bool) -> Result<(), String> {
+fn set_window_capture_excluded(app: tauri::AppHandle, exclude: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use tauri::Manager;
         use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE};
         
-        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
-        let affinity = if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
-        unsafe {
-            SetWindowDisplayAffinity(hwnd, affinity).map_err(|e| e.to_string())?;
+        if let Some(window) = app.get_webview_window("main") {
+            let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+            let affinity = if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
+            println!("set_window_capture_excluded called with exclude = {}. Target affinity: {:?}", exclude, affinity);
+            unsafe {
+                if let Err(e) = SetWindowDisplayAffinity(hwnd, affinity) {
+                    println!("Failed to set window display affinity: {:?}", e);
+                    return Err(e.to_string());
+                } else {
+                    println!("Successfully set window display affinity to exclude = {}", exclude);
+                }
+            }
         }
     }
-    let _ = window;
+    let _ = app;
     let _ = exclude;
     Ok(())
 }
@@ -203,6 +215,7 @@ pub fn run() {
                             let _ = window.show();
                             let _ = window.set_always_on_top(true);
                             let _ = window.set_focus();
+                            let _ = window.emit("tray-show", true);
                             #[cfg(target_os = "windows")]
                             {
                                 use windows::Win32::UI::WindowsAndMessaging::{LockSetForegroundWindow, LSFW_LOCK};

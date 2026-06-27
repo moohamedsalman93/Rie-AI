@@ -624,6 +624,8 @@ async def get_settings():
         voice_reply=settings.VOICE_REPLY,
         share_location=settings.SHARE_LOCATION,
         exclude_from_capture=settings.EXCLUDE_FROM_CAPTURE,
+        floating_chat_opacity=settings.FLOATING_CHAT_OPACITY,
+        show_bubble=settings.SHOW_BUBBLE,
         rie_access_token=mask_key(settings.RIE_ACCESS_TOKEN),
         tts_provider=settings.TTS_PROVIDER,
         tts_voice=settings.TTS_VOICE,
@@ -675,7 +677,7 @@ async def update_settings(data: SettingsUpdate):
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
-        "VOICE_REPLY", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
+        "VOICE_REPLY", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
         "OLLAMA_MODEL", "OLLAMA_API_URL", "OLLAMA_API_KEY", "EXTERNAL_APIS",
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
         "SUBAGENTS_CONFIG",
@@ -708,6 +710,17 @@ async def update_settings(data: SettingsUpdate):
                 detail="WEB_SEARCH_PROVIDER must be 'tavily', 'brave', or 'duckduckgo'",
             )
         value_to_store = provider
+    elif data.key == "FLOATING_CHAT_OPACITY":
+        try:
+            val = float(data.value)
+            if not (0.1 <= val <= 1.0):
+                raise ValueError()
+            value_to_store = str(val)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="FLOATING_CHAT_OPACITY must be a float between 0.1 and 1.0",
+            )
     else:
         value_to_store = data.value
 
