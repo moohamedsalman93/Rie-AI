@@ -237,6 +237,7 @@ class SettingsResponse(BaseModel):
     langsmith_endpoint: str = "https://api.smith.langchain.com"
     voice_reply: bool = True
     share_location: bool = True
+    exclude_from_capture: bool = True
 
     # TTS Settings
     tts_provider: str = "edge-tts"

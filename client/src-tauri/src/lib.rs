@@ -12,6 +12,41 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[tauri::command]
+fn set_foreground_lock(window: tauri::Window, lock: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{LockSetForegroundWindow, LSFW_LOCK, LSFW_UNLOCK};
+        
+        let _hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let lock_code = if lock { LSFW_LOCK } else { LSFW_UNLOCK };
+        unsafe {
+            LockSetForegroundWindow(lock_code).map_err(|e| e.to_string())?;
+        }
+    }
+    let _ = window;
+    let _ = lock;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_capture_excluded(window: tauri::Window, exclude: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE};
+        
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let affinity = if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
+        unsafe {
+            SetWindowDisplayAffinity(hwnd, affinity).map_err(|e| e.to_string())?;
+        }
+    }
+    let _ = window;
+    let _ = exclude;
+    Ok(())
+}
+
+
 struct BackendState(std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
 fn is_backend_running() -> bool {
@@ -101,6 +136,33 @@ pub fn run() {
             use tauri_plugin_shell::ShellExt;
             use tauri_plugin_deep_link::DeepLinkExt;
 
+            // Create main window programmatically
+            let _window = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("Rie-AI")
+            .inner_size(360.0, 520.0)
+            .resizable(false)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .shadow(false)
+            .skip_taskbar(true)
+            .focused(false)
+            .build()?;
+
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE};
+                if let Ok(hwnd) = _window.hwnd() {
+                    unsafe {
+                        let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+                    }
+                }
+            }
+
             #[cfg(desktop)]
             {
                 let handle = app.handle().clone();
@@ -139,7 +201,17 @@ pub fn run() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.set_always_on_top(true);
                             let _ = window.set_focus();
+                            #[cfg(target_os = "windows")]
+                            {
+                                use windows::Win32::UI::WindowsAndMessaging::{LockSetForegroundWindow, LSFW_LOCK};
+                                if window.hwnd().is_ok() {
+                                    unsafe {
+                                        let _ = LockSetForegroundWindow(LSFW_LOCK);
+                                    }
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -197,6 +269,8 @@ pub fn run() {
             audio::start_native_recording,
             audio::stop_native_recording,
             location::get_native_location,
+            set_foreground_lock,
+            set_window_capture_excluded,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -928,12 +928,24 @@ function MainApp() {
       setIsCapturing(true);
       try {
         const win = getWindow();
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("set_foreground_lock", { lock: false });
+        } catch (e) {
+          console.error("Failed to unlock foreground for capture:", e);
+        }
         await win.hide();
         await new Promise(resolve => setTimeout(resolve, 300));
         const response = await getScreenshot();
         await win.show();
         await win.unminimize();
         await win.setFocus();
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("set_foreground_lock", { lock: true });
+        } catch (e) {
+          console.error("Failed to lock foreground post-capture:", e);
+        }
 
         const capturedImage = response?.image || null;
         await performSend(capturedImage);
@@ -941,6 +953,14 @@ function MainApp() {
         console.error("Delayed capture failed:", err);
         const win = getWindow();
         await win.show();
+        await win.unminimize();
+        await win.setFocus();
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("set_foreground_lock", { lock: true });
+        } catch (e) {
+          console.error("Failed to lock foreground post-capture-fail:", e);
+        }
         await performSend(null);
       } finally {
         setIsCapturing(false);
@@ -1433,13 +1453,26 @@ function MainApp() {
               if (!isOpen) {
                 await handleOpen();
               } else {
-                await getWindow().setFocus();
+                const win = getWindow();
+                await win.setFocus();
+                try {
+                  const { invoke } = await import("@tauri-apps/api/core");
+                  await invoke("set_foreground_lock", { lock: true });
+                } catch (e) {
+                  console.error("Failed to lock foreground on schedule notification:", e);
+                }
               }
             } else {
               const win = getWindow();
               await win.show();
               await win.unminimize();
               await win.setFocus();
+              try {
+                const { invoke } = await import("@tauri-apps/api/core");
+                await invoke("set_foreground_lock", { lock: true });
+              } catch (e) {
+                console.error("Failed to lock foreground on schedule notification:", e);
+              }
             }
           } catch (e) {
             console.warn("Failed to open/focus window for schedule notification:", e);
@@ -1794,6 +1827,15 @@ function MainApp() {
           setShareLocationEnabled(settings.share_location);
           if (settings.share_location) {
             prefetchClientLocation();
+          }
+        }
+
+        if (settings.hasOwnProperty('exclude_from_capture')) {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_window_capture_excluded", { exclude: settings.exclude_from_capture });
+          } catch (e) {
+            console.error("Failed to apply capture exclusion preference:", e);
           }
         }
 

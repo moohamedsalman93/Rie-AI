@@ -41,10 +41,4 @@ export const getToolDisplayName = (name) => {
     .join(' ');
 };
 
-export const initialMessages = [
-  {
-    id: 1,
-    from: "bot",
-    blocks: [{ type: "text", text: "Hey! I'm Rie-AI, your floating chat assistant. Drag me by the top bar, or minimize me to a bubble. How can I help you today?" }],
-  },
-];
+export const initialMessages = [];

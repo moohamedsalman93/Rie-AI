@@ -46,6 +46,8 @@ hound = "3.5"
 windows = { version = "0.61", features = [
     "Devices_Geolocation",
     "Foundation",
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 

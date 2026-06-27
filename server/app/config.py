@@ -330,6 +330,11 @@ class Settings:
         return self._get("SHARE_LOCATION", "true").lower() == "true"
 
     @property
+    def EXCLUDE_FROM_CAPTURE(self) -> bool:
+        """Whether the application window is excluded from screen capture."""
+        return self._get("EXCLUDE_FROM_CAPTURE", "true").lower() == "true"
+
+    @property
     def TTS_PROVIDER(self) -> str:
         """
         TTS Provider: 'edge-tts' or 'groq'

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -134,6 +134,12 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
   const [embeddingDownloadProgress, setEmbeddingDownloadProgress] = useState(null);
   const [embeddingDownloading, setEmbeddingDownloading] = useState(false);
   const [embeddingDownloadError, setEmbeddingDownloadError] = useState(null);
+
+  // Unsaved changes states
+  const [pendingChanges, setPendingChanges] = useState({});
+  const [pendingAutoStart, setPendingAutoStart] = useState(null);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  const [isSavingAll, setIsSavingAll] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -308,9 +314,9 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
     );
   };
 
-  const loadSettings = async () => {
+  const loadSettings = async (showSpinner = true) => {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const data = await getSettings(false); // Always load masked by default
       setSettings(data);
       if (data.hasOwnProperty('share_location')) {
@@ -352,7 +358,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
       console.error("Settings load error:", err);
       setError("Failed to load settings: " + (err.message || String(err)));
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
@@ -413,63 +419,138 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
     }
   }, [selectedProvider]);
 
-  const handleSaveSetting = async (key, value) => {
-    try {
-      setSavingKey(key);
-      await updateSetting(key, value);
+  const handleLocalSettingChange = (key, value) => {
+    setPendingChanges(prev => ({ ...prev, [key]: value }));
 
-      // Update local state (API fields are snake_case, e.g. TAVILY_API_KEY -> tavily_api_key)
-      const field = key.toLowerCase();
-      const parsedValue =
-        key === 'SHARE_LOCATION' ? value === 'true' || value === true : value;
-      setSettings(prev => ({ ...prev, [field]: parsedValue }));
-      if (key === 'SHARE_LOCATION') {
-        setShareLocationEnabled(parsedValue);
-        if (parsedValue) {
-          prefetchClientLocation();
-        }
+    const field = key.toLowerCase();
+    let parsedValue = value;
+    if (key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'LANGSMITH_TRACING') {
+      parsedValue = (value === 'true' || value === true);
+    } else if (key === 'MCP_SERVERS' || key === 'EXTERNAL_APIS' || key === 'ENABLED_TOOLS') {
+      try {
+        parsedValue = typeof value === 'string' ? JSON.parse(value) : value;
+      } catch (e) {
+        console.error(`Failed to parse local update for ${key}:`, e);
       }
+    }
 
-      // Auto-set LLM_PROVIDER if it's not set and we just saved a key for one
-      if (!settings.llm_provider) {
-        let autoProvider = null;
-        if (key === 'GOOGLE_API_KEY') autoProvider = 'gemini';
-        else if (key === 'GROQ_API_KEY') autoProvider = 'groq';
-        else if (key === 'OPENAI_API_KEY') autoProvider = 'openai';
-        else if (key === 'VERTEX_PROJECT' || key === 'VERTEX_CREDENTIALS_PATH') autoProvider = 'vertex';
-        // Rie is hardcoded, no auto-provider selection needed
+    setSettings(prev => ({ ...prev, [field]: parsedValue }));
 
-        if (autoProvider) {
-          console.log(`Auto-setting LLM_PROVIDER to ${autoProvider}`);
-          await updateSetting('LLM_PROVIDER', autoProvider);
-          setSelectedProvider(autoProvider);
-        }
+    if (key === 'LLM_PROVIDER') {
+      setSelectedProvider(value);
+    }
+
+    if (key === 'ENABLED_TOOLS') {
+      try {
+        const toolsList = typeof value === 'string' ? JSON.parse(value) : value;
+        setEnabledTools(toolsList);
+      } catch (e) {}
+    }
+
+    // Auto-set LLM_PROVIDER if not set
+    if (!settings.llm_provider && !pendingChanges.LLM_PROVIDER) {
+      let autoProvider = null;
+      if (key === 'GOOGLE_API_KEY') autoProvider = 'gemini';
+      else if (key === 'GROQ_API_KEY') autoProvider = 'groq';
+      else if (key === 'OPENAI_API_KEY') autoProvider = 'openai';
+      else if (key === 'VERTEX_PROJECT' || key === 'VERTEX_CREDENTIALS_PATH') autoProvider = 'vertex';
+
+      if (autoProvider) {
+        setPendingChanges(prev => ({ ...prev, LLM_PROVIDER: autoProvider }));
+        setSelectedProvider(autoProvider);
+        setSettings(prev => ({ ...prev, llm_provider: autoProvider }));
       }
+    }
 
-      if (!settings.web_search_provider) {
-        if (key === 'TAVILY_API_KEY') {
-          await updateSetting('WEB_SEARCH_PROVIDER', 'tavily');
-        } else if (key === 'BRAVE_SEARCH_API_KEY') {
-          await updateSetting('WEB_SEARCH_PROVIDER', 'brave');
-        }
+    // Auto-set WEB_SEARCH_PROVIDER if not set
+    if (!settings.web_search_provider && !pendingChanges.WEB_SEARCH_PROVIDER) {
+      if (key === 'TAVILY_API_KEY') {
+        setPendingChanges(prev => ({ ...prev, WEB_SEARCH_PROVIDER: 'tavily' }));
+        setSettings(prev => ({ ...prev, web_search_provider: 'tavily' }));
+      } else if (key === 'BRAVE_SEARCH_API_KEY') {
+        setPendingChanges(prev => ({ ...prev, WEB_SEARCH_PROVIDER: 'brave' }));
+        setSettings(prev => ({ ...prev, web_search_provider: 'brave' }));
       }
-
-      // Reload to get properly masked values and server-side validation
-      await loadSettings();
-
-      if (key === 'GOOGLE_API_KEY' && selectedProvider === 'gemini') {
-        fetchGeminiModels();
-      }
-    } catch (err) {
-      setError(`Failed to save ${key}: ${err.message}`);
-    } finally {
-      setSavingKey(null);
     }
   };
 
-  const handleProviderChange = async (provider) => {
-    setSelectedProvider(provider);
-    await handleSaveSetting('LLM_PROVIDER', provider);
+  const handleProviderChange = (provider) => {
+    handleLocalSettingChange('LLM_PROVIDER', provider);
+  };
+
+  const handleSaveAll = async () => {
+    setIsSavingAll(true);
+    setError(null);
+    try {
+      // 1. Save all changed settings
+      for (const [key, value] of Object.entries(pendingChanges)) {
+        await updateSetting(key, value);
+      }
+
+      // 2. Autostart plugin
+      if (pendingAutoStart !== null) {
+        const { enable, disable } = await import('@tauri-apps/plugin-autostart');
+        if (pendingAutoStart) {
+          await enable();
+        } else {
+          await disable();
+        }
+        setAutoStartEnabled(pendingAutoStart);
+        setPendingAutoStart(null);
+      }
+
+      // 3. Apply side-effects for applied changes
+      if ('SHARE_LOCATION' in pendingChanges) {
+        const parsedVal = pendingChanges.SHARE_LOCATION === 'true' || pendingChanges.SHARE_LOCATION === true;
+        setShareLocationEnabled(parsedVal);
+        if (parsedVal) {
+          prefetchClientLocation();
+        }
+      }
+      if ('EXCLUDE_FROM_CAPTURE' in pendingChanges) {
+        const parsedVal = pendingChanges.EXCLUDE_FROM_CAPTURE === 'true' || pendingChanges.EXCLUDE_FROM_CAPTURE === true;
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("set_window_capture_excluded", { exclude: parsedVal });
+        } catch (e) {
+          console.error("Failed to update capture exclusion:", e);
+        }
+      }
+
+      // 4. Fetch models if keys changed
+      if ('GOOGLE_API_KEY' in pendingChanges && selectedProvider === 'gemini') {
+        fetchGeminiModels();
+      }
+      if ('OLLAMA_API_KEY' in pendingChanges && selectedProvider === 'ollama') {
+        fetchOllamaModels();
+      }
+
+      // 5. Clear local pending changes
+      setPendingChanges({});
+
+      // 6. Reload settings from backend to get properly masked / validated state
+      await loadSettings(false);
+    } catch (err) {
+      console.error("Failed to save changes:", err);
+      setError("Failed to save changes: " + (err.message || String(err)));
+    } finally {
+      setIsSavingAll(false);
+    }
+  };
+
+  const handleDiscard = () => {
+    setPendingChanges({});
+    setPendingAutoStart(null);
+    loadSettings(false);
+  };
+
+  const handleClose = () => {
+    const isDirty = Object.keys(pendingChanges).length > 0 || pendingAutoStart !== null;
+    if (isDirty) {
+      setDiscardConfirmOpen(true);
+    } else {
+      onClose();
+    }
   };
 
   const handleInitPairing = async () => {
@@ -769,13 +850,12 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
     }
   };
 
-  const handleToolToggle = async (toolId) => {
+  const handleToolToggle = (toolId) => {
     const newTools = enabledTools.includes(toolId)
       ? enabledTools.filter(t => t !== toolId)
       : [...enabledTools, toolId];
 
-    setEnabledTools(newTools);
-    await handleSaveSetting('ENABLED_TOOLS', JSON.stringify(newTools));
+    handleLocalSettingChange('ENABLED_TOOLS', JSON.stringify(newTools));
   };
 
   const handleOpenPlannerWindow = async () => {
@@ -823,19 +903,9 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
     return 'running';
   })();
 
-  const handleAutoStartToggle = async () => {
-    try {
-      const newState = !autoStartEnabled;
-      if (newState) {
-        await enable();
-      } else {
-        await disable();
-      }
-      setAutoStartEnabled(newState);
-    } catch (err) {
-      console.error("Failed to toggle auto-start:", err);
-      setError("Failed to change auto-start setting: " + err.message);
-    }
+  const handleAutoStartToggle = () => {
+    const nextVal = pendingAutoStart !== null ? !pendingAutoStart : !autoStartEnabled;
+    setPendingAutoStart(nextVal);
   };
 
   return (
@@ -853,7 +923,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={onClose}
+            onClick={handleClose}
             onMouseDown={(e) => e.stopPropagation()}
             className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-semibold tracking-wide transition-all group"
             title="Close settings"
@@ -958,8 +1028,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                           label="Google API Key"
                           dbKey="GOOGLE_API_KEY"
                           value={settings.google_api_key}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "GOOGLE_API_KEY"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           isSecret
                         />
                         <div className="space-y-1">
@@ -967,9 +1037,9 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                           <div className="flex gap-2">
                             <select
                               value={settings.gemini_model || ''}
-                              onChange={(e) => handleSaveSetting('GEMINI_MODEL', e.target.value)}
+                              onChange={(e) => handleLocalSettingChange('GEMINI_MODEL', e.target.value)}
                               className="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer"
-                              disabled={savingKey === "GEMINI_MODEL" || loadingGeminiModels}
+                              disabled={isSavingAll || loadingGeminiModels}
                             >
                               <option value="" disabled>{loadingGeminiModels ? 'Loading models...' : 'Select a model'}</option>
                               {geminiModels.length > 0 && geminiModels.map(model => (
@@ -1005,31 +1075,31 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                           label="Project ID"
                           dbKey="VERTEX_PROJECT"
                           value={settings.vertex_project}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "VERTEX_PROJECT"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                         />
                         <SettingInput
                           label="Location"
                           dbKey="VERTEX_LOCATION"
                           value={settings.vertex_location}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "VERTEX_LOCATION"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="us-central1"
                         />
                         <SettingInput
                           label="Credentials JSON Path"
                           dbKey="VERTEX_CREDENTIALS_PATH"
                           value={settings.vertex_credentials_path}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "VERTEX_CREDENTIALS_PATH"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="C:\path\to\credentials.json"
                         />
                         <SettingInput
                           label="Model Name"
                           dbKey="VERTEX_MODEL"
                           value={settings.vertex_model}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "VERTEX_MODEL"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="gemini-1.5-pro"
                         />
                       </>
@@ -1041,8 +1111,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                           label="Groq API Key"
                           dbKey="GROQ_API_KEY"
                           value={settings.groq_api_key}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "GROQ_API_KEY"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           isSecret
                           type="textarea"
                           placeholder="Enter keys separated by commas or lines:
@@ -1057,8 +1127,8 @@ gsk_key2,
                           label="Model Name"
                           dbKey="GROQ_MODEL"
                           value={settings.groq_model}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "GROQ_MODEL"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="llama-3.1-70b-versatile"
                         />
                       </>
@@ -1070,8 +1140,8 @@ gsk_key2,
                           label="OpenAI API Key"
                           dbKey="OPENAI_API_KEY"
                           value={settings.openai_api_key}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "OPENAI_API_KEY"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           isSecret
                           type="textarea"
                           placeholder="Enter keys separated by commas or lines:
@@ -1086,16 +1156,16 @@ key2,
                           label="Base URL"
                           dbKey="OPENAI_BASE_URL"
                           value={settings.openai_base_url}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "OPENAI_BASE_URL"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="https://api.z.ai/api/paas/v4/"
                         />
                         <SettingInput
                           label="Model Name"
                           dbKey="OPENAI_MODEL"
                           value={settings.openai_model}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "OPENAI_MODEL"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="glm-4.5-flash"
                         />
                       </>
@@ -1215,8 +1285,8 @@ key2,
                           label="Ollama Endpoint"
                           dbKey="OLLAMA_API_URL"
                           value={settings.ollama_api_url}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "OLLAMA_API_URL"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="http://localhost:11434"
                           allowEmpty
                         />
@@ -1227,8 +1297,8 @@ key2,
                           label="Ollama API Key (optional)"
                           dbKey="OLLAMA_API_KEY"
                           value={settings.ollama_api_key}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "OLLAMA_API_KEY"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           isSecret
                           placeholder="For secured or remote Ollama instances"
                         />
@@ -1237,9 +1307,9 @@ key2,
                           <div className="flex gap-2">
                             <select
                               value={settings.ollama_model || ''}
-                              onChange={(e) => handleSaveSetting('OLLAMA_MODEL', e.target.value)}
+                              onChange={(e) => handleLocalSettingChange('OLLAMA_MODEL', e.target.value)}
                               className="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer"
-                              disabled={savingKey === "OLLAMA_MODEL" || loadingOllamaModels}
+                              disabled={isSavingAll || loadingOllamaModels}
                             >
                               <option value="" disabled>{loadingOllamaModels ? 'Loading models...' : 'Select a model'}</option>
                               {ollamaModels.length > 0 && ollamaModels.map(model => (
@@ -1362,8 +1432,8 @@ key2,
                       <div className="pt-2">
                         <McpServersManager
                           servers={settings.mcp_servers || []}
-                          onSave={(newServers) => handleSaveSetting('MCP_SERVERS', JSON.stringify(newServers))}
-                          isSaving={savingKey === 'MCP_SERVERS'}
+                          onSave={(newServers) => handleLocalSettingChange('MCP_SERVERS', JSON.stringify(newServers))}
+                          isSaving={isSavingAll}
                         />
                       </div>
                     </div>
@@ -1388,8 +1458,8 @@ key2,
                       <div className="pt-2">
                         <ExternalApisManager
                           apis={settings.external_apis || []}
-                          onSave={(updatedApis) => handleSaveSetting('EXTERNAL_APIS', JSON.stringify(updatedApis))}
-                          isSaving={savingKey === 'EXTERNAL_APIS'}
+                          onSave={(updatedApis) => handleLocalSettingChange('EXTERNAL_APIS', JSON.stringify(updatedApis))}
+                          isSaving={isSavingAll}
                         />
                       </div>
                     </div>
@@ -1420,7 +1490,7 @@ key2,
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => handleSaveSetting('AGENT_ORCHESTRATION_MODE', 'solo')}
+                          onClick={() => handleLocalSettingChange('AGENT_ORCHESTRATION_MODE', 'solo')}
                           className={`px-3 py-1.5 rounded-lg text-xs border ${
                             (settings.agent_orchestration_mode || 'team') === 'solo'
                               ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
@@ -1431,7 +1501,7 @@ key2,
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleSaveSetting('AGENT_ORCHESTRATION_MODE', 'team')}
+                          onClick={() => handleLocalSettingChange('AGENT_ORCHESTRATION_MODE', 'team')}
                           className={`px-3 py-1.5 rounded-lg text-xs border ${
                             (settings.agent_orchestration_mode || 'team') === 'team'
                               ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
@@ -1574,7 +1644,7 @@ key2,
                               <span className="text-[11px] font-medium text-neutral-400">Expose tunnel</span>
                               <button
                                 type="button"
-                                onClick={() => handleSaveSetting('CONNECTIVITY_NGROK_ENABLED', String(!settings.connectivity_ngrok_enabled))}
+                                onClick={() => handleLocalSettingChange('CONNECTIVITY_NGROK_ENABLED', String(!settings.connectivity_ngrok_enabled))}
                                 className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all duration-300 ${
                                   settings.connectivity_ngrok_enabled
                                     ? 'bg-emerald-700/85'
@@ -1600,7 +1670,7 @@ key2,
                               <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                 <p className="min-w-0 break-all font-mono text-[11px] leading-snug text-neutral-200">
                                   {ngrokStatus?.public_url || (
-                                    <span className="text-neutral-500">Not assigned â€” run tunnel config when you are ready.</span>
+                                    <span className="text-neutral-500">Not assigned — run tunnel config when you are ready.</span>
                                   )}
                                 </p>
                                 {ngrokStatus?.public_url ? (
@@ -1677,8 +1747,8 @@ key2,
                               label="Device display name"
                               dbKey="CONNECTIVITY_DEVICE_NAME"
                               value={settings.connectivity_device_name ?? connectivityIdentity?.name ?? ''}
-                              onSave={handleSaveSetting}
-                              isSaving={savingKey === 'CONNECTIVITY_DEVICE_NAME'}
+                              onSave={handleLocalSettingChange}
+                              isSaving={isSavingAll}
                               placeholder="e.g. My Rie"
                               allowEmpty={false}
                             />
@@ -1883,8 +1953,8 @@ key2,
                       label="Terminal Restrictions"
                       dbKey="TERMINAL_RESTRICTIONS"
                       value={settings.terminal_restrictions}
-                      onSave={handleSaveSetting}
-                      isSaving={savingKey === "TERMINAL_RESTRICTIONS"}
+                      onSave={handleLocalSettingChange}
+                      isSaving={isSavingAll}
                       type="textarea"
                       placeholder="e.g. rm, del, format, curl, wget
 Separate keywords by commas. Commands containing these words will be blocked."
@@ -1908,14 +1978,38 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       <div className=" max-w-xs">
                         <select
                           value={settings.hitl_mode || (settings.hitl_enabled ? 'always' : 'disable')}
-                          onChange={(e) => handleSaveSetting('HITL_MODE', e.target.value)}
-                          disabled={savingKey === "HITL_MODE"}
+                          onChange={(e) => handleLocalSettingChange('HITL_MODE', e.target.value)}
+                          disabled={isSavingAll}
                           className="w-full rounded-lg border border-neutral-700 bg-neutral-900 text-neutral-200 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 disabled:opacity-70 disabled:cursor-not-allowed"
                         >
                           <option value="disable">Disable</option>
                           <option value="always">Always ask</option>
                           <option value="let_decide">Let AI decide</option>
                         </select>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
+                          <Shield size={16} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-neutral-200">Screen Privacy</h4>
+                          <p className="text-[11px] text-neutral-500 max-w-xs">
+                            Exclude the application from screenshots and screen recordings to protect your private chat data.
+                          </p>
+                        </div>
+                      </div>
+                      <div
+                        onClick={() => handleLocalSettingChange('EXCLUDE_FROM_CAPTURE', String(!(settings.exclude_from_capture ?? true)))}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.exclude_from_capture ?? true) ? 'bg-emerald-500' : 'bg-neutral-700'
+                          }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.exclude_from_capture ?? true) ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1930,11 +2024,11 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <h4 className="text-sm font-medium text-neutral-200">Share location</h4>
                         <p className="text-[10px] text-neutral-500 max-w-md">
                           Send approximate GPS with chat messages so Rie can answer nearby places, weather, and &quot;where am I&quot; questions.
-                          The first time, Windows will ask for location access for Rie-AI (Settings â†’ Privacy â†’ Location).
+                          The first time, Windows will ask for location access for Rie-AI (Settings → Privacy → Location).
                         </p>
                       </div>
                       <div
-                        onClick={() => handleSaveSetting('SHARE_LOCATION', String(!(settings.share_location ?? true)))}
+                        onClick={() => handleLocalSettingChange('SHARE_LOCATION', String(!(settings.share_location ?? true)))}
                         className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.share_location ?? true) ? 'bg-emerald-500' : 'bg-neutral-700'
                           }`}
                       >
@@ -1957,12 +2051,14 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </div>
                       <div
                         onClick={handleAutoStartToggle}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-colors ${autoStartEnabled ? 'bg-emerald-500' : 'bg-neutral-700'
-                          }`}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-colors ${
+                          (pendingAutoStart !== null ? pendingAutoStart : autoStartEnabled) ? 'bg-emerald-500' : 'bg-neutral-700'
+                        }`}
                       >
                         <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${autoStartEnabled ? 'translate-x-6' : 'translate-x-1'
-                            }`}
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            (pendingAutoStart !== null ? pendingAutoStart : autoStartEnabled) ? 'translate-x-6' : 'translate-x-1'
+                          }`}
                         />
                       </div>
                     </div>
@@ -2033,7 +2129,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                           <button
                             key={id}
                             type="button"
-                            onClick={() => handleSaveSetting('WEB_SEARCH_PROVIDER', id)}
+                            onClick={() => handleLocalSettingChange('WEB_SEARCH_PROVIDER', id)}
                             className={`px-4 py-2 rounded-lg border text-sm transition-all ${getWebSearchProvider(settings) === id
                               ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-100'
                               : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600'}`}
@@ -2060,8 +2156,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             label={`${provider.label} API Key`}
                             dbKey={provider.keyDb}
                             value={settings[provider.keyField]}
-                            onSave={handleSaveSetting}
-                            isSaving={savingKey === provider.keyDb}
+                            onSave={handleLocalSettingChange}
+                            isSaving={isSavingAll}
                             isSecret
                             placeholder={provider.placeholder}
                           />
@@ -2097,7 +2193,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         </div>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => handleSaveSetting('EMBEDDING_SOURCE', 'bundled')}
+                            onClick={() => handleLocalSettingChange('EMBEDDING_SOURCE', 'bundled')}
                             className={`px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
                               (settings.embedding_source || 'bundled') === 'bundled'
                                 ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-100'
@@ -2107,7 +2203,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             Bundled
                           </button>
                           <button
-                            onClick={() => handleSaveSetting('EMBEDDING_SOURCE', 'ollama')}
+                            onClick={() => handleLocalSettingChange('EMBEDDING_SOURCE', 'ollama')}
                             className={`px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
                               (settings.embedding_source || 'bundled') === 'ollama'
                                 ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-100'
@@ -2188,8 +2284,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             label="Bundled Model Path (optional)"
                             dbKey="EMBEDDING_MODEL_PATH"
                             value={settings.embedding_model_path}
-                            onSave={handleSaveSetting}
-                            isSaving={savingKey === "EMBEDDING_MODEL_PATH"}
+                            onSave={handleLocalSettingChange}
+                            isSaving={isSavingAll}
                             placeholder="Leave empty to use downloaded model"
                             allowEmpty
                           />
@@ -2224,7 +2320,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         </div>
                       </div>
                       <div
-                        onClick={() => handleSaveSetting('VOICE_REPLY', String(!(settings.voice_reply)))}
+                        onClick={() => handleLocalSettingChange('VOICE_REPLY', String(!(settings.voice_reply)))}
                         className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-colors ${settings.voice_reply ? 'bg-emerald-500' : 'bg-neutral-700'
                           }`}
                       >
@@ -2240,7 +2336,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     <h4 className="text-sm font-medium text-neutral-300">TTS Provider</h4>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleSaveSetting('TTS_PROVIDER', 'edge-tts')}
+                        onClick={() => handleLocalSettingChange('TTS_PROVIDER', 'edge-tts')}
                         className={`px-4 py-2 rounded-lg border text-sm transition-all ${settings.tts_provider === 'edge-tts'
                           ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-100'
                           : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600'}`}
@@ -2248,7 +2344,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         Edge TTS (Neural)
                       </button>
                       <button
-                        onClick={() => settings.groq_api_key ? handleSaveSetting('TTS_PROVIDER', 'groq') : null}
+                        onClick={() => settings.groq_api_key ? handleLocalSettingChange('TTS_PROVIDER', 'groq') : null}
                         disabled={!settings.groq_api_key}
                         title={!settings.groq_api_key ? 'Add Groq API key in AI Provider settings to enable' : ''}
                         className={`px-4 py-2 rounded-lg border text-sm transition-all ${!settings.groq_api_key
@@ -2271,7 +2367,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                           }}
                           className="text-emerald-400 hover:text-emerald-300 font-semibold shrink-0"
                         >
-                          Go to Assistant â†’
+                          Go to Assistant →
                         </button>
                       </div>
                     )}
@@ -2290,7 +2386,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                           {['hannah', 'troy'].map(v => (
                             <button
                               key={v}
-                              onClick={() => handleSaveSetting('TTS_VOICE', v)}
+                              onClick={() => handleLocalSettingChange('TTS_VOICE', v)}
                               className={`px-4 py-3 rounded-xl border text-left transition-all ${settings.tts_voice === v
                                 ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-100'
                                 : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:bg-neutral-800'}`}
@@ -2310,7 +2406,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                           ].map(v => (
                             <button
                               key={v.id}
-                              onClick={() => handleSaveSetting('TTS_VOICE', v.id)}
+                              onClick={() => handleLocalSettingChange('TTS_VOICE', v.id)}
                               className={`px-4 py-3 rounded-xl border text-left transition-all ${settings.tts_voice === v.id
                                 ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-100'
                                 : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:bg-neutral-800'}`}
@@ -2414,7 +2510,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <h4 className="text-sm font-bold text-white tracking-wide uppercase">LangSmith Tracing</h4>
                       </div>
                       <div
-                        onClick={() => handleSaveSetting('LANGSMITH_TRACING', String(!(settings.langsmith_tracing)))}
+                        onClick={() => handleLocalSettingChange('LANGSMITH_TRACING', String(!(settings.langsmith_tracing)))}
                         className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-all duration-300 ${settings.langsmith_tracing ? 'bg-emerald-500' : 'bg-neutral-800 border border-white/10'
                           }`}
                       >
@@ -2434,8 +2530,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         label="LangSmith API Key"
                         dbKey="LANGSMITH_API_KEY"
                         value={settings.langsmith_api_key}
-                        onSave={handleSaveSetting}
-                        isSaving={savingKey === "LANGSMITH_API_KEY"}
+                        onSave={handleLocalSettingChange}
+                        isSaving={isSavingAll}
                         isSecret
                         placeholder="ls__..."
                       />
@@ -2443,8 +2539,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         label="Project Name"
                         dbKey="LANGSMITH_PROJECT"
                         value={settings.langsmith_project}
-                        onSave={handleSaveSetting}
-                        isSaving={savingKey === "LANGSMITH_PROJECT"}
+                        onSave={handleLocalSettingChange}
+                        isSaving={isSavingAll}
                         placeholder="Rie-AI"
                       />
                       <div className="md:col-span-2">
@@ -2452,8 +2548,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                           label="API Endpoint"
                           dbKey="LANGSMITH_ENDPOINT"
                           value={settings.langsmith_endpoint}
-                          onSave={handleSaveSetting}
-                          isSaving={savingKey === "LANGSMITH_ENDPOINT"}
+                          onSave={handleLocalSettingChange}
+                          isSaving={isSavingAll}
                           placeholder="https://api.smith.langchain.com"
                         />
                       </div>
@@ -2468,6 +2564,45 @@ Separate keywords by commas. Commands containing these words will be blocked."
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {(Object.keys(pendingChanges).length > 0 || pendingAutoStart !== null) && (
+          <motion.div
+            initial={{ y: 50, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 50, opacity: 0 }}
+            className="flex items-center justify-between px-6 py-4 bg-neutral-950 border-t border-white/10 shrink-0 z-40"
+          >
+            <div className="text-sm text-neutral-300">
+              You have unsaved changes.
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleDiscard}
+                className="px-4 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-sm font-medium transition-colors cursor-pointer"
+                disabled={isSavingAll}
+              >
+                Discard
+              </button>
+              <button
+                onClick={handleSaveAll}
+                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.2)] cursor-pointer"
+                disabled={isSavingAll}
+              >
+                {isSavingAll ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <ConfirmationModal
         isOpen={ngrokConfirmOpen}
         onClose={() => setNgrokConfirmOpen(false)}
@@ -2476,6 +2611,22 @@ Separate keywords by commas. Commands containing these words will be blocked."
         message="Rie will download ngrok if needed, then start a tunnel using your token and save the public endpoint."
         confirmText="Install"
         cancelText="Cancel"
+        type="warning"
+      />
+
+      <ConfirmationModal
+        isOpen={discardConfirmOpen}
+        onClose={() => setDiscardConfirmOpen(false)}
+        onConfirm={() => {
+          setDiscardConfirmOpen(false);
+          setPendingChanges({});
+          setPendingAutoStart(null);
+          onClose();
+        }}
+        title="Discard Unsaved Changes?"
+        message="You have unsaved changes. Are you sure you want to close settings without saving?"
+        confirmText="Discard and Close"
+        cancelText="Keep Editing"
         type="warning"
       />
       <AnimatePresence>

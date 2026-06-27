@@ -95,6 +95,7 @@ export function NormalModeLayout({
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
     const isDragging = dragCounter > 0;
     const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0;
+    const isNewChat = !messages || messages.length === 0;
 
     const attachImageFile = (file) => {
         if (!file || !file.type?.startsWith("image/")) return;
@@ -473,161 +474,165 @@ export function NormalModeLayout({
                 </AnimatePresence>
 
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col min-w-0 bg-neutral-950">
+                <div className="flex-1 flex flex-col min-w-0 bg-neutral-950 relative">
                     {/* Messages */}
-                    <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
-                        {activeFriendMeta?.isFriendChat && (
-                            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-                                <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
-                                <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
-                            </div>
-                        )}
-                        <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
-                        <AnimatePresence>
-                            {messages.map((m) => {
-                                if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
-                                    return null;
-                                }
-                                return (
-                                    <motion.div
-                                        key={m.id}
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
-                                    >
-                                        <div className={`flex items-end gap-2 min-w-0 max-w-[85%] ${m.from === 'user' ? 'justify-end' : ''}`}>
-
-                                            {m.from === 'user' && m.error && (
-                                                <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            onOpenMessageInNewChat?.(m);
-                                                        }}
-                                                        className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
-                                                        title="Branch to new chat with history"
-                                                    >
-                                                        <GitBranch size={14} />
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            onDeleteMessage(m.id);
-                                                            onSend(m.text, false, m.image_url);
-                                                        }}
-                                                        className="p-1.5 rounded-lg text-red-400 hover:bg-neutral-800 transition-colors"
-                                                        title="Retry"
-                                                    >
-                                                        <RotateCw size={14} />
-                                                    </button>
-                                                    <div className="relative group/info">
-                                                        <div className="p-1.5 text-red-500 cursor-help">
-                                                            <Info size={14} />
-                                                        </div>
-                                                        <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
-                                                            {m.errorMessage}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {m.from === 'user' && !m.error && (
-                                                <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            onOpenMessageInNewChat?.(m);
-                                                        }}
-                                                        className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
-                                                        title="Branch to new chat with history"
-                                                    >
-                                                        <GitBranch size={14} />
-                                                    </button>
-                                                </div>
-                                            )}
-
-                                            <div className={`min-w-0 max-w-full break-all overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
-                                                ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
-                                                : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
-                                                }`}>
-                                                {m.image_url && (
-                                                    <div className="mb-2 overflow-hidden rounded-lg">
-                                                        <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
-                                                    </div>
-                                                )}
-                                                {m.url_previews?.length > 0 && (
-                                                    <LinkPreview previews={m.url_previews} />
-                                                )}
-                                                {m.clipboard && (
-                                                    <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
-                                                        <div className="flex items-center gap-2 mb-1.5 opacity-80">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
-                                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                            </svg>
-                                                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Clipboard Content</span>
-                                                        </div>
-                                                        <p className="text-[11px] text-neutral-300 line-clamp-4 leading-relaxed font-mono italic">
-                                                            {m.clipboard}
-                                                        </p>
-                                                    </div>
-                                                )}
-                                                {m.from === 'bot' ? (
-                                                    <div className="flex flex-col gap-2">
-                                                        {(m.blocks || [{ type: 'text', text: m.text }]).map((block, idx) => (
-                                                            <div key={idx}>
-                                                                {block.type === 'text' ? (
-                                                                    <MarkdownMessage
-                                                                        content={block.text}
-                                                                        isStreaming={m.id === streamingBotMessageId}
-                                                                        typesWrite={typesWrite}
-                                                                        setTypesWrite={setTypesWrite}
-                                                                    />
-                                                                ) : (
-                                                                    <ToolChip
-                                                                        name={block.name}
-                                                                        content={block.text}
-                                                                        tooltipPlacement={toolTooltipPlacement}
-                                                                    />
-                                                                )}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    m.text
-                                                )}
-                                            </div>
-                                        </div>
-                                        <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
-                                            {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
-                                        </span>
-                                    </motion.div>
-                                );
-                            })}
-                        </AnimatePresence>
-                        {shouldShowThinkingShimmer && (
-                            <motion.div
-                                initial={{ opacity: 0, y: 6 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="flex flex-col items-start w-full"
-                            >
-                                <div className="w-full max-w-[85%] rounded-xl border border-neutral-700/60 bg-neutral-900 px-3.5 py-2.5">
-                                    <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
-                                    <div className="space-y-1.5">
-                                        <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
-                                        <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
-                                    </div>
+                    {!isNewChat ? (
+                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+                            {activeFriendMeta?.isFriendChat && (
+                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                                    <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
+                                    <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
                                 </div>
-                                <span className="mt-1 text-[10px] font-medium text-neutral-600">Assistant is thinking...</span>
-                            </motion.div>
-                        )}
-                        {pendingAction && (
-                            <HITLApproval
-                                hitl={pendingAction}
-                                onDecision={onActionDecision}
-                            />
-                        )}
-                        <div ref={messagesEndRef} />
-                    </main>
+                            )}
+                            <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
+                            <AnimatePresence>
+                                {messages.map((m) => {
+                                    if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
+                                        return null;
+                                    }
+                                    return (
+                                        <motion.div
+                                            key={m.id}
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
+                                        >
+                                            <div className={`flex items-end gap-2 min-w-0 max-w-[85%] ${m.from === 'user' ? 'justify-end' : ''}`}>
+
+                                                {m.from === 'user' && m.error && (
+                                                    <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onOpenMessageInNewChat?.(m);
+                                                            }}
+                                                            className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                            title="Branch to new chat with history"
+                                                        >
+                                                            <GitBranch size={14} />
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onDeleteMessage(m.id);
+                                                                onSend(m.text, false, m.image_url);
+                                                            }}
+                                                            className="p-1.5 rounded-lg text-red-400 hover:bg-neutral-800 transition-colors"
+                                                            title="Retry"
+                                                        >
+                                                            <RotateCw size={14} />
+                                                        </button>
+                                                        <div className="relative group/info">
+                                                            <div className="p-1.5 text-red-500 cursor-help">
+                                                                <Info size={14} />
+                                                            </div>
+                                                            <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
+                                                                {m.errorMessage}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                {m.from === 'user' && !m.error && (
+                                                    <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onOpenMessageInNewChat?.(m);
+                                                            }}
+                                                            className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                            title="Branch to new chat with history"
+                                                        >
+                                                            <GitBranch size={14} />
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                <div className={`min-w-0 max-w-full break-all overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
+                                                    ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
+                                                    : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
+                                                    }`}>
+                                                    {m.image_url && (
+                                                        <div className="mb-2 overflow-hidden rounded-lg">
+                                                            <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
+                                                        </div>
+                                                    )}
+                                                    {m.url_previews?.length > 0 && (
+                                                        <LinkPreview previews={m.url_previews} />
+                                                    )}
+                                                    {m.clipboard && (
+                                                        <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
+                                                            <div className="flex items-center gap-2 mb-1.5 opacity-80">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
+                                                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                                </svg>
+                                                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Clipboard Content</span>
+                                                            </div>
+                                                            <p className="text-[11px] text-neutral-300 line-clamp-4 leading-relaxed font-mono italic">
+                                                                {m.clipboard}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                    {m.from === 'bot' ? (
+                                                        <div className="flex flex-col gap-2">
+                                                            {(m.blocks || [{ type: 'text', text: m.text }]).map((block, idx) => (
+                                                                <div key={idx}>
+                                                                    {block.type === 'text' ? (
+                                                                        <MarkdownMessage
+                                                                            content={block.text}
+                                                                            isStreaming={m.id === streamingBotMessageId}
+                                                                            typesWrite={typesWrite}
+                                                                            setTypesWrite={setTypesWrite}
+                                                                        />
+                                                                    ) : (
+                                                                        <ToolChip
+                                                                            name={block.name}
+                                                                            content={block.text}
+                                                                            tooltipPlacement={toolTooltipPlacement}
+                                                                        />
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        m.text
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
+                                                {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
+                                            </span>
+                                        </motion.div>
+                                    );
+                                })}
+                            </AnimatePresence>
+                            {shouldShowThinkingShimmer && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 6 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="flex flex-col items-start w-full"
+                                >
+                                    <div className="w-full max-w-[85%] rounded-xl border border-neutral-700/60 bg-neutral-900 px-3.5 py-2.5">
+                                        <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
+                                        <div className="space-y-1.5">
+                                            <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+                                            <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+                                        </div>
+                                    </div>
+                                    <span className="mt-1 text-[10px] font-medium text-neutral-600">Assistant is thinking...</span>
+                                </motion.div>
+                            )}
+                            {pendingAction && (
+                                <HITLApproval
+                                    hitl={pendingAction}
+                                    onDecision={onActionDecision}
+                                />
+                            )}
+                            <div ref={messagesEndRef} />
+                        </main>
+                    ) : (
+                        <div className="flex-1" />
+                    )}
 
                     {/* Input Area */}
                     <footer
@@ -658,8 +663,25 @@ export function NormalModeLayout({
                                 }
                             }
                         }}
-                        className={`px-4 py-2 relative ${isHistoryVisible ? "px-6" : "px-24"}`}
+                        className={isNewChat
+                            ? "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[60%] w-full max-w-2xl px-6 z-10 flex flex-col justify-center"
+                            : `px-4 py-2 relative ${isHistoryVisible ? "px-6" : "px-24"}`
+                        }
                     >
+                        {isNewChat && (
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="flex flex-col items-center text-center mb-8 space-y-4 pointer-events-none select-none"
+                            >
+                                <h1 className="text-3xl font-bold text-white font-sans tracking-wide">
+                                    How can I help you today?
+                                </h1>
+                                <p className="text-sm text-neutral-400 max-w-md">
+                                    Ask questions, run terminal commands, or attach project context to get started.
+                                </p>
+                            </motion.div>
+                        )}
                         <AnimatePresence>
                             {(isDragging || isWindowDraggingFile) && (
                                 <motion.div
@@ -680,8 +702,187 @@ export function NormalModeLayout({
                             )}
                         </AnimatePresence>
                         <div className="flex flex-col gap-2">
-                            {/* Attachment previews */}
-                            <div className='flex flex-wrap gap-2 w-[70%] mx-auto overflow-x-auto'>
+                            <div className="flex items-end justify-center gap-2">
+                                {/* Attachment button (Restore for active chat) */}
+                                {!isNewChat && (
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
+                                            disabled={isLoading || isCapturing}
+                                            className={`p-[10px] rounded-lg border transition-colors ${isAttachmentPopoverOpen ? 'bg-neutral-700 border-neutral-600' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'} disabled:opacity-50`}
+                                        >
+                                            {isCapturing ? (
+                                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
+                                            ) : (
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400">
+                                                    <path d="m18 15-6-6-6 6" />
+                                                </svg>
+                                            )}
+                                        </button>
+                                        <AnimatePresence>
+                                            {isAttachmentPopoverOpen && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, y: 10 }}
+                                                    animate={{ opacity: 1, y: 0 }}
+                                                    exit={{ opacity: 0, y: 10 }}
+                                                    className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
+                                                >
+                                                    <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
+                                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                            <circle cx="9" cy="9" r="2" />
+                                                            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                                        </svg>
+                                                        Upload Image
+                                                    </button>
+                                                    <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                                                            <rect width="20" height="14" x="2" y="3" rx="2" />
+                                                            <path d="M8 21h8" />
+                                                            <path d="M12 17v4" />
+                                                        </svg>
+                                                        Current Screen
+                                                    </button>
+                                                    <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+                                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                                        </svg>
+                                                        Project Path
+                                                    </button>
+                                                    <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
+                                                            <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                        </svg>
+                                                        Read Clipboard
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setIsAttachmentPopoverOpen(false);
+                                                            setIsKnowledgePickerOpen(true);
+                                                        }}
+                                                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                                                    >
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
+                                                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                                                        </svg>
+                                                        Custom Knowledge
+                                                    </button>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
+                                )}
+
+                                {/* Text input */}
+                                <div className={`${isNewChat ? 'w-[80%]' : 'w-[70%]'} max-h-fit relative flex items-center justify-center`}>
+                                    <textarea
+                                        ref={textareaRef}
+                                        rows={1}
+                                        value={input}
+                                        onChange={(e) => {
+                                            setInput(e.target.value);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                onSend();
+                                            }
+                                        }}
+                                        onPaste={(e) => {
+                                            if (isLoading) return;
+                                            const items = e.clipboardData?.items || [];
+                                            for (const item of items) {
+                                                if (item.kind === "file" && item.type.startsWith("image/")) {
+                                                    const file = item.getAsFile();
+                                                    if (file) {
+                                                        e.preventDefault();
+                                                        attachImageFile(file);
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }}
+                                        placeholder={isRecording ? 'Listening...' : 'Type a message...'}
+                                        className={`w-full resize-none rounded-xl border bg-neutral-800 px-4 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none transition-all max-h-[280px] custom-scrollbar ${isRecording ? 'border-emerald-500 ring-1 ring-emerald-500/20' : `border-neutral-700/50 focus:bg-neutral-800/50 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'}`} disabled:opacity-50`}
+                                        disabled={isLoading}
+                                    />
+                                    {isRecording && (
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                                            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                                            <span className="text-[10px] font-bold text-emerald-500 uppercase">Live</span>
+                                        </div>
+                                    )}
+                                </div>
+                                {/* Send/Cancel button */}
+                                <button
+                                    onClick={isLoading ? () => onCancel() : onSend}
+                                    disabled={!isLoading && !hasContent}
+                                    className={`p-2.5 rounded-xl border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isLoading
+                                        ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
+                                        : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+                                        }`}
+                                >
+                                    {isLoading ? (
+                                        <div className="relative flex items-center justify-center">
+                                            <div className="absolute h-5 w-5 animate-spin rounded-full border-2 border-red-500/30 border-t-red-500" />
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                                <rect x="6" y="6" width="12" height="12" rx="1" />
+                                            </svg>
+                                        </div>
+                                    ) : (
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="m22 2-7 20-4-9-9-4Z" />
+                                            <path d="M22 2 11 13" />
+                                        </svg>
+                                    )}
+                                </button>
+                            </div>
+
+                            {/* Attachment options grid (Only shown in empty chat) */}
+                            {isNewChat && (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4 max-w-lg mx-auto w-full">
+                                    <button onClick={onFileUpload} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400 shrink-0">
+                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                            <circle cx="9" cy="9" r="2" />
+                                            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                        </svg>
+                                        <span>Upload Image</span>
+                                    </button>
+                                    <button onClick={onCaptureScreen} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400 shrink-0">
+                                            <rect width="20" height="14" x="2" y="3" rx="2" />
+                                            <path d="M8 21h8" />
+                                            <path d="M12 17v4" />
+                                        </svg>
+                                        <span>Current Screen</span>
+                                    </button>
+                                    <button onClick={onPickProjectPath} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400 shrink-0">
+                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                        </svg>
+                                        <span>Project Path</span>
+                                    </button>
+                                    <button onClick={onAttachClipboard} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400 shrink-0">
+                                            <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                        </svg>
+                                        <span>Read Clipboard</span>
+                                    </button>
+                                    <button onClick={() => setIsKnowledgePickerOpen(true)} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left col-span-2 sm:col-span-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400 shrink-0">
+                                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                                        </svg>
+                                        <span>Custom Knowledge</span>
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Attachment previews (Moved Below) */}
+                            <div className='flex flex-wrap gap-2 w-[70%] mx-auto overflow-x-auto justify-center mt-2'>
                                 <AnimatePresence>
                                     {attachedImage && (
                                         <motion.div
@@ -766,142 +967,6 @@ export function NormalModeLayout({
                                     )}
                                     <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
                                 </AnimatePresence>
-                            </div>
-
-                            <div className="flex items-end justify-center gap-2">
-                                {/* Attachment button */}
-                                <div className="relative">
-                                    <button
-                                        onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-                                        disabled={isLoading || isCapturing}
-                                        className={`p-[10px] rounded-lg border transition-colors ${isAttachmentPopoverOpen ? 'bg-neutral-700 border-neutral-600' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'} disabled:opacity-50`}
-                                    >
-                                        {isCapturing ? (
-                                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
-                                        ) : (
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400">
-                                                <path d="m18 15-6-6-6 6" />
-                                            </svg>
-                                        )}
-                                    </button>
-                                    <AnimatePresence>
-                                        {isAttachmentPopoverOpen && (
-                                            <motion.div
-                                                initial={{ opacity: 0, y: 10 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                exit={{ opacity: 0, y: 10 }}
-                                                className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
-                                            >
-                                                <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-                                                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                                        <circle cx="9" cy="9" r="2" />
-                                                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                                                    </svg>
-                                                    Upload Image
-                                                </button>
-                                                <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                        <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                        <path d="M8 21h8" />
-                                                        <path d="M12 17v4" />
-                                                    </svg>
-                                                    Current Screen
-                                                </button>
-                                                <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                                    </svg>
-                                                    Project Path
-                                                </button>
-                                                <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                    </svg>
-                                                    Read Clipboard
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setIsAttachmentPopoverOpen(false);
-                                                        setIsKnowledgePickerOpen(true);
-                                                    }}
-                                                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                                                >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
-                                                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-                                                    </svg>
-                                                    Custom Knowledge
-                                                </button>
-                                            </motion.div>
-                                        )}
-                                    </AnimatePresence>
-                                </div>
-
-                                {/* Text input */}
-                                <div className="w-[70%] max-h-fit relative flex items-center justify-center">
-                                    <textarea
-                                        ref={textareaRef}
-                                        rows={1}
-                                        value={input}
-                                        onChange={(e) => {
-                                            setInput(e.target.value);
-                                        }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && !e.shiftKey) {
-                                                e.preventDefault();
-                                                onSend();
-                                            }
-                                        }}
-                                        onPaste={(e) => {
-                                            if (isLoading) return;
-                                            const items = e.clipboardData?.items || [];
-                                            for (const item of items) {
-                                                if (item.kind === "file" && item.type.startsWith("image/")) {
-                                                    const file = item.getAsFile();
-                                                    if (file) {
-                                                        e.preventDefault();
-                                                        attachImageFile(file);
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                        }}
-                                        placeholder={isRecording ? 'Listening...' : 'Type a message...'}
-                                        className={`w-full resize-none rounded-xl border bg-neutral-800 px-4 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none transition-all max-h-[280px] custom-scrollbar ${isRecording ? 'border-emerald-500 ring-1 ring-emerald-500/20' : `border-neutral-700/50 focus:bg-neutral-800/50 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'}`} disabled:opacity-50`}
-                                        disabled={isLoading}
-                                    />
-                                    {isRecording && (
-                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                                            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                                            <span className="text-[10px] font-bold text-emerald-500 uppercase">Live</span>
-                                        </div>
-                                    )}
-                                </div>
-                                {/* Send/Cancel button */}
-                                <button
-                                    onClick={isLoading ? () => onCancel() : onSend}
-                                    disabled={!isLoading && !hasContent}
-                                    className={`p-2.5 rounded-xl border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isLoading
-                                        ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
-                                        : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
-                                        }`}
-                                >
-                                    {isLoading ? (
-                                        <div className="relative flex items-center justify-center">
-                                            <div className="absolute h-5 w-5 animate-spin rounded-full border-2 border-red-500/30 border-t-red-500" />
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                                <rect x="6" y="6" width="12" height="12" rx="1" />
-                                            </svg>
-                                        </div>
-                                    ) : (
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="m22 2-7 20-4-9-9-4Z" />
-                                            <path d="M22 2 11 13" />
-                                        </svg>
-                                    )}
-                                </button>
                             </div>
                         </div>
                     </footer>
