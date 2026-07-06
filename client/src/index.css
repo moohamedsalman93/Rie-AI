@@ -117,3 +117,9 @@
 .terminal-cursor {
   animation: terminal-blink 1s step-end infinite;
 }
+
+/* When Screen Privacy is enabled, force default cursor everywhere */
+.screen-privacy-active,
+.screen-privacy-active * {
+  cursor: default !important;
+}

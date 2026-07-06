@@ -2,6 +2,8 @@
  * API service for custom knowledge packs
  */
 
+import { getAppToken } from "./chatApi";
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:14300";
 
 function getHeaders() {
@@ -11,6 +13,10 @@ function getHeaders() {
     if (token) headers.Authorization = `Bearer ${token}`;
   } catch {
     /* ignore */
+  }
+  const appToken = getAppToken();
+  if (appToken) {
+    headers["X-Rie-App-Token"] = appToken;
   }
   return headers;
 }
@@ -78,6 +84,10 @@ export async function uploadKnowledgeAsset(packId, file) {
     if (token) headers.Authorization = `Bearer ${token}`;
   } catch {
     /* ignore */
+  }
+  const appToken = getAppToken();
+  if (appToken) {
+    headers["X-Rie-App-Token"] = appToken;
   }
   const response = await fetch(`${API_BASE_URL}/knowledge/${encodeURIComponent(packId)}/assets`, {
     method: "POST",

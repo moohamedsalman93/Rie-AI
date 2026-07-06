@@ -116,6 +116,7 @@ function MainApp() {
   const [apiStatus, setApiStatus] = useState("checking");
 
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
+  const [kioskOverlay, setKioskOverlay] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState([]);
   const [availableUpdate, setAvailableUpdate] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -296,6 +297,19 @@ function MainApp() {
       setIsMenuOpen(false);
     }
   }, [windowMode]);
+
+  const handleToggleKioskOverlay = useCallback(async () => {
+    const newState = !kioskOverlay;
+    try {
+      if (window.__TAURI_INTERNALS__) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("set_kiosk_overlay_mode", { enabled: newState });
+      }
+      setKioskOverlay(newState);
+    } catch (err) {
+      console.error("Failed to toggle kiosk overlay:", err);
+    }
+  }, [kioskOverlay]);
 
   const handleOpenSettingsWindow = useCallback(async () => {
     // In plain web/dev mode, keep existing in-window settings behavior.
@@ -2160,32 +2174,81 @@ function MainApp() {
     initWindow();
   }, [isAppInitializing]);
 
-  // Listen for clipboard updates from backend
+  // Listen for clipboard updates and global keypresses from backend
   useEffect(() => {
-    let unlisten;
+    let unlistenClipboard;
+    let unlistenKeypress;
+
     const setupListener = async () => {
-      unlisten = await listen("clipboard-update", (event) => {
+      // 1. Clipboard listener
+      unlistenClipboard = await listen("clipboard-update", (event) => {
         const text = event.payload;
         if (text && text.trim()) {
-          // Auto-attach
           setAttachedClipboardText(text);
-
-          // Clear previous timeout if exists
           if (clipboardTimeoutRef.current) {
             clearTimeout(clipboardTimeoutRef.current);
           }
-
-          // Set auto-clear timeout (10 seconds)
           clipboardTimeoutRef.current = setTimeout(() => {
             setAttachedClipboardText(null);
             clipboardTimeoutRef.current = null;
           }, 10000);
         }
       });
+
+      // 2. Global keyboard hook listener for kiosk mode (stealth input piping)
+      unlistenKeypress = await listen("rie-keypress", (event) => {
+        const { type, key } = event.payload;
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        // Focus inside WebView's DOM (does not change OS active window)
+        textarea.focus();
+
+        if (type === "char") {
+          document.execCommand("insertText", false, key);
+        } else if (type === "special") {
+          if (key === "Backspace") {
+            document.execCommand("delete", false);
+          } else if (key === "Enter") {
+            const submitBtn = document.getElementById("send-btn");
+            if (submitBtn) {
+              submitBtn.click();
+            }
+          }
+        } else if (type === "shortcut") {
+          if (key === "a") {
+            textarea.select();
+          } else if (key === "v") {
+            navigator.clipboard.readText().then((clipText) => {
+              document.execCommand("insertText", false, clipText);
+              setInput(textarea.value);
+            }).catch(() => {});
+          } else if (key === "c") {
+            const selectedText = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+            if (selectedText) {
+              navigator.clipboard.writeText(selectedText).catch(() => {});
+            }
+          } else if (key === "x") {
+            const selectedText = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+            if (selectedText) {
+              navigator.clipboard.writeText(selectedText).then(() => {
+                document.execCommand("delete", false);
+                setInput(textarea.value);
+              }).catch(() => {});
+            }
+          }
+        }
+
+        // Sync local React state with the DOM textarea value modified by execCommand
+        setInput(textarea.value);
+      });
     };
+
     setupListener();
+
     return () => {
-      if (unlisten) unlisten();
+      if (unlistenClipboard) unlistenClipboard();
+      if (unlistenKeypress) unlistenKeypress();
       if (clipboardTimeoutRef.current) clearTimeout(clipboardTimeoutRef.current);
     };
   }, []);
@@ -2202,7 +2265,7 @@ function MainApp() {
         )}
       </AnimatePresence>
 
-      <div className={`fixed inset-0 flex pointer-events-none rounded-2xl overflow-hidden ${side === "right" ? "justify-end" : "justify-start"}`}>
+      <div className={`fixed inset-0 flex pointer-events-none rounded-2xl overflow-hidden ${side === "right" ? "justify-end" : "justify-start"} ${(settings.exclude_from_capture !== false) ? "screen-privacy-active" : ""}`}>
         <AnimatePresence
           mode="wait"
           onExitComplete={async () => {
@@ -2423,6 +2486,8 @@ function MainApp() {
               attachedKnowledge={attachedKnowledge}
               onAttachKnowledge={attachKnowledge}
               onDetachKnowledge={detachKnowledge}
+              kioskOverlay={kioskOverlay}
+              onToggleKioskOverlay={handleToggleKioskOverlay}
             />
           )}
         </AnimatePresence>

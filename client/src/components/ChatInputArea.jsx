@@ -369,6 +369,7 @@ export function ChatInputArea({
             </AnimatePresence>
           </div>
           <button
+            id="send-btn"
             onClick={isLoading ? () => onCancelRequest() : onSend}
             disabled={!isLoading && !hasContent}
             className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 text-neutral-100 shadow-sm transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 ${isLoading ? "bg-red-500/20 hover:bg-red-500/40 text-red-400" : "bg-neutral-700 hover:bg-neutral-600"}`}

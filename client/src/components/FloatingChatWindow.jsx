@@ -92,6 +92,8 @@ export function FloatingChatWindow({
   onAttachKnowledge = () => {},
   onDetachKnowledge = () => {},
   settings = {},
+  kioskOverlay = false,
+  onToggleKioskOverlay = null,
 }) {
   return (
     <motion.section
@@ -140,6 +142,8 @@ export function FloatingChatWindow({
         onScheduleOpenChat={onScheduleOpenChat}
         onOpenSchedule={onOpenScheduleSheet}
         onToggleFriends={onToggleFriendsQuick}
+        kioskOverlay={kioskOverlay}
+        onToggleKioskOverlay={onToggleKioskOverlay}
       />
 
       {showWelcome ? (

@@ -54,6 +54,15 @@ export function setAppToken(token) {
 }
 
 /**
+ * Get the current app token
+ * @returns {string|null}
+ */
+export function getAppToken() {
+  return appToken;
+}
+
+
+/**
  * Get headers for API calls including the security token
  * @returns {Object}
  */

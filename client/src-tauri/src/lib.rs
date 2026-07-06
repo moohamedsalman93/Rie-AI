@@ -1,4 +1,5 @@
 mod audio;
+mod kiosk_overlay;
 mod location;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -148,6 +149,10 @@ pub fn run() {
             use tauri_plugin_shell::ShellExt;
             use tauri_plugin_deep_link::DeepLinkExt;
 
+            // Store the global app handle for the keyboard hook
+            let handle = app.handle().clone();
+            let _ = kiosk_overlay::APP_HANDLE.set(handle);
+
             // Create main window programmatically
             let _window = tauri::WebviewWindowBuilder::new(
                 app,
@@ -196,6 +201,7 @@ pub fn run() {
             app.manage(BackendState(std::sync::Mutex::new(None)));
             app.manage(AppToken(app_token.clone()));
             app.manage(audio::NativeAudioRecorder::default());
+            app.manage(kiosk_overlay::KioskOverlayState::default());
 
 
             // Create tray menu
@@ -284,11 +290,19 @@ pub fn run() {
             location::get_native_location,
             set_foreground_lock,
             set_window_capture_excluded,
+            kiosk_overlay::set_kiosk_overlay_mode,
+            kiosk_overlay::force_topmost,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                // Ensure the keyboard hook is cleaned up if we terminate
+                #[cfg(target_os = "windows")]
+                {
+                    kiosk_overlay::uninstall_keyboard_hook();
+                }
+
                 let state = app_handle.state::<BackendState>();
                 let mut lock = state.0.lock().unwrap();
                 

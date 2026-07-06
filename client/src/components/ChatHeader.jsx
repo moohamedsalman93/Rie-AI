@@ -30,6 +30,9 @@ export function ChatHeader({
   /** Floating mode: opens full schedule sheet from ⋮ menu */
   onOpenSchedule = null,
   onToggleFriends = null,
+  /** Kiosk overlay mode */
+  kioskOverlay = false,
+  onToggleKioskOverlay = null,
 }) {
   return (
     <header
@@ -98,6 +101,22 @@ export function ChatHeader({
                   <span>System Terminal</span>
                 </button>
 
+                {typeof onToggleKioskOverlay === "function" && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleKioskOverlay();
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs transition-colors ${kioskOverlay ? "bg-amber-500/10 text-amber-400" : "text-neutral-300 hover:bg-neutral-700/50 hover:text-white"}`}
+                    title="Float above kiosk-mode apps"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                    </svg>
+                    <span>Kiosk Overlay</span>
+                  </button>
+                )}
                 {windowMode === "floating" && typeof onOpenSchedule === "function" && (
                   <button
                     onClick={(e) => {
