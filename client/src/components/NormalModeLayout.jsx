@@ -81,6 +81,7 @@ export function NormalModeLayout({
     attachedKnowledge = [],
     onAttachKnowledge = () => {},
     onDetachKnowledge = () => {},
+    provider,
 }) {
     // Sidebar state
     const [threads, setThreads] = useState([]);
@@ -240,6 +241,7 @@ export function NormalModeLayout({
                             setChatMode={setChatMode}
                             speedMode={speedMode}
                             setSpeedMode={setSpeedMode}
+                            provider={provider}
                         />
                     </div>
                 </div>

@@ -30,6 +30,7 @@ export function ChatHeader({
   /** Floating mode: opens full schedule sheet from ⋮ menu */
   onOpenSchedule = null,
   onToggleFriends = null,
+  provider,
 }) {
   return (
     <header
@@ -204,6 +205,7 @@ export function ChatHeader({
                     setChatMode={setChatMode} 
                     speedMode={speedMode} 
                     setSpeedMode={setSpeedMode} 
+                    provider={provider}
                   />
                 </div>
               </motion.div>

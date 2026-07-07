@@ -10,7 +10,7 @@ export const SL = {
   tabStack: 'space-y-5',
   card: 'premium-card rounded-xl p-5 space-y-4',
   cardHeader: 'flex items-center gap-2.5 pb-3 border-b border-white/5',
-  cardHeaderIcon: 'p-2 bg-emerald-500/10 rounded-lg text-emerald-400',
+  cardHeaderIcon: 'p-2 bg-neutral-800 rounded-lg text-neutral-300',
   sectionTitle: 'text-xs font-bold text-white tracking-wide uppercase',
   toggleRow: 'p-4 bg-neutral-800/30 rounded-xl border border-neutral-700/50',
 };

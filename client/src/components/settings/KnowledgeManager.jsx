@@ -167,7 +167,7 @@ export function KnowledgeManager() {
               setForm({ name: '', instructions: '' });
               setError(null);
             }}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs border border-dashed border-neutral-700 hover:border-violet-500/50 hover:bg-violet-500/5 text-neutral-400 hover:text-violet-400 rounded-lg transition-all"
+            className="flex items-center gap-2 px-3 py-1.5 text-xs border border-dashed border-neutral-700 hover:border-emerald-500/50 hover:bg-emerald-500/5 text-neutral-400 hover:text-emerald-400 rounded-lg transition-all"
           >
             <Plus size={12} />
             Add Knowledge
@@ -189,7 +189,7 @@ export function KnowledgeManager() {
               value={form.name}
               onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
               placeholder="e.g. Project docs"
-              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-violet-500/50"
+              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
             />
           </div>
           <div className="space-y-1.5">
@@ -199,12 +199,12 @@ export function KnowledgeManager() {
               onChange={(e) => setForm((p) => ({ ...p, instructions: e.target.value }))}
               rows={4}
               placeholder="How should the assistant use this knowledge?"
-              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-violet-500/50 resize-y"
+              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50 resize-y"
             />
           </div>
           <div className="flex gap-2 justify-end">
             <button type="button" onClick={() => { setIsAdding(false); setEditingId(null); setError(null); }} className="px-3 py-1.5 text-xs text-neutral-400 hover:text-neutral-200">Cancel</button>
-            <button type="button" onClick={handleSavePack} disabled={isSaving} className="px-4 py-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-white rounded-lg disabled:opacity-50">
+            <button type="button" onClick={handleSavePack} disabled={isSaving} className="px-4 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg disabled:opacity-50">
               {isSaving ? 'Saving…' : 'Save'}
             </button>
           </div>
@@ -216,7 +216,7 @@ export function KnowledgeManager() {
           <div key={pack.id} className="bg-neutral-800/30 border border-neutral-700/50 rounded-xl overflow-hidden hover:border-neutral-600 transition-all">
             <div className="p-4 flex items-center justify-between gap-2">
               <button type="button" onClick={() => handleToggleExpand(pack.id)} className="flex items-center gap-3 text-left flex-1 min-w-0">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-800 text-neutral-300">
                   <BookOpen size={16} />
                 </div>
                 <div className="min-w-0">
@@ -225,7 +225,7 @@ export function KnowledgeManager() {
                 </div>
               </button>
               <div className="flex items-center gap-1 shrink-0">
-                <button type="button" onClick={() => handleUploadClick(pack.id)} disabled={uploadingAsset} className="p-2 text-neutral-500 hover:text-violet-400 transition-colors disabled:opacity-50" title="Upload file">
+                <button type="button" onClick={() => handleUploadClick(pack.id)} disabled={uploadingAsset} className="p-2 text-neutral-500 hover:text-emerald-400 transition-colors disabled:opacity-50" title="Upload file">
                   {uploadingAsset && expandedId === pack.id ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
                 </button>
                 <button type="button" onClick={() => handleEdit(pack)} className="p-2 text-neutral-500 hover:text-neutral-200 transition-colors" title="Edit">
@@ -248,7 +248,7 @@ export function KnowledgeManager() {
                     <div key={asset.id} className="rounded-lg bg-neutral-900/60 border border-neutral-700/40 p-3">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="text-xs font-medium text-violet-300 truncate">{asset.filename}</div>
+                          <div className="text-xs font-medium text-neutral-200 truncate">{asset.filename}</div>
                           <div className="text-[10px] text-neutral-600 uppercase mt-0.5">{asset.asset_type}</div>
                         </div>
                         <button type="button" onClick={() => setDeleteAssetTarget({ packId: pack.id, assetId: asset.id })} className="text-neutral-500 hover:text-red-400 p-1">

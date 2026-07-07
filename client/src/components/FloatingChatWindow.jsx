@@ -96,6 +96,7 @@ export function FloatingChatWindow({
   kioskSelection = null,
   onAddKioskSelection = null,
   onClearKioskSelection = null,
+  provider,
 }) {
   return (
     <motion.section
@@ -137,6 +138,7 @@ export function FloatingChatWindow({
         setChatMode={setChatMode}
         speedMode={speedMode}
         setSpeedMode={setSpeedMode}
+        provider={provider}
         scheduleNotifications={scheduleNotifications}
         scheduleUnreadCount={scheduleUnreadCount}
         onScheduleMarkRead={onScheduleMarkRead}

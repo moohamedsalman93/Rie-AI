@@ -2013,6 +2013,14 @@ function MainApp() {
     }
   }, [input, friends.length, loadFriends]);
 
+  // Force chat mode if using Rie provider (or if LLM provider is unset/default)
+  useEffect(() => {
+    const provider = settings?.llm_provider || 'rie';
+    if (provider === 'rie' && chatMode === 'agent') {
+      setChatMode('chat');
+    }
+  }, [settings?.llm_provider, chatMode]);
+
   // Persist chatMode to backend when it changes
   useEffect(() => {
     if (isAppInitializing) return;
@@ -2529,6 +2537,7 @@ function MainApp() {
                   setChatMode={setChatMode}
                   speedMode={speedMode}
                   setSpeedMode={setSpeedMode}
+                  provider={settings?.llm_provider || 'rie'}
                   onClearTerminal={handleClearTerminal}
                   scheduleNotifications={scheduleNotificationLog}
                   scheduleUnreadCount={scheduleNotifications.length}
@@ -2624,6 +2633,7 @@ function MainApp() {
               setChatMode={setChatMode}
               speedMode={speedMode}
               setSpeedMode={setSpeedMode}
+              provider={settings?.llm_provider || 'rie'}
               onDeleteMessage={handleDeleteMessage}
               onOpenMessageInNewChat={handleOpenMessageInNewChat}
               onClearTerminal={handleClearTerminal}

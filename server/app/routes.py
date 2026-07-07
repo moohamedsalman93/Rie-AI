@@ -589,8 +589,8 @@ async def get_settings():
 
     return SettingsResponse(
         groq_api_key=mask_key(settings.GROQ_API_KEY_STRING),
-        google_api_key=mask_key(settings.GOOGLE_API_KEY),
-        openai_api_key=mask_key(settings.OPENAI_API_KEY),
+        google_api_key=mask_key(settings.GOOGLE_API_KEY_STRING),
+        openai_api_key=mask_key(settings.OPENAI_API_KEY_STRING),
         anthropic_api_key=mask_key(settings.ANTHROPIC_API_KEY),
         tavily_api_key=mask_key(settings.TAVILY_API_KEY),
         brave_search_api_key=mask_key(settings.BRAVE_SEARCH_API_KEY),
@@ -650,10 +650,19 @@ def _looks_like_masked_secret(value: str) -> bool:
     """Detect masked API keys returned by GET /settings (e.g. tvly****abcd)."""
     if not value:
         return False
-    if len(value) <= 8:
-        return set(value) == {"*"}
-    middle = value[4:-4]
-    return bool(middle) and all(ch == "*" for ch in middle)
+    
+    # Split by comma or newline for multi-key support
+    parts = [p.strip() for p in value.replace('\n', ',').split(',') if p.strip()]
+    if not parts:
+        return False
+        
+    def _is_single_masked(val: str) -> bool:
+        if len(val) <= 8:
+            return set(val) == {"*"}
+        middle = val[4:-4]
+        return bool(middle) and all(ch == "*" for ch in middle)
+        
+    return any(_is_single_masked(p) for p in parts)
 
 
 _SECRET_SETTING_KEYS = frozenset({

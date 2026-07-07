@@ -98,8 +98,24 @@ class Settings:
         return (self._get("WEB_SEARCH_PROVIDER") or "tavily").strip().lower()
 
     @property
-    def GOOGLE_API_KEY(self) -> Optional[str]:
+    def GOOGLE_API_KEY_STRING(self) -> Optional[str]:
+        """Raw string of Google/Gemini API keys as stored in DB"""
         return self._get("GOOGLE_API_KEY")
+
+    @property
+    def GOOGLE_API_KEYS(self) -> list[str]:
+        """List of Google/Gemini API keys for rotation"""
+        keys_str = self.GOOGLE_API_KEY_STRING
+        if not keys_str:
+            return []
+        # Support comma and newline separated
+        return [k.strip() for k in keys_str.replace('\n', ',').split(',') if k.strip()]
+
+    @property
+    def GOOGLE_API_KEY(self) -> Optional[str]:
+        # Keep this for backward compatibility and simple checks
+        keys = self.GOOGLE_API_KEYS
+        return keys[0] if keys else None
 
     # LangSmith settings
     @property
@@ -388,7 +404,7 @@ class Settings:
         elif provider == "vertex":
             return bool(self.VERTEX_PROJECT) # Credentials might be implicit
         elif provider == "gemini":
-            return bool(self.GOOGLE_API_KEY)
+            return bool(self.GOOGLE_API_KEYS)
         elif provider == "openai":
             return bool(self.OPENAI_API_KEYS)
         elif provider == "rie":

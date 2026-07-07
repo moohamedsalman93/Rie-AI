@@ -268,7 +268,7 @@ export function McpServersManager({ servers, onSave, isSaving }) {
 
                       {/* Tools Count Badge */}
                       {mcpStatus && toolsCount > 0 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                           {toolsCount} tool{toolsCount !== 1 ? 's' : ''}
                         </span>
                       )}

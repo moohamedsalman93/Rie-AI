@@ -275,6 +275,78 @@ class RotatingChatOpenAI(BaseChatModel):
         return "rotating-openai"
 
 
+class RotatingChatGoogleGenerativeAI(BaseChatModel):
+    """A wrapper for ChatGoogleGenerativeAI that rotates through multiple API keys to bypass rate limits."""
+    api_keys: List[str]
+    model_name: str
+    temperature: float
+    _key_cycle: Any = None
+
+    def __init__(self, api_keys: List[str], model: str, temperature: float = 0, **kwargs: Any):
+        super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, **kwargs)
+        object.__setattr__(self, '_key_cycle', cycle(api_keys))
+
+    def _get_model(self) -> ChatGoogleGenerativeAI:
+        """Get a ChatGoogleGenerativeAI instance with the next API key in the cycle"""
+        return ChatGoogleGenerativeAI(
+            google_api_key=next(self._key_cycle),
+            model=self.model_name,
+            temperature=self.temperature
+        )
+
+    def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
+        """Required for agents that use tools"""
+        dummy = ChatGoogleGenerativeAI(
+            google_api_key=self.api_keys[0],
+            model=self.model_name,
+            temperature=self.temperature
+        )
+        bound = dummy.bind_tools(tools, **kwargs)
+        new_kwargs = getattr(bound, "kwargs", {})
+        return self.bind(**new_kwargs)
+
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._get_model()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    async def _agenerate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return await self._get_model()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    def _stream(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        yield from self._get_model()._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    async def _astream(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        async for chunk in self._get_model()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
+            yield chunk
+
+    @property
+    def _llm_type(self) -> str:
+        return "rotating-google-generative-ai"
+
+
 class AgentManager:
     """Manages the Deep Agent instance"""
     
@@ -332,8 +404,8 @@ class AgentManager:
                 all_tools_map[tool_name] = tool
         return all_tools_map
 
-    def _create_llm_for_peer(self) -> Optional[BaseChatModel]:
-        """Instantiate LLM for peer sessions (does not mutate self._llm)."""
+    def _resolve_provider(self) -> str:
+        """Resolve LLM provider from settings, defaulting to Rie."""
         provider = settings.LLM_PROVIDER
         if not provider:
             provider = "rie"
@@ -345,6 +417,11 @@ class AgentManager:
                 provider = "gemini"
             elif settings.OPENAI_API_KEY:
                 provider = "openai"
+        return provider
+
+    def _create_llm_for_peer(self) -> Optional[BaseChatModel]:
+        """Instantiate LLM for peer sessions (does not mutate self._llm)."""
+        provider = self._resolve_provider()
 
         if provider == "vertex":
             return self._create_vertex_llm()
@@ -639,27 +716,33 @@ class AgentManager:
             traceback.print_exc()
             return None
 
-    def _create_gemini_llm(self) -> Optional[ChatGoogleGenerativeAI]:
+    def _create_gemini_llm(self) -> Optional[BaseChatModel]:
         """Create and return a direct Gemini LLM instance (Generative AI API)"""
-        if not settings.GOOGLE_API_KEY:
+        keys = settings.GOOGLE_API_KEYS
+        if not keys:
             print("ERROR: GOOGLE_API_KEY is not set")
             return None
 
-        # Ensure the API key is in the environment
-        import os
-
-        if "GOOGLE_API_KEY" not in os.environ:
-            os.environ["GOOGLE_API_KEY"] = settings.GOOGLE_API_KEY
-
         try:
-            llm = ChatGoogleGenerativeAI(
-                model=settings.GEMINI_MODEL,
-                temperature=0,
-            )
+            if len(keys) > 1:
+                print(f"DEBUG: Creating RotatingChatGoogleGenerativeAI with {len(keys)} keys")
+                llm = RotatingChatGoogleGenerativeAI(
+                    api_keys=keys,
+                    model=settings.GEMINI_MODEL,
+                    temperature=0,
+                )
+            else:
+                llm = ChatGoogleGenerativeAI(
+                    google_api_key=keys[0],
+                    model=settings.GEMINI_MODEL,
+                    temperature=0,
+                )
             print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL}")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Gemini LLM: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _create_vertex_llm(self) -> Optional[ChatVertexAI]:
@@ -899,32 +982,19 @@ class AgentManager:
         loaded_mcp_tools: list[Any] = []
         loaded_external_tools: list[Any] = []
 
+        # Select LLM based on provider setting
+        provider = self._resolve_provider()
+        print(f"DEBUG: Selected LLM Provider: {provider}")
+
         # Resolve effective modes early (used by prompt construction and tool policy).
         effective_chat_mode = chat_mode or "agent"
+        if provider == "rie":
+            effective_chat_mode = "chat"
+            
         effective_speed_mode = speed_mode or "thinking"
         orchestration_mode = settings.AGENT_ORCHESTRATION_MODE
         self._current_chat_mode = effective_chat_mode
         self._current_speed_mode = effective_speed_mode
-
-
-        # Select LLM based on provider setting
-        provider = settings.LLM_PROVIDER
-        
-        # Auto-detect if not set (backward compatibility)
-        # Rie is always available and is the default
-        if not provider:
-            provider = "rie"  # Default to Rie (hardcoded, always available)
-            # Fallback to other providers if explicitly needed
-            if settings.GROQ_API_KEY:
-                provider = "groq"
-            elif settings.VERTEX_PROJECT:
-                provider = "vertex"
-            elif settings.GOOGLE_API_KEY:
-                provider = "gemini"
-            elif settings.OPENAI_API_KEY:
-                provider = "openai"
-        
-        print(f"DEBUG: Selected LLM Provider: {provider}")
 
         # Build context-aware system prompt
         mode_instructions = ""
@@ -1338,7 +1408,11 @@ class AgentManager:
         Invoke the agent (Async)
         """
         # Check if modes changed and re-initialize if needed
+        provider = self._resolve_provider()
         effective_chat_mode = chat_mode or "agent"
+        if provider == "rie":
+            effective_chat_mode = "chat"
+            
         effective_speed_mode = speed_mode or "thinking"
         if (self._agent is None or 
             self._current_chat_mode != effective_chat_mode or 
@@ -1458,7 +1532,7 @@ class AgentManager:
                     "Agent not configured. Please check your API keys and try again."
                 )
 
-        provider = settings.LLM_PROVIDER or "rie"
+        provider = self._resolve_provider()
         if provider == "rie":
              # Ensure key is present if provider is Rie
               if not settings.RIE_ACCESS_TOKEN:

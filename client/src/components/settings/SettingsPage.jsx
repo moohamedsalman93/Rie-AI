@@ -370,7 +370,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
           prefetchClientLocation();
         }
       }
-      setSelectedProvider(data.llm_provider || 'gemini'); // Default to gemini if not set
+      setSelectedProvider(data.llm_provider || 'rie'); // Default to rie if not set
       // Initialize embedding download state based on persisted path
       if (data.embedding_model_path) {
         setEmbeddingDownloadProgress(100);
@@ -1044,22 +1044,36 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                     <p className={SL.pageDesc}>Select the model that powers your assistant.</p>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {Object.entries(PROVIDERS).map(([key, info]) => (
-                      <button
-                        key={key}
-                        onClick={() => handleProviderChange(key)}
-                        className={`flex flex-col items-start gap-2.5 p-3.5 rounded-xl border transition-all duration-200 ${selectedProvider === key
-                          ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.1)] ring-1 ring-emerald-500/20'
-                          : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.06] text-neutral-400 hover:text-neutral-200'
-                          }`}
-                      >
-                        <div className={`p-2 rounded-lg ${selectedProvider === key ? 'bg-emerald-500/20' : 'bg-white/5'}`}>
-                          {info.icon}
+                  <div className={`${SL.toggleRow} space-y-3`}>
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-neutral-800 rounded-lg text-neutral-200">
+                          {PROVIDERS[selectedProvider]?.icon}
                         </div>
-                        <span className="text-sm font-medium tracking-wide">{info.label}</span>
-                      </button>
-                    ))}
+                        <div>
+                          <h3 className="text-sm font-medium text-neutral-200">Assistant Provider</h3>
+                          <p className="text-[10px] text-neutral-500">Choose the model provider that powers your assistant.</p>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={selectedProvider}
+                          onChange={(e) => handleProviderChange(e.target.value)}
+                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
+                        >
+                          {Object.entries(PROVIDERS).map(([key, info]) => (
+                            <option key={key} value={key}>
+                              {info.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                          <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                            <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                          </svg>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
@@ -1081,24 +1095,41 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                           onSave={handleLocalSettingChange}
                           isSaving={isSavingAll}
                           isSecret
+                          type="textarea"
+                          placeholder="Enter keys separated by commas or lines:
+key1,
+key2,
+..."
                         />
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-neutral-400">Model</label>
-                          <div className="flex gap-2">
-                            <select
-                              value={settings.gemini_model || ''}
-                              onChange={(e) => handleLocalSettingChange('GEMINI_MODEL', e.target.value)}
-                              className="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer"
-                              disabled={isSavingAll || loadingGeminiModels}
-                            >
-                              <option value="" disabled>{loadingGeminiModels ? 'Loading models...' : 'Select a model'}</option>
-                              {geminiModels.length > 0 && geminiModels.map(model => (
-                                <option key={model} value={model}>{model}</option>
-                              ))}
-                              {geminiModels.length === 0 && !loadingGeminiModels && settings.gemini_model && (
-                                <option value={settings.gemini_model}>{settings.gemini_model} (Not in list)</option>
-                              )}
-                            </select>
+                        <p className="text-[10px] text-neutral-500 mt-1">
+                          Tip: Add multiple keys to bypass Google's rate limits. They will be rotated automatically.
+                        </p>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
+                          <div className="flex items-center gap-2.5 shrink-0">
+                            <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Model</label>
+                          </div>
+                          <div className="flex-1 max-w-xs w-full sm:w-auto flex gap-2">
+                            <div className="relative flex-1">
+                              <select
+                                value={settings.gemini_model || ''}
+                                onChange={(e) => handleLocalSettingChange('GEMINI_MODEL', e.target.value)}
+                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10"
+                                disabled={isSavingAll || loadingGeminiModels}
+                              >
+                                <option value="" disabled>{loadingGeminiModels ? 'Loading models...' : 'Select a model'}</option>
+                                {geminiModels.length > 0 && geminiModels.map(model => (
+                                  <option key={model} value={model}>{model}</option>
+                                ))}
+                                {geminiModels.length === 0 && !loadingGeminiModels && settings.gemini_model && (
+                                  <option value={settings.gemini_model}>{settings.gemini_model} (Not in list)</option>
+                                )}
+                              </select>
+                              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                                </svg>
+                              </div>
+                            </div>
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1106,16 +1137,16 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                                 fetchGeminiModels();
                               }}
                               disabled={loadingGeminiModels}
-                              className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors"
+                              className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors shrink-0"
                               title="Refresh models"
                             >
                               <RefreshCw size={18} className={loadingGeminiModels ? 'animate-spin' : ''} />
                             </button>
                           </div>
-                          {!settings.google_api_key && (
-                            <p className="text-[10px] text-neutral-500">Add a Google API key to load live models from Google. Showing common defaults until then.</p>
-                          )}
                         </div>
+                        {!settings.google_api_key && (
+                          <p className="text-[10px] text-neutral-500 mt-1">Add a Google API key to load live models from Google. Showing common defaults until then.</p>
+                        )}
                       </>
                     )}
 
@@ -1352,40 +1383,49 @@ key2,
                           isSecret
                           placeholder="For secured or remote Ollama instances"
                         />
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-neutral-400">Ollama Model</label>
-                          <div className="flex gap-2">
-                            <select
-                              value={settings.ollama_model || ''}
-                              onChange={(e) => handleLocalSettingChange('OLLAMA_MODEL', e.target.value)}
-                              className="flex-1 bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer"
-                              disabled={isSavingAll || loadingOllamaModels}
-                            >
-                              <option value="" disabled>{loadingOllamaModels ? 'Loading models...' : 'Select a model'}</option>
-                              {ollamaModels.length > 0 && ollamaModels.map(model => (
-                                <option key={model} value={model}>{model}</option>
-                              ))}
-                              {ollamaModels.length === 0 && !loadingOllamaModels && settings.ollama_model && (
-                                <option value={settings.ollama_model}>{settings.ollama_model} (Not found)</option>
-                              )}
-                            </select>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
+                          <div className="flex items-center gap-2.5 shrink-0">
+                            <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Ollama Model</label>
+                          </div>
+                          <div className="flex-1 max-w-xs w-full sm:w-auto flex gap-2">
+                            <div className="relative flex-1">
+                              <select
+                                value={settings.ollama_model || ''}
+                                onChange={(e) => handleLocalSettingChange('OLLAMA_MODEL', e.target.value)}
+                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10"
+                                disabled={isSavingAll || loadingOllamaModels}
+                              >
+                                <option value="" disabled>{loadingOllamaModels ? 'Loading models...' : 'Select a model'}</option>
+                                {ollamaModels.length > 0 && ollamaModels.map(model => (
+                                  <option key={model} value={model}>{model}</option>
+                                ))}
+                                {ollamaModels.length === 0 && !loadingOllamaModels && settings.ollama_model && (
+                                  <option value={settings.ollama_model}>{settings.ollama_model} (Not found)</option>
+                                )}
+                              </select>
+                              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                                </svg>
+                              </div>
+                            </div>
                             <button
                               onClick={(e) => {
                                 e.preventDefault();
                                 fetchOllamaModels();
                               }}
                               disabled={loadingOllamaModels}
-                              className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors"
+                              className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors shrink-0"
                               title="Refresh models"
                             >
                               <RefreshCw size={18} className={loadingOllamaModels ? 'animate-spin' : ''} />
                             </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 px-4 py-3 bg-blue-500/5 rounded-xl border border-blue-500/10">
-                          <Info className="w-4 h-4 text-blue-400 shrink-0" />
-                          <p className="text-[11px] text-blue-300/80 leading-normal">
-                            Using Ollama at <code className="text-blue-400">{settings.ollama_api_url?.trim() || 'http://localhost:11434'}</code>. Make sure it's running and you've downloaded at least one model.
+                        <div className="flex items-center gap-3 px-4 py-3 bg-neutral-800/30 rounded-xl border border-neutral-700/50 mt-3">
+                          <Info className="w-4 h-4 text-neutral-400 shrink-0" />
+                          <p className="text-[11px] text-neutral-400 leading-normal">
+                            Using Ollama at <code className="text-neutral-300 bg-neutral-900 px-1 rounded">{settings.ollama_api_url?.trim() || 'http://localhost:11434'}</code>. Make sure it's running and you've downloaded at least one model.
                           </p>
                         </div>
                       </>
@@ -1406,12 +1446,12 @@ key2,
 
                   {capabilityTab === 'builtin' && (
                     <div className="premium-card rounded-xl p-5 space-y-4">
-                      <div className="flex items-center justify-between pb-4 border-b border-white/5">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+                      <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className={SL.cardHeaderIcon}>
                             <Wrench size={16} />
                           </div>
-                          <h4 className="text-sm font-bold text-white tracking-wide uppercase">Built-in Tools</h4>
+                          <h4 className={SL.sectionTitle}>Built-in Tools</h4>
                         </div>
                         <span className="text-[10px] font-bold bg-white/5 border border-white/10 px-2 py-1 rounded-md text-neutral-400 tracking-wider">
                           {enabledTools.length} ACTIVE
@@ -1446,13 +1486,14 @@ key2,
                                 type="button"
                                 onClick={() => !isMissingKey && handleToolToggle(tool.id)}
                                 disabled={isMissingKey}
-                                className={`px-4 py-2 rounded-xl border text-xs font-semibold tracking-wide transition-all duration-300 ${isMissingKey
+                                className={`px-4 py-2 rounded-xl border text-xs font-semibold tracking-wide transition-all duration-200 flex items-center gap-2 ${isMissingKey
                                   ? 'opacity-40 cursor-not-allowed bg-neutral-900 border-white/5 text-neutral-600'
                                   : isEnabled
-                                    ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                                    : 'bg-white/[0.02] border-white/5 text-neutral-500 hover:bg-white/[0.05] hover:border-white/10 hover:text-neutral-300'
+                                    ? 'bg-neutral-800 border-neutral-700 text-neutral-200'
+                                    : 'bg-white/[0.01] border-white/5 text-neutral-500 hover:bg-white/[0.03] hover:border-white/10 hover:text-neutral-400'
                                   }`}
                               >
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isMissingKey ? 'bg-neutral-800' : isEnabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse' : 'bg-neutral-600'}`} />
                                 {tool.label}
                               </button>
                               {/* Hover tooltip */}
@@ -1468,11 +1509,11 @@ key2,
 
                   {capabilityTab === 'mcp' && (
                     <div className="premium-card rounded-xl p-5 space-y-4">
-                      <div className="flex items-center gap-3 pb-4 border-b border-white/5">
-                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
+                      <div className={SL.cardHeader}>
+                        <div className={SL.cardHeaderIcon}>
                           <Plug2 size={16} />
                         </div>
-                        <h4 className="text-sm font-bold text-white tracking-wide uppercase">MCP Servers</h4>
+                        <h4 className={SL.sectionTitle}>MCP Servers</h4>
                       </div>
 
                       <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
@@ -1491,11 +1532,11 @@ key2,
 
                   {capabilityTab === 'external' && (
                     <div className="premium-card rounded-xl p-5 space-y-4">
-                      <div className="flex items-center gap-3 pb-4 border-b border-white/5">
-                        <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">
+                      <div className={SL.cardHeader}>
+                        <div className={SL.cardHeaderIcon}>
                           <Link size={16} />
                         </div>
-                        <h4 className="text-sm font-bold text-white tracking-wide uppercase">External APIs</h4>
+                        <h4 className={SL.sectionTitle}>External APIs</h4>
                       </div>
 
                       <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
@@ -1995,10 +2036,12 @@ key2,
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
-                    <h3 className="text-sm font-bold text-blue-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
-                      <Shield size={16} />
-                      Security & Safety
-                    </h3>
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <Shield size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Security & Safety</h3>
+                    </div>
                     <SettingInput
                       label="Terminal Restrictions"
                       dbKey="TERMINAL_RESTRICTIONS"
@@ -2014,16 +2057,11 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </p>
 
                     <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
-                          <Info size={16} />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-neutral-200">Human-in-the-Loop (HITL)</h4>
-                          <p className="text-[11px] text-neutral-500 max-w-xs">
-                            Choose how approvals are handled for potentially risky tool calls.
-                          </p>
-                        </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-neutral-200">Human-in-the-Loop (HITL)</h4>
+                        <p className="text-[11px] text-neutral-500 max-w-xs">
+                          Choose how approvals are handled for potentially risky tool calls.
+                        </p>
                       </div>
                       <div className=" max-w-xs">
                         <select
@@ -2040,16 +2078,11 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
 
                     <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
-                          <Shield size={16} />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-neutral-200">Screen Privacy</h4>
-                          <p className="text-[11px] text-neutral-500 max-w-xs">
-                            Exclude the application from screenshots and screen recordings to protect your private chat data.
-                          </p>
-                        </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-neutral-200">Screen Privacy</h4>
+                        <p className="text-[11px] text-neutral-500 max-w-xs">
+                          Exclude the application from screenshots and screen recordings to protect your private chat data.
+                        </p>
                       </div>
                       <div
                         onClick={() => handleLocalSettingChange('EXCLUDE_FROM_CAPTURE', String(!(settings.exclude_from_capture ?? true)))}
@@ -2064,16 +2097,11 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
 
                     <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
-                          <Shield size={16} />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-neutral-200">Kiosk Overlay</h4>
-                          <p className="text-[11px] text-neutral-500 max-w-xs">
-                            Float and overlay above full-screen kiosk apps. (Windows only)
-                          </p>
-                        </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-neutral-200">Kiosk Overlay</h4>
+                        <p className="text-[11px] text-neutral-500 max-w-xs">
+                          Float and overlay above full-screen kiosk apps. (Windows only)
+                        </p>
                       </div>
                       <div
                         onClick={handleToggleKioskOverlaySetting}
@@ -2088,16 +2116,11 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
 
                     <div className="flex items-center justify-between border-t border-white/5 pt-4">
-                      <div className="flex items-start gap-3">
-                        <div className="premium-icon-glow mt-0.5 shrink-0 rounded-lg bg-emerald-500/10 p-2 text-emerald-400">
-                          <FileText size={16} />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-neutral-200">UIA Screen Capture (Text)</h4>
-                          <p className="text-[11px] text-neutral-500 max-w-xs">
-                            Extract text/structure via Windows UI Automation when attaching "Current Screen" instead of capturing a visual screenshot. Useful in kiosk/lockdown environments.
-                          </p>
-                        </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-neutral-200">UIA Screen Capture (Text)</h4>
+                        <p className="text-[11px] text-neutral-500 max-w-xs">
+                          Extract text/structure via Windows UI Automation when attaching "Current Screen" instead of capturing a visual screenshot. Useful in kiosk/lockdown environments.
+                        </p>
                       </div>
                       <div
                         onClick={() => handleLocalSettingChange('CAPTURE_SCREEN_AS_TEXT', String(!(settings.capture_screen_as_text ?? false)))}
@@ -2113,10 +2136,12 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
-                    <h3 className="text-sm font-bold text-emerald-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
-                      <Sparkles size={16} />
-                      Appearance &amp; Customization
-                    </h3>
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <Sparkles size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Appearance &amp; Customization</h3>
+                    </div>
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <div>
@@ -2126,7 +2151,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                           </p>
                         </div>
                         <div className="text-right">
-                          <span className="text-xs font-semibold text-emerald-400">
+                          <span className="text-xs font-semibold text-neutral-300">
                             {Math.round((settings.floating_chat_opacity ?? 0.85) * 100)}%
                           </span>
                         </div>
@@ -2166,10 +2191,12 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
-                    <h3 className="text-sm font-bold text-amber-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
-                      <MapPin size={16} />
-                      Device &amp; location
-                    </h3>
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <MapPin size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Device &amp; Location</h3>
+                    </div>
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <h4 className="text-sm font-medium text-neutral-200">Share location</h4>
@@ -2193,12 +2220,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Rocket className="text-neutral-400" size={20} />
-                        <div>
-                          <h3 className="text-sm font-medium text-neutral-200">Auto-start</h3>
-                          <p className="text-[10px] text-neutral-500">Launch Rie-AI automatically when you log in.</p>
-                        </div>
+                      <div>
+                        <h3 className="text-sm font-medium text-neutral-200">Auto-start</h3>
+                        <p className="text-[10px] text-neutral-500">Launch Rie-AI automatically when you log in.</p>
                       </div>
                       <div
                         onClick={handleAutoStartToggle}
@@ -2217,17 +2241,16 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                   {/* About Section */}
                   <div className={`${SL.toggleRow} space-y-3`}>
-                    <h3 className="text-sm font-medium text-blue-400 border-b border-neutral-700/50 pb-2 flex items-center gap-2">
-                      <Info size={14} />
-                      About
-                    </h3>
+                    <div className="flex items-center gap-2.5 pb-2 border-b border-white/5 mb-3">
+                      <div className="p-1.5 bg-neutral-800 rounded-lg text-neutral-300">
+                        <Info size={14} />
+                      </div>
+                      <h3 className="text-sm font-medium text-neutral-200">About</h3>
+                    </div>
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="text-emerald-400" size={18} />
-                        <div>
-                          <h4 className="text-sm font-medium text-neutral-200">Application Version</h4>
-                          <p className="text-[10px] text-neutral-500">Current installed version of Rie-AI.</p>
-                        </div>
+                      <div>
+                        <h4 className="text-sm font-medium text-neutral-200">Application Version</h4>
+                        <p className="text-[10px] text-neutral-500">Current installed version of Rie-AI.</p>
                       </div>
                       <span className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-sm font-semibold text-emerald-400 tracking-wide flex items-center gap-2">
                         v{appVersion}
@@ -2269,25 +2292,34 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
-                    <h3 className="text-sm font-bold text-emerald-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
-                      <Search size={16} />
-                      Web search
-                    </h3>
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-medium text-neutral-300">Search provider</h4>
-                      <div className="flex flex-wrap gap-2">
-                        {Object.entries(WEB_SEARCH_PROVIDERS).map(([id, info]) => (
-                          <button
-                            key={id}
-                            type="button"
-                            onClick={() => handleLocalSettingChange('WEB_SEARCH_PROVIDER', id)}
-                            className={`px-4 py-2 rounded-lg border text-sm transition-all ${getWebSearchProvider(settings) === id
-                              ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-100'
-                              : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600'}`}
-                          >
-                            {info.label}
-                          </button>
-                        ))}
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <Search size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Web Search</h3>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 py-1.5">
+                      <div>
+                        <h4 className="text-sm font-medium text-neutral-300">Search Provider</h4>
+                        <p className="text-[10px] text-neutral-500">Select the search engine service used by the Internet Search tool.</p>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={getWebSearchProvider(settings)}
+                          onChange={(e) => handleLocalSettingChange('WEB_SEARCH_PROVIDER', e.target.value)}
+                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
+                        >
+                          {Object.entries(WEB_SEARCH_PROVIDERS).map(([id, info]) => (
+                            <option key={id} value={id}>
+                              {info.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                          <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                            <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                          </svg>
+                        </div>
                       </div>
                     </div>
                     {(() => {
@@ -2321,9 +2353,12 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
-                    <h3 className="text-sm font-bold text-violet-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
-                      Custom Knowledge
-                    </h3>
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <FileText size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Custom Knowledge</h3>
+                    </div>
                     <p className="text-[10px] text-neutral-500">
                       Create named knowledge packs with custom instructions and files. Attach them in chat to inject context into the assistant.
                     </p>
@@ -2331,38 +2366,34 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
-                    <h3 className="text-sm font-bold text-purple-400 border-b border-white/5 pb-3 flex items-center gap-2 tracking-wider uppercase">
-                      Embeddings
-                    </h3>
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <Activity size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Embeddings</h3>
+                    </div>
                     <div className="space-y-4">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-4">
                         <div>
                           <h4 className="text-sm font-medium text-neutral-200">Embedding Source</h4>
                           <p className="text-[10px] text-neutral-500">
                             Choose how long-term memory embeddings are computed (bundled model vs Ollama).
                           </p>
                         </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleLocalSettingChange('EMBEDDING_SOURCE', 'bundled')}
-                            className={`px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
-                              (settings.embedding_source || 'bundled') === 'bundled'
-                                ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-100'
-                                : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:border-neutral-500'
-                            }`}
+                        <div className="relative">
+                          <select
+                            value={settings.embedding_source || 'bundled'}
+                            onChange={(e) => handleLocalSettingChange('EMBEDDING_SOURCE', e.target.value)}
+                            className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
                           >
-                            Bundled
-                          </button>
-                          <button
-                            onClick={() => handleLocalSettingChange('EMBEDDING_SOURCE', 'ollama')}
-                            className={`px-3 py-1.5 rounded-lg border text-[11px] font-medium transition-all ${
-                              (settings.embedding_source || 'bundled') === 'ollama'
-                                ? 'bg-emerald-500/15 border-emerald-500/60 text-emerald-100'
-                                : 'bg-neutral-900 border-neutral-700 text-neutral-400 hover:border-neutral-500'
-                            }`}
-                          >
-                            Ollama
-                          </button>
+                            <option value="bundled">Bundled</option>
+                            <option value="ollama">Ollama</option>
+                          </select>
+                          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                            <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                              <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                            </svg>
+                          </div>
                         </div>
                       </div>
 
@@ -2484,28 +2515,28 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className={`${SL.toggleRow} space-y-3`}>
-                    <h4 className="text-sm font-medium text-neutral-300">TTS Provider</h4>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleLocalSettingChange('TTS_PROVIDER', 'edge-tts')}
-                        className={`px-4 py-2 rounded-lg border text-sm transition-all ${settings.tts_provider === 'edge-tts'
-                          ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-100'
-                          : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600'}`}
-                      >
-                        Edge TTS (Neural)
-                      </button>
-                      <button
-                        onClick={() => settings.groq_api_key ? handleLocalSettingChange('TTS_PROVIDER', 'groq') : null}
-                        disabled={!settings.groq_api_key}
-                        title={!settings.groq_api_key ? 'Add Groq API key in AI Provider settings to enable' : ''}
-                        className={`px-4 py-2 rounded-lg border text-sm transition-all ${!settings.groq_api_key
-                          ? 'opacity-50 cursor-not-allowed bg-neutral-800 border-neutral-700 text-neutral-500'
-                          : settings.tts_provider === 'groq'
-                            ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-100'
-                            : 'bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600'}`}
-                      >
-                        Groq (Orpheus)
-                      </button>
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-neutral-300">TTS Provider</h4>
+                        <p className="text-[10px] text-neutral-500">Choose the service to read responses aloud.</p>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={settings.tts_provider || 'edge-tts'}
+                          onChange={(e) => handleLocalSettingChange('TTS_PROVIDER', e.target.value)}
+                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
+                        >
+                          <option value="edge-tts">Edge TTS (Neural)</option>
+                          <option value="groq" disabled={!settings.groq_api_key}>
+                            Groq (Orpheus) {!settings.groq_api_key ? '(Key missing)' : ''}
+                          </option>
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                          <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                            <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                          </svg>
+                        </div>
+                      </div>
                     </div>
                     {!settings.groq_api_key && (
                       <div className="text-[10px] text-amber-500/80 bg-amber-500/5 p-2 rounded border border-amber-500/10 flex flex-wrap items-center justify-between gap-2">
@@ -2530,44 +2561,37 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className={`${SL.toggleRow} space-y-3`}>
-                    <h4 className="text-sm font-medium text-neutral-300">Voice Character</h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      {settings.tts_provider === 'groq' ? (
-                        <>
-                          {['hannah', 'troy'].map(v => (
-                            <button
-                              key={v}
-                              onClick={() => handleLocalSettingChange('TTS_VOICE', v)}
-                              className={`px-4 py-3 rounded-xl border text-left transition-all ${settings.tts_voice === v
-                                ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-100'
-                                : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:bg-neutral-800'}`}
-                            >
-                              <div className="text-sm font-medium capitalize">{v}</div>
-                              <div className="text-[10px] text-neutral-500">Groq Orpheus Voice</div>
-                            </button>
-                          ))}
-                        </>
-                      ) : (
-                        <>
-                          {[
-                            { id: 'en-US-EmmaNeural', name: 'Emma', loc: 'US' },
-                            { id: 'en-US-AndrewNeural', name: 'Andrew', loc: 'US' },
-                            { id: 'en-GB-SoniaNeural', name: 'Sonia', loc: 'UK' },
-                            { id: 'en-GB-RyanNeural', name: 'Ryan', loc: 'UK' }
-                          ].map(v => (
-                            <button
-                              key={v.id}
-                              onClick={() => handleLocalSettingChange('TTS_VOICE', v.id)}
-                              className={`px-4 py-3 rounded-xl border text-left transition-all ${settings.tts_voice === v.id
-                                ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-100'
-                                : 'bg-neutral-800/50 border-neutral-700 text-neutral-400 hover:bg-neutral-800'}`}
-                            >
-                              <div className="text-sm font-medium">{v.name} ({v.loc})</div>
-                              <div className="text-[10px] text-neutral-500">Edge Neural Voice</div>
-                            </button>
-                          ))}
-                        </>
-                      )}
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <h4 className="text-sm font-medium text-neutral-300">Voice Character</h4>
+                        <p className="text-[10px] text-neutral-500">Choose the speaker's voice persona.</p>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={settings.tts_voice || ''}
+                          onChange={(e) => handleLocalSettingChange('TTS_VOICE', e.target.value)}
+                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
+                        >
+                          {settings.tts_provider === 'groq' ? (
+                            <>
+                              <option value="hannah">Hannah (Groq Orpheus)</option>
+                              <option value="troy">Troy (Groq Orpheus)</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="en-US-EmmaNeural">Emma (US)</option>
+                              <option value="en-US-AndrewNeural">Andrew (US)</option>
+                              <option value="en-GB-SoniaNeural">Sonia (UK)</option>
+                              <option value="en-GB-RyanNeural">Ryan (UK)</option>
+                            </>
+                          )}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                          <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                            <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                          </svg>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2653,12 +2677,12 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
-                    <div className="flex items-center justify-between pb-4 border-b border-white/5">
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-purple-500/10 rounded-lg text-purple-400">
+                    <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className={SL.cardHeaderIcon}>
                           <Activity size={16} />
                         </div>
-                        <h4 className="text-sm font-bold text-white tracking-wide uppercase">LangSmith Tracing</h4>
+                        <h4 className={SL.sectionTitle}>LangSmith Tracing</h4>
                       </div>
                       <div
                         onClick={() => handleLocalSettingChange('LANGSMITH_TRACING', String(!(settings.langsmith_tracing)))}
