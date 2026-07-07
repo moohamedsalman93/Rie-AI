@@ -93,7 +93,6 @@ export function FloatingChatWindow({
   onDetachKnowledge = () => {},
   settings = {},
   kioskOverlay = false,
-  onToggleKioskOverlay = null,
   kioskSelection = null,
   onAddKioskSelection = null,
   onClearKioskSelection = null,
@@ -146,7 +145,6 @@ export function FloatingChatWindow({
         onOpenSchedule={onOpenScheduleSheet}
         onToggleFriends={onToggleFriendsQuick}
         kioskOverlay={kioskOverlay}
-        onToggleKioskOverlay={onToggleKioskOverlay}
       />
 
       {showWelcome ? (

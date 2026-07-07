@@ -577,6 +577,9 @@ pub fn set_kiosk_overlay_mode(
     app: tauri::AppHandle,
     enabled: bool,
 ) -> Result<(), String> {
+    use tauri::Emitter;
+    let _ = app.emit("kiosk-overlay-toggled", enabled);
+
     #[cfg(target_os = "windows")]
     {
         use tauri::Manager;
@@ -655,6 +658,12 @@ pub fn set_kiosk_overlay_mode(
     }
 
     Ok(())
+}
+
+/// Query if kiosk overlay mode is currently active.
+#[tauri::command]
+pub fn get_kiosk_overlay_mode() -> bool {
+    KIOSK_OVERLAY_ACTIVE.load(Ordering::Relaxed)
 }
 
 /// One-shot: force the window to topmost right now.

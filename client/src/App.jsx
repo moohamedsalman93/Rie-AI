@@ -299,18 +299,6 @@ function MainApp() {
     }
   }, [windowMode]);
 
-  const handleToggleKioskOverlay = useCallback(async () => {
-    const newState = !kioskOverlay;
-    try {
-      if (window.__TAURI_INTERNALS__) {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("set_kiosk_overlay_mode", { enabled: newState });
-      }
-      setKioskOverlay(newState);
-    } catch (err) {
-      console.error("Failed to toggle kiosk overlay:", err);
-    }
-  }, [kioskOverlay]);
 
   const handleOpenSettingsWindow = useCallback(async () => {
     // In plain web/dev mode, keep existing in-window settings behavior.
@@ -2228,6 +2216,31 @@ function MainApp() {
     };
   }, []);
 
+  // Listen for kiosk overlay toggle events from backend/settings page
+  useEffect(() => {
+    let unlistenToggled;
+    const setup = async () => {
+      try {
+        if (window.__TAURI_INTERNALS__) {
+          const { invoke } = await import("@tauri-apps/api/core");
+          const initialMode = await invoke("get_kiosk_overlay_mode");
+          setKioskOverlay(initialMode);
+          
+          unlistenToggled = await listen("kiosk-overlay-toggled", (event) => {
+            console.log("[App] Kiosk overlay toggled event payload:", event.payload);
+            setKioskOverlay(event.payload);
+          });
+        }
+      } catch (err) {
+        console.error("Failed to set up kiosk overlay listeners:", err);
+      }
+    };
+    setup();
+    return () => {
+      if (unlistenToggled) unlistenToggled();
+    };
+  }, []);
+
   // Listen for kiosk selection updates
   useEffect(() => {
     let unlistenSelection;
@@ -2633,7 +2646,6 @@ function MainApp() {
               onAttachKnowledge={attachKnowledge}
               onDetachKnowledge={detachKnowledge}
               kioskOverlay={kioskOverlay}
-              onToggleKioskOverlay={handleToggleKioskOverlay}
               kioskSelection={kioskSelection}
               onAddKioskSelection={() => {
                 if (kioskSelection) {

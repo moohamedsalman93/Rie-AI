@@ -141,10 +141,42 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
   const [isSavingAll, setIsSavingAll] = useState(false);
 
+  // Kiosk mode state
+  const [kioskOverlay, setKioskOverlay] = useState(false);
+
   useEffect(() => {
     loadSettings();
     // fetchRieUsage is now called inside loadSettings once token is retrieved
     getVersion().then(v => setAppVersion(v)).catch(() => setAppVersion('0.1.7'));
+
+    if (window.__TAURI_INTERNALS__) {
+      import("@tauri-apps/api/core").then(({ invoke }) => {
+        invoke("get_kiosk_overlay_mode")
+          .then((enabled) => setKioskOverlay(enabled))
+          .catch((err) => console.error("Failed to get kiosk overlay mode:", err));
+      });
+    }
+  }, []);
+
+  // Listen for kiosk overlay toggle events from backend/other windows
+  useEffect(() => {
+    let unlistenToggled;
+    const setup = async () => {
+      try {
+        if (window.__TAURI_INTERNALS__) {
+          const { listen } = await import("@tauri-apps/api/event");
+          unlistenToggled = await listen("kiosk-overlay-toggled", (event) => {
+            setKioskOverlay(event.payload);
+          });
+        }
+      } catch (err) {
+        console.error("Failed to listen for kiosk-overlay-toggled in SettingsPage:", err);
+      }
+    };
+    setup();
+    return () => {
+      if (unlistenToggled) unlistenToggled();
+    };
   }, []);
 
   // Listen for deep links to update UI immediately
@@ -198,6 +230,19 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
     setRieToken(null);
     setRieUsage(null);
     await loadSettings();
+  };
+
+  const handleToggleKioskOverlaySetting = async () => {
+    const newState = !kioskOverlay;
+    try {
+      if (window.__TAURI_INTERNALS__) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("set_kiosk_overlay_mode", { enabled: newState });
+      }
+      setKioskOverlay(newState);
+    } catch (err) {
+      console.error("Failed to toggle kiosk overlay mode setting:", err);
+    }
   };
 
   useEffect(() => {
@@ -2013,6 +2058,30 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       >
                         <span
                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.exclude_from_capture ?? true) ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-500/10 rounded-lg text-blue-400">
+                          <Shield size={16} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-neutral-200">Kiosk Overlay</h4>
+                          <p className="text-[11px] text-neutral-500 max-w-xs">
+                            Float and overlay above full-screen kiosk apps. (Windows only)
+                          </p>
+                        </div>
+                      </div>
+                      <div
+                        onClick={handleToggleKioskOverlaySetting}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${kioskOverlay ? 'bg-emerald-500' : 'bg-neutral-700'
+                          }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${kioskOverlay ? 'translate-x-6' : 'translate-x-1'
                             }`}
                         />
                       </div>

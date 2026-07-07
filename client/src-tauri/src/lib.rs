@@ -294,6 +294,7 @@ pub fn run() {
             set_foreground_lock,
             set_window_capture_excluded,
             kiosk_overlay::set_kiosk_overlay_mode,
+            kiosk_overlay::get_kiosk_overlay_mode,
             kiosk_overlay::force_topmost,
         ])
         .build(tauri::generate_context!())

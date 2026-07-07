@@ -96,7 +96,7 @@ export const SETTINGS_SEARCH_INDEX = [
   { terms: ['web search tool'], tab: 'capabilities', subTab: 'builtin' },
   { terms: ['voice', 'tts', 'speech', 'edge tts', 'orpheus', 'voice reply'], tab: 'voice' },
   { terms: ['memory', 'embedding', 'ltm', 'bundled', 'nomic'], tab: 'memory' },
-  { terms: ['privacy', 'security', 'hitl', 'terminal restrictions', 'location', 'share location', 'gps'], tab: 'privacy' },
+  { terms: ['privacy', 'security', 'hitl', 'terminal restrictions', 'location', 'share location', 'gps', 'kiosk', 'kiosk overlay'], tab: 'privacy' },
   { terms: ['auto-start', 'autostart', 'launch', 'about', 'docs', 'documentation'], tab: 'privacy' },
   { terms: ['logs', 'debug', 'system logs'], tab: 'diagnostics', subTab: 'logs' },
   { terms: ['langsmith', 'tracing', 'observability', 'trace'], tab: 'diagnostics', subTab: 'tracing' },
