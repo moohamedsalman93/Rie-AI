@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -14,8 +15,21 @@ static OVERLAY_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicI
 /// Global Tauri AppHandle to emit events to the frontend
 pub static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
-/// Stored keyboard hook handle (HHOOK) and the thread handle
-static HOOK_HANDLE: Mutex<Option<(std::thread::JoinHandle<()>, isize)>> = Mutex::new(None);
+/// Stored original window procedure pointer
+static ORIGINAL_WNDPROC: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Track modifier states globally for hotkey detection
+static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
+static ALT_DOWN: AtomicBool = AtomicBool::new(false);
+static CTRL_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Track last emit time per VK code to rate-limit and prevent duplicate/repeat events
+static LAST_KEY_TIME: std::sync::LazyLock<Mutex<std::collections::HashMap<u32, std::time::Instant>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// Track currently held-down keys to filter out hardware auto-repeat
+static PRESSED_KEYS: std::sync::LazyLock<Mutex<HashSet<u32>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
 
 #[derive(serde::Serialize, Clone)]
 struct KeypressPayload {
@@ -35,15 +49,20 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongW, SetWindowLongW, GWL_EXSTYLE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_NOACTIVATE,
     GetCursorPos, GetWindowRect, IsIconic, IsWindowVisible,
-    SetWindowsHookExW, CallNextHookEx, UnhookWindowsHookEx,
-    WH_KEYBOARD_LL, KBDLLHOOKSTRUCT, HC_ACTION, MSG, GetMessageW,
-    TranslateMessage, DispatchMessageW,
+    SetWindowLongPtrW, GWLP_WNDPROC, CallWindowProcW, DefWindowProcW, WM_INPUT,
 };
 
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, ToUnicode, VK_SHIFT, VK_CAPITAL, VK_CONTROL, VK_MENU,
 };
+
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::Input::{
+    RegisterRawInputDevices, GetRawInputData, RAWINPUTDEVICE, RAWINPUT, HRAWINPUT, RID_INPUT,
+    RIDEV_INPUTSINK,
+};
+
 
 // ── Windows-only implementation ──────────────────────────────────────────────
 
@@ -172,9 +191,308 @@ pub mod win {
             std::thread::sleep(std::time::Duration::from_millis(150));
         }
     }
+
+    /// Background selection monitor: queries the focused control for text selection
+    /// and emits it to the frontend via the Tauri AppHandle.
+    pub fn selection_monitor_loop(app: tauri::AppHandle, running: Arc<AtomicBool>) {
+        use tauri::Emitter;
+        
+        println!("[selection-monitor] Thread started");
+        
+        // Initialize COM library for this thread
+        let com_init = unsafe {
+            windows::Win32::System::Com::CoInitializeEx(
+                None,
+                windows::Win32::System::Com::COINIT_MULTITHREADED,
+            )
+        };
+        println!("[selection-monitor] COM init result: {:?}", com_init);
+ 
+        let mut last_selection = String::new();
+
+        while running.load(Ordering::Relaxed) {
+            if let Some(selection) = get_current_selection() {
+                let selection_trimmed = selection.trim().to_string();
+                if !selection_trimmed.is_empty() && selection_trimmed != last_selection {
+                    println!("[selection-monitor] New selection detected: {:?}", selection_trimmed);
+                    last_selection = selection_trimmed.clone();
+                    // Emit to frontend
+                    let _ = app.emit("kiosk-selection-detected", selection_trimmed);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+
+        println!("[selection-monitor] Thread stopping");
+
+        unsafe {
+            windows::Win32::System::Com::CoUninitialize();
+        }
+    }
+
+    fn get_current_selection() -> Option<String> {
+        use uiautomation::UIAutomation;
+        use uiautomation::patterns::UITextPattern;
+
+        let automation = match UIAutomation::new() {
+            Ok(auto) => auto,
+            Err(e) => {
+                println!("[selection-monitor] Failed to create UIAutomation instance: {:?}", e);
+                return None;
+            }
+        };
+
+        let focused = match automation.get_focused_element() {
+            Ok(el) => el,
+            Err(_) => return None,
+        };
+
+        let name = focused.get_name().unwrap_or_default();
+        let class = focused.get_classname().unwrap_or_default();
+        // Avoid spamming logs for Desktop/Pane or Rie-AI itself
+        if class != "#32769" && !class.contains("Tauri") && !name.contains("Rie-AI") {
+            // Uncomment the line below if you want to trace focus transitions
+            // println!("[selection-monitor] Focused control: {} (Class: {})", name, class);
+        }
+
+        let walker = match automation.get_control_view_walker() {
+            Ok(w) => w,
+            Err(e) => {
+                println!("[selection-monitor] Failed to get tree walker: {:?}", e);
+                return None;
+            }
+        };
+
+        // Attempt UITextPattern directly on the focused control
+        if let Ok(text_pattern) = focused.get_pattern::<UITextPattern>() {
+            if let Ok(selections) = text_pattern.get_selection() {
+                if let Some(range) = selections.first() {
+                    if let Ok(text) = range.get_text(-1) {
+                        let text_val = text.trim().to_string();
+                        if !text_val.is_empty() {
+                            return Some(text_val);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try checking parents in case the focus is inside a sub-pane
+        let mut parent = walker.get_parent(&focused).ok();
+        while let Some(current_parent) = parent {
+            if let Ok(text_pattern) = current_parent.get_pattern::<UITextPattern>() {
+                if let Ok(selections) = text_pattern.get_selection() {
+                    if let Some(range) = selections.first() {
+                        if let Ok(text) = range.get_text(-1) {
+                            let text_val = text.trim().to_string();
+                            if !text_val.is_empty() {
+                                return Some(text_val);
+                            }
+                        }
+                    }
+                }
+            }
+            parent = walker.get_parent(&current_parent).ok();
+        }
+
+        None
+    }
+}
+         // ── Windows Raw Input and Subclassing ────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+pub fn register_raw_input(hwnd: isize) -> Result<(), String> {
+    unsafe {
+        let device = RAWINPUTDEVICE {
+            usUsagePage: 0x01,        // HID_USAGE_PAGE_GENERIC
+            usUsage: 0x06,            // HID_USAGE_GENERIC_KEYBOARD
+            dwFlags: RIDEV_INPUTSINK, // Receive input even without focus
+            hwndTarget: HWND(hwnd as *mut _),
+        };
+
+        RegisterRawInputDevices(
+            &[device],
+            std::mem::size_of::<RAWINPUTDEVICE>() as u32,
+        ).map_err(|e| e.to_string())?;
+    }
+    println!("[kiosk-overlay] Raw input devices registered successfully");
+    Ok(())
 }
 
-// ── Global Keyboard Hook — Low Level (WH_KEYBOARD_LL) ─────────────────────────
+#[cfg(target_os = "windows")]
+pub fn subclass_window(hwnd: isize) {
+    unsafe {
+        let original = SetWindowLongPtrW(
+            HWND(hwnd as *mut _),
+            GWLP_WNDPROC,
+            rie_wndproc as *const () as isize,
+        );
+        ORIGINAL_WNDPROC.store(original, Ordering::Relaxed);
+    }
+    println!("[kiosk-overlay] Window subclassed successfully");
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn rie_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let original = ORIGINAL_WNDPROC.load(Ordering::Relaxed);
+
+    if msg == WM_INPUT {
+        let mut size: u32 = 0;
+        let cb_size_header = std::mem::size_of::<windows::Win32::UI::Input::RAWINPUTHEADER>() as u32;
+        let res_size = GetRawInputData(
+            HRAWINPUT(lparam.0 as *mut _),
+            RID_INPUT,
+            None,
+            &mut size,
+            cb_size_header,
+        );
+
+        if res_size != u32::MAX && size > 0 {
+            let mut buf = vec![0u8; size as usize];
+            let res_data = GetRawInputData(
+                HRAWINPUT(lparam.0 as *mut _),
+                RID_INPUT,
+                Some(buf.as_mut_ptr() as *mut _),
+                &mut size,
+                cb_size_header,
+            );
+
+            if res_data != u32::MAX {
+                let raw = &*(buf.as_ptr() as *const RAWINPUT);
+                if raw.header.dwType == windows::Win32::UI::Input::RIM_TYPEKEYBOARD.0 {
+                    let kb = &raw.data.keyboard;
+                    let vk = kb.VKey as u32;
+                    let flags = kb.Flags as u32;
+                    let key_down = (flags & 1) == 0;
+                    let scan_code = kb.MakeCode as u32;
+                    handle_raw_key(vk, key_down, scan_code);
+                }
+            }
+        }
+        
+        // Return DefWindowProcW directly to ensure the raw input block is cleaned up by the OS
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+
+    if original != 0 {
+        CallWindowProcW(
+            Some(std::mem::transmute(original)),
+            hwnd,
+            msg,
+            wparam,
+            lparam
+        )
+    } else {
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn handle_raw_key(vk: u32, key_down: bool, scan_code: u32) {
+    use tauri::Emitter;
+
+    // 1. Track modifier states
+    match vk as u16 {
+        0x10 | 0xA0 | 0xA1 => { // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
+            SHIFT_DOWN.store(key_down, Ordering::Relaxed);
+            update_pressed_set(vk, key_down);
+            return;
+        }
+        0x12 | 0xA4 | 0xA5 => { // VK_MENU, VK_LMENU, VK_RMENU
+            ALT_DOWN.store(key_down, Ordering::Relaxed);
+            update_pressed_set(vk, key_down);
+            if KIOSK_OVERLAY_ACTIVE.load(Ordering::Relaxed) && CAPTURE_KEYS.load(Ordering::Relaxed) {
+                return; // consume Alt entirely when RIE chat is open
+            }
+            return;
+        }
+        0x11 | 0xA2 | 0xA3 => { // VK_CONTROL, VK_LCONTROL, VK_RCONTROL
+            CTRL_DOWN.store(key_down, Ordering::Relaxed);
+            update_pressed_set(vk, key_down);
+            return;
+        }
+        _ => {}
+    }
+
+    // 2. Filter out hardware auto-repeat AND enforce minimum interval between events.
+    if key_down {
+        let mut pressed = PRESSED_KEYS.lock().unwrap();
+        if !pressed.insert(vk) {
+            // Key was already in the set → this is an auto-repeat, ignore it
+            return;
+        }
+        // Also enforce a minimum 50ms cooldown per VK to catch any edge cases
+        let now = std::time::Instant::now();
+        if let Ok(mut times) = LAST_KEY_TIME.lock() {
+            if let Some(last) = times.get(&vk) {
+                if now.duration_since(*last).as_millis() < 50 {
+                    return;
+                }
+            }
+            times.insert(vk, now);
+        }
+    } else {
+        // Key up → remove from pressed set
+        update_pressed_set(vk, false);
+        // Handle PTT key-up (Shift+Alt+S release) before returning
+        if vk == 0x53 && ALT_DOWN.load(Ordering::Relaxed) && SHIFT_DOWN.load(Ordering::Relaxed) {
+            use tauri::Emitter;
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-ptt", "Released");
+            }
+        }
+        return; // Nothing else to do on key-up for non-modifier keys
+    }
+
+    // Detect hotkeys (Shift+Alt+A, Shift+Alt+S, Shift+Alt+C)
+    let alt = ALT_DOWN.load(Ordering::Relaxed);
+    let shift = SHIFT_DOWN.load(Ordering::Relaxed);
+
+    if alt && shift {
+        if vk == 0x41 { // 'A'
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-toggle", ());
+            }
+            return;
+        }
+        if vk == 0x53 { // 'S'
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-ptt", "Pressed");
+            }
+            return;
+        }
+        if vk == 0x43 { // 'C'
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-cancel", ());
+            }
+            return;
+        }
+    }
+
+    // Only process other keys on key down, and only when overlay is active and hovered (CAPTURE_KEYS is true)
+    if KIOSK_OVERLAY_ACTIVE.load(Ordering::Relaxed) && CAPTURE_KEYS.load(Ordering::Relaxed) {
+        process_key_event(vk, scan_code);
+    }
+}
+
+/// Helper: insert or remove a VK from the pressed-keys set.
+#[cfg(target_os = "windows")]
+fn update_pressed_set(vk: u32, down: bool) {
+    if let Ok(mut pressed) = PRESSED_KEYS.lock() {
+        if down {
+            pressed.insert(vk);
+        } else {
+            pressed.remove(&vk);
+        }
+    }
+}
+
+// ── Global Keyboard Hook — Low Level (WH_KEYBOARD_LL) [LEGACY] ─────────────────
 
 #[cfg(target_os = "windows")]
 fn emit_keypress(event_type: &str, key: &str) {
@@ -236,104 +554,11 @@ fn process_key_event(vk_code: u32, scan_code: u32) -> bool {
     false
 }
 
-#[cfg(target_os = "windows")]
-unsafe extern "system" fn keyboard_hook(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    if code == HC_ACTION as i32 && KIOSK_OVERLAY_ACTIVE.load(Ordering::Relaxed) {
-        if CAPTURE_KEYS.load(Ordering::Relaxed) {
-            let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-            let msg_type = wparam.0 as u32;
-            
-            use windows::Win32::UI::WindowsAndMessaging::{WM_KEYDOWN, WM_SYSKEYDOWN};
-            if msg_type == WM_KEYDOWN || msg_type == WM_SYSKEYDOWN {
-                let vk_code = kb.vkCode;
-                let scan_code = kb.scanCode;
-                
-                if process_key_event(vk_code, scan_code) {
-                    return LRESULT(1); // Consume the key, preventing it from reaching the kiosk!
-                }
-            }
-        }
-    }
-    CallNextHookEx(None, code, wparam, lparam)
-}
+// ── Enforcer and Selection Monitor thread handle ───────────────────────────
 
-pub fn install_keyboard_hook() {
-    #[cfg(target_os = "windows")]
-    {
-        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-        use windows::Win32::Foundation::HINSTANCE;
-
-        let mut hook_guard = HOOK_HANDLE.lock().unwrap();
-        if hook_guard.is_none() {
-            let (tx, rx) = std::sync::mpsc::channel();
-            
-            let handle = std::thread::spawn(move || {
-                unsafe {
-                    let hmod = GetModuleHandleW(None).unwrap_or_default();
-                    let hinstance = HINSTANCE(hmod.0);
-
-                    let hook = SetWindowsHookExW(
-                        WH_KEYBOARD_LL,
-                        Some(keyboard_hook),
-                        Some(hinstance),
-                        0,
-                    );
-                    
-                    match hook {
-                        Ok(h) => {
-                            let _ = tx.send(Ok(h.0 as isize));
-                            
-                            let mut msg = MSG::default();
-                            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                                let _ = TranslateMessage(&msg);
-                                let _ = DispatchMessageW(&msg);
-                            }
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Err(e.to_string()));
-                        }
-                    }
-                }
-            });
-            
-            match rx.recv() {
-                Ok(Ok(hwnd_raw)) => {
-                    *hook_guard = Some((handle, hwnd_raw));
-                    println!("[kiosk-overlay] Global keyboard hook installed successfully");
-                }
-                Ok(Err(e)) => {
-                    println!("[kiosk-overlay] Failed to install keyboard hook: {}", e);
-                }
-                Err(_) => {
-                    println!("[kiosk-overlay] Hook thread crashed during installation");
-                }
-            }
-        }
-    }
-}
-
-pub fn uninstall_keyboard_hook() {
-    #[cfg(target_os = "windows")]
-    {
-        let mut hook_guard = HOOK_HANDLE.lock().unwrap();
-        if let Some((_handle, raw_hook)) = hook_guard.take() {
-            unsafe {
-                let _ = UnhookWindowsHookEx(windows::Win32::UI::WindowsAndMessaging::HHOOK(raw_hook as *mut _));
-                println!("[kiosk-overlay] Global keyboard hook uninstalled successfully");
-            }
-        }
-    }
-}
-
-// ── Enforcer thread handle ──────────────────────────────────────────────────
-
-/// Holds the enforcer thread join handle and its stop flag.
+/// Holds the active threads join handles and their stop flag.
 pub struct KioskOverlayState {
-    thread: Mutex<Option<(std::thread::JoinHandle<()>, Arc<AtomicBool>)>>,
+    thread: Mutex<Option<(Vec<std::thread::JoinHandle<()>>, Arc<AtomicBool>)>>,
 }
 
 impl Default for KioskOverlayState {
@@ -373,35 +598,43 @@ pub fn set_kiosk_overlay_mode(
             // Apply overlay styles (adds WS_EX_NOACTIVATE)
             win::apply_overlay_styles(hwnd);
 
-            // Install the keyboard hook to intercept keystrokes
-            install_keyboard_hook();
-
             // Force topmost immediately
             win::force_topmost_once(hwnd);
 
-            // Start enforcer thread if not already running
+            // Start background threads if not already running
             if guard.is_none() {
                 let running = Arc::new(AtomicBool::new(true));
-                let running_clone = running.clone();
-                let handle = std::thread::Builder::new()
+                let running_clone1 = running.clone();
+                let running_clone2 = running.clone();
+                
+                let enforcer_handle = std::thread::Builder::new()
                     .name("kiosk-overlay-enforcer".into())
                     .spawn(move || {
-                        win::enforcer_loop(running_clone);
+                        win::enforcer_loop(running_clone1);
                     })
                     .map_err(|e| e.to_string())?;
-                *guard = Some((handle, running));
+
+                let app_clone = app.clone();
+                let selection_handle = std::thread::Builder::new()
+                    .name("kiosk-overlay-selection-monitor".into())
+                    .spawn(move || {
+                        win::selection_monitor_loop(app_clone, running_clone2);
+                    })
+                    .map_err(|e| e.to_string())?;
+
+                *guard = Some((vec![enforcer_handle, selection_handle], running));
             }
 
-            println!("[kiosk-overlay] Enabled – enforcer thread & keyboard hook started");
+            println!("[kiosk-overlay] Enabled – background threads started");
         } else {
-            // Stop enforcer thread
-            if let Some((handle, running)) = guard.take() {
+            // Stop background threads
+            if let Some((handles, running)) = guard.take() {
                 running.store(false, Ordering::Relaxed);
-                let _ = handle.join();
+                for handle in handles {
+                    let _ = handle.join();
+                }
             }
 
-            // Uninstall the keyboard hook
-            uninstall_keyboard_hook();
             CAPTURE_KEYS.store(false, Ordering::Relaxed);
 
             // Remove overlay styles (removes WS_EX_NOACTIVATE)
@@ -410,7 +643,7 @@ pub fn set_kiosk_overlay_mode(
             // Re-assert normal always-on-top (Tauri's standard)
             win::force_topmost_once(hwnd);
 
-            println!("[kiosk-overlay] Disabled – enforcer thread & keyboard hook stopped");
+            println!("[kiosk-overlay] Disabled – background threads stopped");
         }
     }
 

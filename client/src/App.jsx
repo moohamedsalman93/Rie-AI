@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread } from "./services/chatApi";
 import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
 import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
 import { isTauri, startNativeRecording, stopNativeRecording } from "./utils/tauriNative";
@@ -117,6 +117,7 @@ function MainApp() {
 
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [kioskOverlay, setKioskOverlay] = useState(false);
+  const [kioskSelection, setKioskSelection] = useState(null);
   const [terminalLogs, setTerminalLogs] = useState([]);
   const [availableUpdate, setAvailableUpdate] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -757,7 +758,7 @@ function MainApp() {
     const isScreenToUse = isScreenAttached;
     const imageToUseFromState = overrideImage || attachedImage;
 
-    const performSend = async (imageToUse = imageToUseFromState) => {
+    const performSend = async (imageToUse = imageToUseFromState, desktopText = null) => {
       const threadId = threadIdRef.current;
       lastTurnWasVoiceRef.current = isVoice;
       const friendMeta = friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
@@ -766,10 +767,15 @@ function MainApp() {
         : null;
 
       const detectedUrls = !friendTarget ? extractUrls(trimmed) : [];
+      let finalMsgText = trimmed;
+      if (desktopText) {
+        finalMsgText = `${trimmed}\n\n[Attached Screen Content (extracted via Windows UI Automation)]:\n${desktopText}`;
+      }
+
       const userMessage = {
         id: Date.now(),
         from: "user",
-        text: trimmed,
+        text: finalMsgText,
         image_url: imageToUse,
         clipboard: clipboardToUse,
         ...(detectedUrls.length > 0
@@ -791,7 +797,7 @@ function MainApp() {
       const userMessageId = userMessage.id;
       const botMessageId = Date.now() + 1;
       lastTurnIdsRef.current[threadId] = { userMessageId, botMessageId };
-      lastSentInputsRef.current[threadId] = { text: trimmed, image_url: imageToUse };
+      lastSentInputsRef.current[threadId] = { text: finalMsgText, image_url: imageToUse };
 
       setStreamingThreads(prev => new Set(prev).add(threadId));
       setError(null);
@@ -860,7 +866,7 @@ function MainApp() {
           try {
             await streamFriendChat(
               friendTarget.id,
-              trimmed,
+              finalMsgText,
               threadId,
               (data) => {
                 if (data?.step === "start") {
@@ -895,7 +901,7 @@ function MainApp() {
           }
         }
         await streamChat(
-          trimmed,
+          finalMsgText,
           threadId,
           imageToUse,
           (data) => processStreamChunk(data, botMessageId, threadId, userMessageId),
@@ -956,7 +962,24 @@ function MainApp() {
           await new Promise(resolve => setTimeout(resolve, 300));
         }
 
-        const response = await getScreenshot();
+        let capturedImage = null;
+        let desktopText = null;
+
+        if (settings.capture_screen_as_text === true || settings.capture_screen_as_text === 'true') {
+          try {
+            const res = await getDesktopText();
+            desktopText = res?.text || null;
+          } catch (e) {
+            console.error("Delayed desktop text capture failed:", e);
+          }
+        } else {
+          try {
+            const response = await getScreenshot();
+            capturedImage = response?.image || null;
+          } catch (e) {
+            console.error("Delayed capture failed:", e);
+          }
+        }
 
         if (shouldHide) {
           await win.show();
@@ -970,10 +993,9 @@ function MainApp() {
           }
         }
 
-        const capturedImage = response?.image || null;
-        await performSend(capturedImage);
+        await performSend(capturedImage, desktopText);
       } catch (err) {
-        console.error("Delayed capture failed:", err);
+        console.error("Delayed capture overall outer wrapper failed:", err);
         const shouldHide = settings.exclude_from_capture !== false;
         if (shouldHide) {
           const win = getWindow();
@@ -1796,7 +1818,7 @@ function MainApp() {
       const { key, value } = event.payload;
       const field = key.toLowerCase();
       const parsedValue =
-        key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'HITL_ENABLED' || key === 'LANGSMITH_TRACING' || key === 'CONNECTIVITY_NGROK_ENABLED' || key === 'SHOW_BUBBLE'
+        key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'HITL_ENABLED' || key === 'LANGSMITH_TRACING' || key === 'CONNECTIVITY_NGROK_ENABLED' || key === 'SHOW_BUBBLE' || key === 'CAPTURE_SCREEN_AS_TEXT'
           ? (value === 'true' || value === true)
           : value;
 
@@ -2102,6 +2124,10 @@ function MainApp() {
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   useEffect(() => {
+    // On Windows, we intercept shortcuts via Raw Input in the backend to hide them from the kiosk
+    const isWindows = navigator.userAgent.includes("Windows");
+    if (isWindows) return;
+
     const shortcuts = ["Alt+Shift+S", "Alt+Shift+C", "Alt+Shift+A"];
     let mounted = true;
 
@@ -2174,13 +2200,11 @@ function MainApp() {
     initWindow();
   }, [isAppInitializing]);
 
-  // Listen for clipboard updates and global keypresses from backend
+  // Listen for clipboard updates from backend
   useEffect(() => {
     let unlistenClipboard;
-    let unlistenKeypress;
 
-    const setupListener = async () => {
-      // 1. Clipboard listener
+    const setup = async () => {
       unlistenClipboard = await listen("clipboard-update", (event) => {
         const text = event.payload;
         if (text && text.trim()) {
@@ -2194,12 +2218,74 @@ function MainApp() {
           }, 10000);
         }
       });
+    };
 
-      // 2. Global keyboard hook listener for kiosk mode (stealth input piping)
-      unlistenKeypress = await listen("rie-keypress", (event) => {
+    setup();
+
+    return () => {
+      if (unlistenClipboard) unlistenClipboard();
+      if (clipboardTimeoutRef.current) clearTimeout(clipboardTimeoutRef.current);
+    };
+  }, []);
+
+  // Listen for kiosk selection updates
+  useEffect(() => {
+    let unlistenSelection;
+
+    const setup = async () => {
+      try {
+        unlistenSelection = await listen("kiosk-selection-detected", (event) => {
+          const text = event.payload;
+          console.log("[App] Kiosk selection event payload:", text);
+          if (text && text.trim()) {
+            setKioskSelection(text);
+          }
+        });
+      } catch (err) {
+        console.error("Failed to register kiosk-selection-detected listener:", err);
+      }
+    };
+
+    setup();
+
+    return () => {
+      if (unlistenSelection) unlistenSelection();
+    };
+  }, []);
+
+  // Global keyboard hook listener for kiosk mode (stealth input piping)
+  // Uses a module-level singleton to guarantee exactly ONE listener exists,
+  // even across React StrictMode double-mounts and Vite HMR reloads.
+  useEffect(() => {
+    // Always clean up any previously leaked listener first
+    if (window.__rieKeypressUnlisten) {
+      window.__rieKeypressUnlisten();
+      window.__rieKeypressUnlisten = null;
+    }
+
+    let cancelled = false;
+
+    const setup = async () => {
+      const unlisten = await listen("rie-keypress", (event) => {
+        // If the document already has OS focus, the browser natively handles the keyboard input.
+        // Manually piping raw input in this state causes double-typing.
+        if (document.hasFocus()) {
+          return;
+        }
+
         const { type, key } = event.payload;
         const textarea = textareaRef.current;
         if (!textarea) return;
+
+        // Nuclear dedup: reject duplicate calls for same key within 30ms.
+        // This catches ALL duplication — stacked listeners, HMR leaks, StrictMode, etc.
+        if (type === "char" || type === "special") {
+          if (!window.__rieLastKeyTime) window.__rieLastKeyTime = {};
+          const dedupKey = `${type}:${key}`;
+          const now = performance.now();
+          if (now - (window.__rieLastKeyTime[dedupKey] || 0) < 30) return;
+          window.__rieLastKeyTime[dedupKey] = now;
+        }
 
         // Focus inside WebView's DOM (does not change OS active window)
         textarea.focus();
@@ -2242,16 +2328,76 @@ function MainApp() {
         // Sync local React state with the DOM textarea value modified by execCommand
         setInput(textarea.value);
       });
+
+      if (cancelled) {
+        // Effect was cleaned up before setup completed — dispose immediately
+        unlisten();
+      } else {
+        window.__rieKeypressUnlisten = unlisten;
+      }
     };
 
-    setupListener();
+    setup();
 
     return () => {
-      if (unlistenClipboard) unlistenClipboard();
-      if (unlistenKeypress) unlistenKeypress();
-      if (clipboardTimeoutRef.current) clearTimeout(clipboardTimeoutRef.current);
+      cancelled = true;
+      if (window.__rieKeypressUnlisten) {
+        window.__rieKeypressUnlisten();
+        window.__rieKeypressUnlisten = null;
+      }
     };
   }, []);
+
+  // Raw Input custom shortcut listeners on Windows (toggle, PTT, cancel)
+  useEffect(() => {
+    if (!navigator.userAgent.includes("Windows")) return;
+
+    let isCancelled = false;
+    let unlistenToggle;
+    let unlistenPtt;
+    let unlistenCancel;
+
+    const setup = async () => {
+      unlistenToggle = await listen("rie-shortcut-toggle", () => {
+        if (isOpenRef.current) {
+          handleMinimize();
+        } else {
+          handleOpen();
+        }
+      });
+      if (isCancelled) { unlistenToggle(); return; }
+
+      unlistenPtt = await listen("rie-shortcut-ptt", (event) => {
+        const state = event.payload;
+        if (state === "Pressed") {
+          if (!isGlobalPTTPressedRef.current) {
+            isGlobalPTTPressedRef.current = true;
+            startRecording();
+          }
+        } else if (state === "Released") {
+          isGlobalPTTPressedRef.current = false;
+          stopRecording();
+        }
+      });
+      if (isCancelled) { unlistenPtt(); if (unlistenToggle) unlistenToggle(); return; }
+
+      unlistenCancel = await listen("rie-shortcut-cancel", () => {
+        if (isLoadingRef.current && threadIdRef.current) {
+          handleCancelRequest();
+        }
+      });
+      if (isCancelled) { unlistenCancel(); if (unlistenToggle) unlistenToggle(); if (unlistenPtt) unlistenPtt(); return; }
+    };
+
+    setup();
+
+    return () => {
+      isCancelled = true;
+      if (unlistenToggle) unlistenToggle();
+      if (unlistenPtt) unlistenPtt();
+      if (unlistenCancel) unlistenCancel();
+    };
+  }, [startRecording, stopRecording, handleCancelRequest]);
   //#endregion
 
   return (
@@ -2488,6 +2634,15 @@ function MainApp() {
               onDetachKnowledge={detachKnowledge}
               kioskOverlay={kioskOverlay}
               onToggleKioskOverlay={handleToggleKioskOverlay}
+              kioskSelection={kioskSelection}
+              onAddKioskSelection={() => {
+                if (kioskSelection) {
+                  const separator = input.trim() ? " " : "";
+                  setInput(input + separator + kioskSelection);
+                  setKioskSelection(null);
+                }
+              }}
+              onClearKioskSelection={() => setKioskSelection(null)}
             />
           )}
         </AnimatePresence>

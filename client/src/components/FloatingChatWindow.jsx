@@ -94,6 +94,9 @@ export function FloatingChatWindow({
   settings = {},
   kioskOverlay = false,
   onToggleKioskOverlay = null,
+  kioskSelection = null,
+  onAddKioskSelection = null,
+  onClearKioskSelection = null,
 }) {
   return (
     <motion.section
@@ -240,6 +243,10 @@ export function FloatingChatWindow({
             attachedKnowledge={attachedKnowledge}
             onAttachKnowledge={onAttachKnowledge}
             onDetachKnowledge={onDetachKnowledge}
+            kioskOverlay={kioskOverlay}
+            kioskSelection={kioskSelection}
+            onAddKioskSelection={onAddKioskSelection}
+            onClearKioskSelection={onClearKioskSelection}
           />
 
           <Terminal

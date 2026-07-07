@@ -848,6 +848,22 @@ export async function getScreenshot() {
 }
 
 /**
+ * Capture desktop text context from the backend via UI Automation
+ * @returns {Promise<{text: string}>}
+ */
+export async function getDesktopText() {
+  const response = await fetch(`${API_BASE_URL}/desktop-text`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to capture desktop text");
+  }
+  return response.json();
+}
+
+/**
  * Transcribe audio blob using the backend STT endpoint
  * @param {Blob} audioBlob
  * @returns {Promise<{text: string}>}

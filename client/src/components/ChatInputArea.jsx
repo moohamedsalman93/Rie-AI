@@ -33,6 +33,10 @@ export function ChatInputArea({
   attachedKnowledge = [],
   onAttachKnowledge,
   onDetachKnowledge,
+  kioskOverlay = false,
+  kioskSelection = null,
+  onAddKioskSelection = null,
+  onClearKioskSelection = null,
 }) {
   const [dragCounter, setDragCounter] = useState(0);
   const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
@@ -200,6 +204,41 @@ export function ChatInputArea({
                   </svg>
                 </button>
               </div>
+            </motion.div>
+          )}
+          {kioskOverlay && kioskSelection && (
+            <motion.div
+              key="kiosk-selection-chip"
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              className="relative self-start"
+            >
+              <button
+                onClick={onAddKioskSelection}
+                className="flex items-center gap-2 rounded-lg bg-pink-600/20 hover:bg-pink-600/40 border border-pink-500/30 px-2.5 py-1.5 backdrop-blur-md transition-colors text-left"
+                title="Click to insert selected text into input field"
+              >
+                <div className="flex h-5 w-5 items-center justify-center rounded bg-pink-500/20 text-pink-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </div>
+                <span className="text-xs font-semibold text-pink-300 max-w-[200px] truncate">
+                  Add Selection: "{kioskSelection}"
+                </span>
+              </button>
+              <button
+                onClick={onClearKioskSelection}
+                className="absolute -right-1.5 -top-1.5 rounded-full bg-neutral-800 border border-white/10 p-0.5 text-neutral-400 hover:text-white"
+                title="Dismiss"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
             </motion.div>
           )}
           <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} />

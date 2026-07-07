@@ -424,7 +424,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
 
     const field = key.toLowerCase();
     let parsedValue = value;
-    if (key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'LANGSMITH_TRACING') {
+    if (key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'LANGSMITH_TRACING' || key === 'CAPTURE_SCREEN_AS_TEXT') {
       parsedValue = (value === 'true' || value === true);
     } else if (key === 'MCP_SERVERS' || key === 'EXTERNAL_APIS' || key === 'ENABLED_TOOLS') {
       try {
@@ -2013,6 +2013,30 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       >
                         <span
                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.exclude_from_capture ?? true) ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between border-t border-white/5 pt-4">
+                      <div className="flex items-start gap-3">
+                        <div className="premium-icon-glow mt-0.5 shrink-0 rounded-lg bg-emerald-500/10 p-2 text-emerald-400">
+                          <FileText size={16} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-neutral-200">UIA Screen Capture (Text)</h4>
+                          <p className="text-[11px] text-neutral-500 max-w-xs">
+                            Extract text/structure via Windows UI Automation when attaching "Current Screen" instead of capturing a visual screenshot. Useful in kiosk/lockdown environments.
+                          </p>
+                        </div>
+                      </div>
+                      <div
+                        onClick={() => handleLocalSettingChange('CAPTURE_SCREEN_AS_TEXT', String(!(settings.capture_screen_as_text ?? false)))}
+                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.capture_screen_as_text ?? false) ? 'bg-emerald-500' : 'bg-neutral-700'
+                          }`}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.capture_screen_as_text ?? false) ? 'translate-x-6' : 'translate-x-1'
                             }`}
                         />
                       </div>

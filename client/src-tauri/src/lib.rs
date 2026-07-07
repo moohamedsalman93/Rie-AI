@@ -177,6 +177,9 @@ pub fn run() {
                     unsafe {
                         let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
                     }
+                    let hwnd_raw = hwnd.0 as isize;
+                    let _ = kiosk_overlay::register_raw_input(hwnd_raw);
+                    kiosk_overlay::subclass_window(hwnd_raw);
                 }
             }
 
@@ -297,12 +300,6 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                // Ensure the keyboard hook is cleaned up if we terminate
-                #[cfg(target_os = "windows")]
-                {
-                    kiosk_overlay::uninstall_keyboard_hook();
-                }
-
                 let state = app_handle.state::<BackendState>();
                 let mut lock = state.0.lock().unwrap();
                 

@@ -335,6 +335,11 @@ class Settings:
         return self._get("EXCLUDE_FROM_CAPTURE", "true").lower() == "true"
 
     @property
+    def CAPTURE_SCREEN_AS_TEXT(self) -> bool:
+        """Whether to capture the screen context as text/UIA tree instead of a screenshot image."""
+        return self._get("CAPTURE_SCREEN_AS_TEXT", "false").lower() == "true"
+
+    @property
     def FLOATING_CHAT_OPACITY(self) -> float:
         """The opacity of the floating chat window (between 0.1 and 1.0)."""
         try:

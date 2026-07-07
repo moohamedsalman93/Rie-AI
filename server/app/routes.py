@@ -624,6 +624,7 @@ async def get_settings():
         voice_reply=settings.VOICE_REPLY,
         share_location=settings.SHARE_LOCATION,
         exclude_from_capture=settings.EXCLUDE_FROM_CAPTURE,
+        capture_screen_as_text=settings.CAPTURE_SCREEN_AS_TEXT,
         floating_chat_opacity=settings.FLOATING_CHAT_OPACITY,
         show_bubble=settings.SHOW_BUBBLE,
         rie_access_token=mask_key(settings.RIE_ACCESS_TOKEN),
@@ -677,7 +678,7 @@ async def update_settings(data: SettingsUpdate):
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
-        "VOICE_REPLY", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
+        "VOICE_REPLY", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "CAPTURE_SCREEN_AS_TEXT", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
         "OLLAMA_MODEL", "OLLAMA_API_URL", "OLLAMA_API_KEY", "EXTERNAL_APIS",
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
         "SUBAGENTS_CONFIG",
@@ -2258,6 +2259,20 @@ async def get_screenshot():
         return {"image": f"data:image/jpeg;base64,{img_str}"}
     except Exception as e:
         logging.error(f"Screenshot failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/desktop-text")
+async def get_desktop_text():
+    """
+    Get the text/UIA representation of the current screen/desktop
+    """
+    from app.windows_tools import state_tool
+    try:
+        text = await run_in_threadpool(state_tool, use_vision=False, use_dom=False)
+        return {"text": text}
+    except Exception as e:
+        logging.error(f"Desktop text capture failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
