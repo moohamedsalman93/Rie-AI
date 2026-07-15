@@ -11,6 +11,7 @@ import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHisto
 import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
 import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
 import { isTauri, startNativeRecording, stopNativeRecording } from "./utils/tauriNative";
+import { extractUrls } from "./utils/urlUtils";
 import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
@@ -30,7 +31,7 @@ import {
 import { useWindowManager } from "./hooks/useWindowManager";
 import { useAttachments } from "./hooks/useAttachments";
 import { useKnowledgeAttachment } from "./hooks/useKnowledgeAttachment";
-import { extractUrls } from "./utils/urlUtils";
+
 
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
 function mergeScheduleNotificationLog(prev, incoming) {
@@ -193,6 +194,8 @@ function MainApp() {
     processFilePath,
   } = attachments;
   //#endregion
+
+
 
   //#region Refs
   const messagesEndRef = useRef(null);
@@ -924,7 +927,8 @@ function MainApp() {
           chatMode,
           speedMode,
           friendTarget || undefined,
-          newKnowledgeIds.length ? newKnowledgeIds : null
+          newKnowledgeIds.length ? newKnowledgeIds : null,
+          null
         );
       } catch (err) {
         console.error("Chat error:", err);
@@ -2484,75 +2488,77 @@ function MainApp() {
               ) : isSettingsOpen ? (
                 <SettingsPage onClose={() => setIsSettingsOpen(false)} />
               ) : (
-              <NormalModeLayout
-                  messages={sessions[activeThreadId] || initialMessages}
-                  sessionsByThread={sessions}
-                  input={input}
-                  setInput={setInput}
-                  isLoading={isLoading}
-                  streamingThreads={streamingThreads}
-                  onSend={handleSend}
-                  onCancel={handleCancelRequest}
-                  onSelectThread={handleSelectThread}
-                  onDeleteThread={handleDeleteThread}
-                  onNewChat={handleNewChat}
-                  currentThreadId={activeThreadId}
-                  onOpenSettings={handleOpenSettingsWindow}
-                  onToggleFloating={handleToggleWindowMode}
-                  onCloseApp={handleCloseApp}
-                  onMinimize={() => getWindow().minimize()}
-                  isTerminalOpen={isTerminalOpen}
-                  onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
-                  terminalLogs={terminalLogs}
-                  apiStatus={apiStatus}
-                  messagesEndRef={messagesEndRef}
-                  textareaRef={textareaRef}
-                  streamingBotMessageId={isLoading ? lastTurnIdsRef.current[activeThreadId]?.botMessageId : null}
-                  attachedImage={attachedImage}
-                  setAttachedImage={setAttachedImage}
-                  isScreenAttached={isScreenAttached}
-                  setIsScreenAttached={setIsScreenAttached}
-                  projectRoot={projectRoot}
-                  projectRootChip={projectRootChip}
-                  setProjectRoot={setProjectRoot}
-                  setProjectRootChip={setProjectRootChip}
-                  onFileUpload={handleFileUpload}
-                  onCaptureScreen={handleCaptureScreen}
-                  onPickProjectPath={handlePickProjectPath}
-                  isCapturing={isCapturing}
-                  isRecording={isRecording}
-                  isAttachmentPopoverOpen={isAttachmentPopoverOpen}
-                  setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
-                  attachedClipboardText={attachedClipboardText}
-                  setAttachedClipboardText={setAttachedClipboardText}
-                  onAttachClipboard={handleAttachClipboard}
-                  onDeleteMessage={handleDeleteMessage}
-                  onOpenMessageInNewChat={handleOpenMessageInNewChat}
-                  typesWrite={typesWrite}
-                  setTypesWrite={setTypesWrite}
-                  isWindowDraggingFile={isWindowDraggingFile}
-                  pendingAction={pendingActions[activeThreadId] || null}
-                  onActionDecision={handleActionDecision}
-                  chatMode={chatMode}
-                  setChatMode={setChatMode}
-                  speedMode={speedMode}
-                  setSpeedMode={setSpeedMode}
-                  provider={settings?.llm_provider || 'rie'}
-                  onClearTerminal={handleClearTerminal}
-                  scheduleNotifications={scheduleNotificationLog}
-                  scheduleUnreadCount={scheduleNotifications.length}
-                  onScheduleMarkRead={handleScheduleMarkRead}
-                  onScheduleMarkAllRead={handleScheduleMarkAllRead}
-                  onScheduleOpenChat={handleScheduleOpenChat}
-                  friends={friends}
-                  friendThreadMeta={friendThreadMeta}
-                  activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
-                  onSelectFriendChat={handleSelectFriendChat}
-                  onStartFriendChat={handleStartFriendChat}
-                  attachedKnowledge={attachedKnowledge}
-                  onAttachKnowledge={attachKnowledge}
-                  onDetachKnowledge={detachKnowledge}
-                />
+                <>
+                  <NormalModeLayout
+                    messages={sessions[activeThreadId] || initialMessages}
+                    sessionsByThread={sessions}
+                    input={input}
+                    setInput={setInput}
+                    isLoading={isLoading}
+                    streamingThreads={streamingThreads}
+                    onSend={handleSend}
+                    onCancel={handleCancelRequest}
+                    onSelectThread={handleSelectThread}
+                    onDeleteThread={handleDeleteThread}
+                    onNewChat={handleNewChat}
+                    currentThreadId={activeThreadId}
+                    onOpenSettings={handleOpenSettingsWindow}
+                    onToggleFloating={handleToggleWindowMode}
+                    onCloseApp={handleCloseApp}
+                    onMinimize={() => getWindow().minimize()}
+                    isTerminalOpen={isTerminalOpen}
+                    onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
+                    terminalLogs={terminalLogs}
+                    apiStatus={apiStatus}
+                    messagesEndRef={messagesEndRef}
+                    textareaRef={textareaRef}
+                    streamingBotMessageId={isLoading ? lastTurnIdsRef.current[activeThreadId]?.botMessageId : null}
+                    attachedImage={attachedImage}
+                    setAttachedImage={setAttachedImage}
+                    isScreenAttached={isScreenAttached}
+                    setIsScreenAttached={setIsScreenAttached}
+                    projectRoot={projectRoot}
+                    projectRootChip={projectRootChip}
+                    setProjectRoot={setProjectRoot}
+                    setProjectRootChip={setProjectRootChip}
+                    onFileUpload={handleFileUpload}
+                    onCaptureScreen={handleCaptureScreen}
+                    onPickProjectPath={handlePickProjectPath}
+                    isCapturing={isCapturing}
+                    isRecording={isRecording}
+                    isAttachmentPopoverOpen={isAttachmentPopoverOpen}
+                    setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
+                    attachedClipboardText={attachedClipboardText}
+                    setAttachedClipboardText={setAttachedClipboardText}
+                    onAttachClipboard={handleAttachClipboard}
+                    onDeleteMessage={handleDeleteMessage}
+                    onOpenMessageInNewChat={handleOpenMessageInNewChat}
+                    typesWrite={typesWrite}
+                    setTypesWrite={setTypesWrite}
+                    isWindowDraggingFile={isWindowDraggingFile}
+                    pendingAction={pendingActions[activeThreadId] || null}
+                    onActionDecision={handleActionDecision}
+                    chatMode={chatMode}
+                    setChatMode={setChatMode}
+                    speedMode={speedMode}
+                    setSpeedMode={setSpeedMode}
+                    provider={settings?.llm_provider || 'rie'}
+                    onClearTerminal={handleClearTerminal}
+                    scheduleNotifications={scheduleNotificationLog}
+                    scheduleUnreadCount={scheduleNotifications.length}
+                    onScheduleMarkRead={handleScheduleMarkRead}
+                    onScheduleMarkAllRead={handleScheduleMarkAllRead}
+                    onScheduleOpenChat={handleScheduleOpenChat}
+                    friends={friends}
+                    friendThreadMeta={friendThreadMeta}
+                    activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+                    onSelectFriendChat={handleSelectFriendChat}
+                    onStartFriendChat={handleStartFriendChat}
+                    attachedKnowledge={attachedKnowledge}
+                    onAttachKnowledge={attachKnowledge}
+                    onDetachKnowledge={detachKnowledge}
+                  />
+                </>
               )}
             </motion.div>
           ) : !isOpen ? (

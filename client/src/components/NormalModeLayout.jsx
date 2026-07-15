@@ -12,6 +12,7 @@ import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
 import { KnowledgeAttachmentChips, KnowledgeHistoryBadge, KnowledgeChatBanner } from './KnowledgeAttachmentChips';
 import { KnowledgePickerModal } from './KnowledgePickerModal';
+import { fetchActiveSkills } from '../services/skillsApi';
 import logo from '../assets/logo.png';
 
 export function NormalModeLayout({
@@ -94,9 +95,20 @@ export function NormalModeLayout({
     const [showExitConfirm, setShowExitConfirm] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(true);
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
+    const [activeSkillsList, setActiveSkillsList] = useState([]);
     const isDragging = dragCounter > 0;
     const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0;
     const isNewChat = !messages || messages.length === 0;
+
+    useEffect(() => {
+        if (!currentThreadId) {
+            setActiveSkillsList([]);
+            return;
+        }
+        fetchActiveSkills(currentThreadId, projectRoot)
+            .then((data) => setActiveSkillsList(data))
+            .catch(() => {});
+    }, [currentThreadId, projectRoot]);
 
     const attachImageFile = (file) => {
         if (!file || !file.type?.startsWith("image/")) return;
@@ -487,6 +499,7 @@ export function NormalModeLayout({
                                 </div>
                             )}
                             <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
+                            <SkillsChatBanner activeSkills={activeSkillsList} />
                             <AnimatePresence>
                                 {messages.map((m) => {
                                     if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
@@ -704,6 +717,96 @@ export function NormalModeLayout({
                             )}
                         </AnimatePresence>
                         <div className="flex flex-col gap-2">
+                            {/* Attachment previews (Moved Above) */}
+                            {(attachedImage || isScreenAttached || projectRoot || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0)) && (
+                                <div className={`flex flex-wrap gap-2 ${isNewChat ? 'w-[80%]' : 'w-[70%]'} mx-auto overflow-x-auto justify-center mb-2`}>
+                                    <AnimatePresence>
+                                        {attachedImage && (
+                                            <motion.div
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="relative self-start"
+                                            >
+                                                <div className="h-16 w-16 overflow-hidden rounded-lg border border-neutral-700">
+                                                    <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
+                                                </div>
+                                                <button
+                                                    onClick={() => setAttachedImage(null)}
+                                                    className="absolute -right-1.5 -top-1.5 rounded-full bg-red-500 p-0.5 text-white"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                        {isScreenAttached && (
+                                            <motion.div
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                                                    <rect width="20" height="14" x="2" y="3" rx="2" />
+                                                    <path d="M8 21h8" />
+                                                    <path d="M12 17v4" />
+                                                </svg>
+                                                <span className="text-xs text-emerald-400">@current_screen</span>
+                                                <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                        {projectRoot && (
+                                            <motion.div
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+                                                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                                </svg>
+                                                <span className="text-xs text-amber-400">@{projectRootChip}</span>
+                                                <button onClick={() => { setProjectRoot(null); setProjectRootChip(null); }} className="text-amber-400/60 hover:text-amber-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                        {attachedClipboardText && (
+                                            <motion.div
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
+                                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                </svg>
+                                                <span className="text-xs text-pink-400">@clipboard</span>
+                                                <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                        <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
+                                    </AnimatePresence>
+                                </div>
+                            )}
+
                             <div className="flex items-end justify-center gap-2">
                                 {/* Attachment button (Restore for active chat) */}
                                 {!isNewChat && (
@@ -882,94 +985,6 @@ export function NormalModeLayout({
                                     </button>
                                 </div>
                             )}
-
-                            {/* Attachment previews (Moved Below) */}
-                            <div className='flex flex-wrap gap-2 w-[70%] mx-auto overflow-x-auto justify-center mt-2'>
-                                <AnimatePresence>
-                                    {attachedImage && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="relative self-start"
-                                        >
-                                            <div className="h-16 w-16 overflow-hidden rounded-lg border border-neutral-700">
-                                                <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
-                                            </div>
-                                            <button
-                                                onClick={() => setAttachedImage(null)}
-                                                className="absolute -right-1.5 -top-1.5 rounded-full bg-red-500 p-0.5 text-white"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                    {isScreenAttached && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 self-start"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                <path d="M8 21h8" />
-                                                <path d="M12 17v4" />
-                                            </svg>
-                                            <span className="text-xs text-emerald-400">@current_screen</span>
-                                            <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                    {projectRoot && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 self-start"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                            </svg>
-                                            <span className="text-xs text-amber-400">@{projectRootChip}</span>
-                                            <button onClick={() => { setProjectRoot(null); setProjectRootChip(null); }} className="text-amber-400/60 hover:text-amber-400">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                    {attachedClipboardText && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="flex items-center gap-2 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-1 self-start"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                            </svg>
-                                            <span className="text-xs text-pink-400">@clipboard</span>
-                                            <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                    <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
-                                </AnimatePresence>
-                            </div>
                         </div>
                     </footer>
 
@@ -1092,6 +1107,22 @@ export function NormalModeLayout({
                 onSelect={(pack) => onAttachKnowledge(pack)}
                 attachedIds={attachedKnowledge.map((k) => k.id)}
             />
+        </div>
+    );
+}
+
+export function SkillsChatBanner({ activeSkills = [] }) {
+    if (!activeSkills?.length) return null;
+    const names = activeSkills.map((s) => `${s.icon || '🧠'} ${s.name}`).join(', ');
+    return (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 flex items-center justify-between gap-3 mb-3 animate-in fade-in duration-300">
+            <div>
+                <span className="font-semibold">Active Instructions: </span>
+                <span className="text-emerald-200/80">{names}</span>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-semibold shrink-0 bg-emerald-950/40 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                Injected
+            </span>
         </div>
     );
 }

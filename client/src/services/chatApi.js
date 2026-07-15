@@ -250,7 +250,8 @@ export async function streamChat(
   chatMode = "agent",
   speedMode = "thinking",
   friendTarget = null,
-  knowledgeIds = null
+  knowledgeIds = null,
+  skillIds = null
 ) {
   const payload = {
     message,
@@ -265,6 +266,7 @@ export async function streamChat(
     friend_target_id: friendTarget?.id || null,
     friend_target_name: friendTarget?.name || null,
     ...(knowledgeIds?.length ? { knowledge_ids: knowledgeIds } : {}),
+    ...(skillIds?.length ? { skill_ids: skillIds } : {}),
     ...(await getClientContextPayload()),
   };
   try {

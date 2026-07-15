@@ -51,6 +51,10 @@ class ChatMessage(BaseModel):
         default=None,
         description="Custom knowledge pack ids newly attached this turn",
     )
+    skill_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Active skill IDs whose instructions should be injected this turn",
+    )
 
 
 class KnowledgePackCreate(BaseModel):
@@ -496,5 +500,41 @@ class NgrokStatusResponse(BaseModel):
     tunnel_pid: Optional[int] = None
     domain: Optional[str] = None
     ready_state: str = "not_ready"
+
+
+# ---------------------------------------------------------------------------
+# Skills
+# ---------------------------------------------------------------------------
+
+class SkillCreate(BaseModel):
+    """Request model for creating a skill."""
+    name: str = Field(..., description="Display name for the skill")
+    description: str = Field("", description="Short description of what this skill does")
+    content: str = Field(..., description="Markdown instructions the agent will follow")
+    icon: str = Field("🧠", description="Emoji or short icon string")
+    tool_ids: List[str] = Field(default_factory=list, description="Tool IDs this skill grants advisory access to")
+
+
+class SkillUpdate(BaseModel):
+    """Request model for updating a skill (all fields optional)."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    content: Optional[str] = None
+    icon: Optional[str] = None
+    tool_ids: Optional[List[str]] = None
+    enabled: Optional[bool] = None
+
+
+class SkillResponse(BaseModel):
+    """Response model for a single skill."""
+    id: str
+    name: str
+    description: str
+    content: str
+    icon: str
+    tool_ids: List[str]
+    enabled: bool
+    created_at: str
+    updated_at: str
 
 

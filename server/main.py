@@ -52,7 +52,7 @@ from app.mcp_client import mcp_manager
 from app.scheduler import scheduler_manager
 from app.connectivity.ngrok_autostart import try_start_ngrok_tunnel_on_startup
 
-# Initialize database
+# Initialize database and populate default configurations including PDF skills
 init_db()
 
 # Create FastAPI application instance

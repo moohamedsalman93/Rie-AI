@@ -304,6 +304,95 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_peer_query_events_created ON peer_query_events(created_at DESC)"
     )
 
+    # Skills system
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            content TEXT NOT NULL,
+            icon TEXT DEFAULT '🧠',
+            tool_ids TEXT DEFAULT '[]',
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS thread_skills (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            skill_id TEXT NOT NULL,
+            attached_at TEXT NOT NULL,
+            UNIQUE(thread_id, skill_id),
+            FOREIGN KEY(thread_id) REFERENCES threads(id) ON DELETE CASCADE,
+            FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_thread_skills_thread ON thread_skills(thread_id)"
+    )
+
+    # Populate default skills if they don't exist by name
+    import uuid
+    from datetime import datetime
+    now = datetime.utcnow().isoformat()
+    
+    defaults = [
+        (
+            "⚛️",
+            "React & TS Guidelines",
+            "React components and TypeScript style rules.",
+            "Use functional components and React Hooks only.\nAlways use strict type definitions; avoid using `any` at all costs.\nPrefer Tailwind CSS classes for styling unless customized.\nKeep components clean, modular, and focused (usually under 200 lines).\nExport interfaces and types cleanly at the top of files."
+        ),
+        (
+            "📝",
+            "Python Style Guide",
+            "Python coding conventions and guidelines.",
+            "Always write type hints for all function arguments and return types.\nPrefer Python 3.10+ syntax (e.g. use `x | y` instead of `Union[x, y]`).\nWrite clean docstrings following Google Style style guide.\nUse pytest for tests and place them in `tests/` directory.\nPrefer pathlib over os.path for all filesystem operations."
+        ),
+        (
+            "🚀",
+            "No Code Placeholders",
+            "Enforces complete, self-contained, working implementations.",
+            "Never use placeholder comments like `// TODO`, `// implement later`, or `...`.\nAlways write the complete logic so the code can build and execute immediately.\nWhen modifying files, write the full modified segments cleanly, including necessary imports.\nDouble-check edge cases, error handling, and parameter validations before completing tasks."
+        ),
+        (
+            "🎯",
+            "Semantic Git Commits",
+            "Enforces standard semantic commit message formats.",
+            "Use the semantic commit message prefix format:\n- `feat:` for new features\n- `fix:` for bug fixes\n- `docs:` for documentation updates\n- `style:` for formatting/styling changes\n- `refactor:` for refactoring code structure\n- `test:` for adding or updating unit tests\nWrite commit messages in the imperative mood (e.g. \"add endpoint\" instead of \"added endpoint\").\nKeep commit messages concise (under 72 characters)."
+        ),
+        (
+            "🛡️",
+            "Security Hardening",
+            "Strict rules for credentials and inputs.",
+            "Never hardcode secrets, API keys, private keys, or passwords.\nAlways read credentials from environment variables or secure configuration stores.\nSanitize all user inputs before querying databases or running shell commands.\nUse parameterization/prepared statements for all SQL commands to prevent SQL injection.\nKeep package dependencies updated to avoid known security advisories."
+        ),
+        (
+            "📄",
+            "PDF Generation Expert",
+            "Conventions for generating professional programmatical PDFs.",
+            "When generating PDFs:\n- In Python, prefer `reportlab` (using PLATYPUS Flowables for page-layout management) or `fpdf2` for simpler reports.\n- Avoid hardcoded layout coordinates `(x, y)` where possible; use flowables, Paragraphs, and Spacers to handle page-breaks and margins dynamically.\n- Always wrap text inside Paragraph flowables to enable automatic word wrapping in tables.\n- Define styles and reuse them to maintain color scheme and font consistency.\n- Ensure all custom fonts are registered before drawing them.\n- When generating in Node.js, prefer `pdf-lib` or HTML-to-PDF converters like `puppeteer`/`playwright` for design-heavy layouts."
+        )
+    ]
+    
+    for icon, name, desc, content in defaults:
+        cursor.execute("SELECT COUNT(*) FROM skills WHERE name = ?", (name,))
+        if cursor.fetchone()[0] == 0:
+            skill_id = str(uuid.uuid4())
+            cursor.execute(
+                """
+                INSERT INTO skills (id, name, description, content, icon, tool_ids, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, '[]', 0, ?, ?)
+                """,
+                (skill_id, name, desc, content, icon, now, now)
+            )
+
     conn.commit()
     conn.close()
 
@@ -1428,3 +1517,141 @@ def lock_thread_knowledge(thread_id: str, snapshots: Optional[Dict[str, str]] = 
             )
     conn.commit()
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Skills CRUD
+# ---------------------------------------------------------------------------
+
+def _skill_row_to_dict(row) -> Dict[str, Any]:
+    """Convert a skills DB row to a plain dict with tool_ids as a list."""
+    d = dict(row)
+    try:
+        d["tool_ids"] = json.loads(d.get("tool_ids") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        d["tool_ids"] = []
+    d["enabled"] = bool(d.get("enabled", 1))
+    return d
+
+
+def create_skill(
+    name: str,
+    description: str = "",
+    content: str = "",
+    icon: str = "🧠",
+    tool_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Create a new skill and return the created row."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    skill_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    tool_ids_json = json.dumps(tool_ids or [])
+    cursor.execute(
+        """
+        INSERT INTO skills (id, name, description, content, icon, tool_ids, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+        """,
+        (skill_id, name.strip(), description.strip(), content, icon, tool_ids_json, now, now),
+    )
+    conn.commit()
+    cursor.execute("SELECT * FROM skills WHERE id = ?", (skill_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return _skill_row_to_dict(row) if row else {}
+
+
+def update_skill(
+    skill_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    content: Optional[str] = None,
+    icon: Optional[str] = None,
+    tool_ids: Optional[List[str]] = None,
+    enabled: Optional[bool] = None,
+) -> Optional[Dict[str, Any]]:
+    """Update a skill by ID. Only provided fields are changed."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM skills WHERE id = ?", (skill_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    now = datetime.utcnow().isoformat()
+    fields: List[str] = []
+    values: List[Any] = []
+    if name is not None:
+        fields.append("name = ?")
+        values.append(name.strip())
+    if description is not None:
+        fields.append("description = ?")
+        values.append(description.strip())
+    if content is not None:
+        fields.append("content = ?")
+        values.append(content)
+    if icon is not None:
+        fields.append("icon = ?")
+        values.append(icon)
+    if tool_ids is not None:
+        fields.append("tool_ids = ?")
+        values.append(json.dumps(tool_ids))
+    if enabled is not None:
+        fields.append("enabled = ?")
+        values.append(1 if enabled else 0)
+    fields.append("updated_at = ?")
+    values.append(now)
+    values.append(skill_id)
+    cursor.execute(f"UPDATE skills SET {', '.join(fields)} WHERE id = ?", values)
+    conn.commit()
+    cursor.execute("SELECT * FROM skills WHERE id = ?", (skill_id,))
+    updated = cursor.fetchone()
+    conn.close()
+    return _skill_row_to_dict(updated) if updated else None
+
+
+def get_skill(skill_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a single skill by ID."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM skills WHERE id = ?", (skill_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return _skill_row_to_dict(row) if row else None
+
+
+def list_skills() -> List[Dict[str, Any]]:
+    """Return all skills ordered by creation date."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM skills ORDER BY created_at ASC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [_skill_row_to_dict(r) for r in rows]
+
+
+def delete_skill(skill_id: str) -> bool:
+    """Delete a skill and its thread attachments. Returns True if deleted."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM skills WHERE id = ?", (skill_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return False
+    cursor.execute("DELETE FROM thread_skills WHERE skill_id = ?", (skill_id,))
+    cursor.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+

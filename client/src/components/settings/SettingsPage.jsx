@@ -8,6 +8,7 @@ import { SettingInput } from './SettingInput';
 import { McpServersManager } from './McpServersManager';
 import { ExternalApisManager } from './ExternalApisManager';
 import { KnowledgeManager } from './KnowledgeManager';
+import { SkillsManager } from './SkillsManager';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
@@ -1552,6 +1553,20 @@ key2,
                           onSave={(updatedApis) => handleLocalSettingChange('EXTERNAL_APIS', JSON.stringify(updatedApis))}
                           isSaving={isSavingAll}
                         />
+                      </div>
+                    </div>
+                  )}
+
+                  {capabilityTab === 'skills' && (
+                    <div className="premium-card rounded-xl p-5 space-y-4 animate-in fade-in duration-300">
+                      <div className={SL.cardHeader}>
+                        <div className={SL.cardHeaderIcon}>
+                          <Sparkles size={16} />
+                        </div>
+                        <h4 className={SL.sectionTitle}>Skill Library</h4>
+                      </div>
+                      <div className="pt-2">
+                        <SkillsManager />
                       </div>
                     </div>
                   )}

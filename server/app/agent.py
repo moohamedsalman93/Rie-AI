@@ -23,7 +23,16 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.outputs import ChatResult, ChatGenerationChunk
-from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware, HumanInTheLoopMiddleware
+from langchain.agents.middleware import (
+    TodoListMiddleware,
+    SummarizationMiddleware,
+    HumanInTheLoopMiddleware,
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
+from langchain.tools import tool, ToolRuntime
+from typing import Callable, Awaitable
 from deepagents.middleware.subagents import SubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
@@ -91,8 +100,8 @@ Priorities: accuracy first, efficiency second.
 
 Rules:
 - Prefer verified information and reasoning over assumptions.
-- Use tools when needed.
-- If unsure or information is unavailable, say so clearly.
+- Select and invoke the single most specific and efficient tool for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
+- When executing terminal commands on Windows, you MUST write correct and native Windows/PowerShell commands. Never use Linux commands (e.g. do not use `cat`, `touch`, `rm`, `cp`, `mv`, or `/` slash path separators; instead use `Get-Content`/`type`, `New-Item`/`echo`, `Remove-Item`, `Copy-Item`, `Move-Item`, and use backslashes `\\` for file paths).
 - Use the coding_specialist sub agent for any code-related tasks and do not use the your tool for coding tasks, like codebase analysis, code review, etc.
 - Reminders and timed tasks inside Rie (anything that should appear in the app's "Scheduled" sidebar or notify through Rie): you MUST call the tool schedule_chat_task with run_at_iso in ISO 8601 and the correct intent. Do not use run_terminal_command, schtasks, PowerShell, or Windows Task Scheduler for user reminders — those will NOT register in Rie and the user will see "Nothing scheduled".
 - Only tell the user you scheduled or set a reminder after schedule_chat_task returns successfully (or the tool output confirms it). Never invent a fake task name or claim a PowerShell popup was created for this.
@@ -345,6 +354,107 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "rotating-google-generative-ai"
+
+
+@tool
+def load_skill(skill_name: str, runtime: ToolRuntime) -> str:
+    """Load the full content of a skill into the agent's context.
+    Use this when you need detailed instructions or guidelines for a specific domain/task.
+    
+    Args:
+        skill_name: The exact name of the skill to load.
+    """
+    try:
+        from app.database import list_skills
+        db_skills = list_skills()
+        normalized_name = skill_name.strip().lower()
+        for row in db_skills:
+            if row.get("name", "").strip().lower() == normalized_name:
+                content = (row.get("content") or "").strip()
+                return f"Loaded Skill: {row.get('name')}\n\n{content}"
+    except Exception as exc:
+        return f"Error loading skill '{skill_name}' from database: {exc}"
+        
+    return f"Skill '{skill_name}' not found."
+
+
+class SkillMiddleware(AgentMiddleware):
+    """Middleware that injects available database skill descriptions into the system prompt."""
+    tools = [load_skill]
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        skills_list = []
+        try:
+            from app.database import list_skills
+            db_skills = list_skills()
+            for row in db_skills:
+                if row.get("enabled"):
+                    name = row.get("name", "Skill")
+                    desc = row.get("description", "").strip() or "Database-defined skill instructions."
+                    skills_list.append(f"- **{name}**: {desc}")
+        except Exception:
+            pass
+
+        if skills_list:
+            skills_prompt = "\n".join(skills_list)
+            skills_addendum = (
+                f"\n\n## Available Skills\n"
+                f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
+                f"If a user task requires specific business rules, development standards, or instructions associated with one of these skills, "
+                f"you MUST call the load_skill tool with the exact skill name to load its full content into your context BEFORE responding.\n\n"
+                f"{skills_prompt}\n\n"
+                f"Do not assume the content of a skill. Always load it first if you need it."
+            )
+
+            new_content = list(request.system_message.content_blocks) + [
+                {"type": "text", "text": skills_addendum}
+            ]
+            new_system_message = SystemMessage(content=new_content)
+            modified_request = request.override(system_message=new_system_message)
+            return handler(modified_request)
+
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        skills_list = []
+        try:
+            from app.database import list_skills
+            db_skills = list_skills()
+            for row in db_skills:
+                if row.get("enabled"):
+                    name = row.get("name", "Skill")
+                    desc = row.get("description", "").strip() or "Database-defined skill instructions."
+                    skills_list.append(f"- **{name}**: {desc}")
+        except Exception:
+            pass
+
+        if skills_list:
+            skills_prompt = "\n".join(skills_list)
+            skills_addendum = (
+                f"\n\n## Available Skills\n"
+                f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
+                f"If a user task requires specific business rules, development standards, or instructions associated with one of these skills, "
+                f"you MUST call the load_skill tool with the exact skill name to load its full content into your context BEFORE responding.\n\n"
+                f"{skills_prompt}\n\n"
+                f"Do not assume the content of a skill. Always load it first if you need it."
+            )
+
+            new_content = list(request.system_message.content_blocks) + [
+                {"type": "text", "text": skills_addendum}
+            ]
+            new_system_message = SystemMessage(content=new_content)
+            modified_request = request.override(system_message=new_system_message)
+            return await handler(modified_request)
+
+        return await handler(request)
 
 
 class AgentManager:
@@ -863,7 +973,7 @@ class AgentManager:
             {
                 "name": "coding_specialist",
                 "description": "Expert at modifying and understanding code in the local filesystem.",
-                "system_prompt": "You are a coding specialist. You have direct access to the files.",
+                "system_prompt": "You are a coding specialist. You have direct access to the files. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw terminal scripts. Since the host OS is Windows, when running terminal commands, you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and backslashes for all paths).",
                 "tool_ids": [],
                 "enabled": True,
             },
@@ -1122,7 +1232,7 @@ class AgentManager:
             print(f"DEBUG: Creating deep agent with {provider}...")
 
             # Core middleware stack
-            middleware_stack = []
+            middleware_stack = [SkillMiddleware()]
             
             # Only add TodoListMiddleware in thinking mode (skip for flash)
             if effective_speed_mode != "flash":
@@ -1517,6 +1627,7 @@ class AgentManager:
         friend_target_id: Optional[str] = None,
         friend_target_name: Optional[str] = None,
         knowledge_context: Optional[str] = None,
+        skill_context: Optional[str] = None,
     ) -> AsyncIterator[dict]:
         """Stream the agent with messages or resume with decisions (Async/thread-aware)."""
         # Check if modes changed and re-initialize if needed
@@ -1569,6 +1680,7 @@ class AgentManager:
                     "role": "system",
                     "content": f"[Custom Knowledge Context]\n{knowledge_context.strip()}",
                 })
+
 
             for msg in messages:
                 if isinstance(msg, dict) and msg.get("image_url") and msg.get("role") == "user":

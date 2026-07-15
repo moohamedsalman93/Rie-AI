@@ -457,7 +457,7 @@ class Settings:
             {
                 "name": "coding_specialist",
                 "description": "Expert at modifying and understanding code in the local filesystem.",
-                "system_prompt": "You are a coding specialist. You have direct access to the files.",
+                "system_prompt": "You are a coding specialist. You have direct access to the files. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw terminal scripts. Since the host OS is Windows, when running terminal commands, you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and backslashes for all paths).",
                 "tool_ids": [],
                 "enabled": True,
             },

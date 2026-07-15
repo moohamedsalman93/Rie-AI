@@ -40,7 +40,7 @@ export function normalizeSubTab(tab, subTab) {
     return subTab || 'orchestration';
   }
   if (tab === 'capabilities') {
-    if (subTab === 'builtin' || subTab === 'mcp' || subTab === 'external') return subTab;
+    if (subTab === 'builtin' || subTab === 'mcp' || subTab === 'external' || subTab === 'skills') return subTab;
     return subTab || 'builtin';
   }
   return subTab || null;
@@ -86,12 +86,14 @@ export const CAPABILITY_SUB_TABS = [
   { id: 'builtin', label: 'Built-in Tools' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'external', label: 'External APIs' },
+  { id: 'skills', label: 'Skill Library' },
 ];
 
 /** Search index: query tokens → tab (+ optional subTab) */
 export const SETTINGS_SEARCH_INDEX = [
   { terms: ['assistant', 'provider', 'llm', 'gemini', 'groq', 'openai', 'ollama', 'vertex', 'rie', 'api key', 'model'], tab: 'assistant' },
   { terms: ['tools', 'capabilities', 'builtin', 'terminal', 'mouse', 'keyboard', 'desktop', 'mcp', 'external api'], tab: 'capabilities' },
+  { terms: ['skills', 'rules', 'instructions', 'skill library'], tab: 'capabilities', subTab: 'skills' },
   { terms: ['tavily', 'brave', 'duckduckgo', 'internet search', 'web search', 'web search provider'], tab: 'memory' },
   { terms: ['web search tool'], tab: 'capabilities', subTab: 'builtin' },
   { terms: ['voice', 'tts', 'speech', 'edge tts', 'orpheus', 'voice reply'], tab: 'voice' },

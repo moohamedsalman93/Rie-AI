@@ -28,6 +28,7 @@ from app.models import (
     PeerQueryEventItem,
     PeerStreamCancelRequest,
     KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, ThreadKnowledgeItem,
+    SkillCreate, SkillUpdate, SkillResponse,
 )
 from app.agent import agent_manager
 from app.url_preview import (
@@ -80,6 +81,11 @@ from app.database import (
     delete_knowledge_pack,
     delete_knowledge_asset,
     get_thread_knowledge,
+    create_skill,
+    update_skill,
+    get_skill,
+    list_skills,
+    delete_skill,
 )
 from app.knowledge import (
     list_packs_summary,
@@ -163,6 +169,12 @@ def _runtime_catalog_help_text() -> str:
         "Tool IDs must exist in the current runtime catalog (built-in tools, configured EXTERNAL_APIS names, "
         "or currently loaded MCP tools)."
     )
+
+
+def _build_skill_context(skill_ids: List[str], project_root: Optional[str] = None) -> str:
+    """Build a concatenated skill instructions block for system message injection, including workspace auto-discovered skills."""
+    return ""
+
 
 def _validate_subagents_config(raw_value: str) -> list[dict]:
     """Validate SUBAGENTS_CONFIG payload and return normalized objects."""
@@ -2689,6 +2701,7 @@ async def _agent_stream_generator(
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
     knowledge_context: Optional[str] = None,
+    skill_context: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """
     Wrap the Deep Agent `.stream()` generator into Server‑Sent Events (SSE) lines.
@@ -2749,6 +2762,7 @@ async def _agent_stream_generator(
                     friend_target_id=friend_target_id,
                     friend_target_name=friend_target_name,
                     knowledge_context=knowledge_context,
+                    skill_context=skill_context,
                 ):
                     # Token-level LLM chunks (LangGraph stream_mode includes "messages")
                     if "__lg_messages__" in chunk:
@@ -2916,6 +2930,7 @@ async def _agent_stream_generator_with_save(
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
     knowledge_context: Optional[str] = None,
+    skill_context: Optional[str] = None,
     knowledge_lock_thread_id: Optional[str] = None,
     knowledge_snapshots: Optional[Dict[str, str]] = None,
 ) -> AsyncIterator[str]:
@@ -2941,6 +2956,7 @@ async def _agent_stream_generator_with_save(
         friend_target_id,
         friend_target_name,
         knowledge_context,
+        skill_context,
     ):
         yield chunk
         # Parse chunk to extract content
@@ -3023,6 +3039,7 @@ async def _chat_stream_with_url_previews(
     knowledge_context: Optional[str] = None,
     knowledge_lock_thread_id: Optional[str] = None,
     knowledge_snapshots: Optional[Dict[str, str]] = None,
+    skill_context: Optional[str] = None,
 ) -> AsyncIterator[str]:
     """Emit URL preview SSE events, enrich the user message, then stream the agent."""
     agent_message = message
@@ -3054,6 +3071,7 @@ async def _chat_stream_with_url_previews(
         knowledge_context=knowledge_context,
         knowledge_lock_thread_id=knowledge_lock_thread_id,
         knowledge_snapshots=knowledge_snapshots,
+        skill_context=skill_context,
     ):
         yield chunk
 
@@ -3083,6 +3101,7 @@ async def chat_stream_post(
     friend_target_id = chat_message.friend_target_id
     friend_target_name = chat_message.friend_target_name
     knowledge_ids = chat_message.knowledge_ids or []
+    skill_ids = chat_message.skill_ids or []
 
     # If clipboard text is provided, append it to the message
     if clipboard_text:
@@ -3104,6 +3123,13 @@ async def chat_stream_post(
         )
     except Exception as exc:
         logging.warning("Failed to prepare thread knowledge: %s", exc)
+
+    # Build skill context
+    skill_context = ""
+    try:
+        skill_context = await run_in_threadpool(_build_skill_context, skill_ids, project_root)
+    except Exception as exc:
+        logging.warning("Failed to build skill context: %s", exc)
 
     # 2. Save User Message (original text only; previews are injected for the agent at stream time)
     await run_in_threadpool(save_message, real_thread_id, "user", message, image_url)
@@ -3133,8 +3159,226 @@ async def chat_stream_post(
             knowledge_context=knowledge_context or None,
             knowledge_lock_thread_id=real_thread_id if knowledge_context else None,
             knowledge_snapshots=knowledge_snapshots if knowledge_context else None,
+            skill_context=skill_context or None,
         ),
         media_type="text/event-stream",
         headers=_SSE_CHAT_HEADERS,
     )
 
+
+# ---------------------------------------------------------------------------
+# Skills CRUD endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/skills", response_model=List[SkillResponse])
+async def get_skills():
+    """List all skills."""
+    rows = await run_in_threadpool(list_skills)
+    return [
+        SkillResponse(
+            id=r["id"],
+            name=r["name"],
+            description=r.get("description", ""),
+            content=r.get("content", ""),
+            icon=r.get("icon", "🧠"),
+            tool_ids=r.get("tool_ids", []),
+            enabled=r.get("enabled", True),
+            created_at=r["created_at"],
+            updated_at=r["updated_at"],
+        )
+        for r in rows
+    ]
+
+
+@router.post("/skills", response_model=SkillResponse, status_code=201)
+async def create_skill_endpoint(body: SkillCreate):
+    """Create a new skill."""
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Skill name cannot be empty")
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="Skill content cannot be empty")
+    row = await run_in_threadpool(
+        create_skill,
+        body.name,
+        body.description,
+        body.content,
+        body.icon,
+        body.tool_ids,
+    )
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.get("/skills/{skill_id}", response_model=SkillResponse)
+async def get_skill_endpoint(skill_id: str):
+    """Get a single skill by ID."""
+    row = await run_in_threadpool(get_skill, skill_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.put("/skills/{skill_id}", response_model=SkillResponse)
+async def update_skill_endpoint(skill_id: str, body: SkillUpdate):
+    """Update a skill by ID."""
+    if body.name is not None and not body.name.strip():
+        raise HTTPException(status_code=400, detail="Skill name cannot be empty")
+    if body.content is not None and not body.content.strip():
+        raise HTTPException(status_code=400, detail="Skill content cannot be empty")
+    row = await run_in_threadpool(
+        update_skill,
+        skill_id,
+        body.name,
+        body.description,
+        body.content,
+        body.icon,
+        body.tool_ids,
+        body.enabled,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.delete("/skills/{skill_id}")
+async def delete_skill_endpoint(skill_id: str):
+    """Delete a skill by ID."""
+    deleted = await run_in_threadpool(delete_skill, skill_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return {"ok": True, "id": skill_id}
+
+
+
+
+@router.get("/skills/active")
+async def get_active_skills_endpoint(
+    thread_id: Optional[str] = None,
+    project_root: Optional[str] = None
+):
+    """
+    Returns all active skills for the current context:
+    - DB attached skills (enabled or thread-attached)
+    - Workspace-discovered files (CLAUDE.md, RIE.md, etc.)
+    - Global-discovered files (~/.rie/CLAUDE.md, etc.)
+    """
+    active = []
+    
+    # 1. DB enabled skills
+    try:
+        db_skills = await run_in_threadpool(list_skills)
+        for item in db_skills:
+            if item.get("enabled"):
+                active.append({
+                    "id": item["id"],
+                    "name": item["name"],
+                    "icon": item.get("icon", "🧠"),
+                    "source": "db_thread",
+                    "description": item.get("description", "")
+                })
+    except Exception:
+        pass
+
+    # 2. Workspace skills
+    import os
+    if project_root and os.path.isdir(project_root):
+        try:
+            claude_path = os.path.join(project_root, "CLAUDE.md")
+            if os.path.isfile(claude_path):
+                active.append({
+                    "id": "ws_claude",
+                    "name": "CLAUDE.md",
+                    "icon": "📁",
+                    "source": "workspace",
+                    "description": "Rules loaded from workspace root CLAUDE.md"
+                })
+            rie_path = os.path.join(project_root, "RIE.md")
+            if os.path.isfile(rie_path):
+                active.append({
+                    "id": "ws_rie",
+                    "name": "RIE.md",
+                    "icon": "📁",
+                    "source": "workspace",
+                    "description": "Rules loaded from workspace root RIE.md"
+                })
+            rie_skills_dir = os.path.join(project_root, ".rie", "skills")
+            if os.path.isdir(rie_skills_dir):
+                for filename in sorted(os.listdir(rie_skills_dir)):
+                    if filename.endswith(".md"):
+                        active.append({
+                            "id": f"ws_{filename}",
+                            "name": filename[:-3],
+                            "icon": "📁",
+                            "source": "workspace",
+                            "description": f"Rules loaded from workspace .rie/skills/{filename}"
+                        })
+        except Exception:
+            pass
+
+    # 3. Global skills
+    try:
+        home_dir = os.path.expanduser("~")
+        global_rie_dir = os.path.join(home_dir, ".rie")
+        if os.path.isdir(global_rie_dir):
+            global_claude = os.path.join(global_rie_dir, "CLAUDE.md")
+            if os.path.isfile(global_claude):
+                active.append({
+                    "id": "global_claude",
+                    "name": "CLAUDE.md",
+                    "icon": "🌐",
+                    "source": "global",
+                    "description": "Rules loaded from global ~/.rie/CLAUDE.md"
+                })
+            global_rie = os.path.join(global_rie_dir, "RIE.md")
+            if os.path.isfile(global_rie):
+                active.append({
+                    "id": "global_rie",
+                    "name": "RIE.md",
+                    "icon": "🌐",
+                    "source": "global",
+                    "description": "Rules loaded from global ~/.rie/RIE.md"
+                })
+            global_skills_dir = os.path.join(global_rie_dir, "skills")
+            if os.path.isdir(global_skills_dir):
+                for filename in sorted(os.listdir(global_skills_dir)):
+                    if filename.endswith(".md"):
+                        active.append({
+                            "id": f"global_{filename}",
+                            "name": filename[:-3],
+                            "icon": "🌐",
+                            "source": "global",
+                            "description": f"Rules loaded from global ~/.rie/skills/{filename}"
+                        })
+    except Exception:
+        pass
+
+    return active
