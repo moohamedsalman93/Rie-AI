@@ -5,8 +5,9 @@ import asyncio
 import logging
 import os
 import re
+import threading
 from collections import OrderedDict
-from itertools import cycle
+from datetime import datetime, timezone
 from typing import Any, List, Optional, Iterator, AsyncIterator
 from collections.abc import Generator
 
@@ -53,6 +54,83 @@ from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 from app.scheduler_tools import schedule_chat_task_tool
 from app.remote_friend_tools import remote_friend_ask_tool
 from app.runtime_context import set_agent_context, reset_agent_context
+
+
+# ---------------------------------------------------------------------------
+# Thread-safe API key rotator with usage tracking
+# ---------------------------------------------------------------------------
+
+_logger = logging.getLogger(__name__)
+
+
+class KeyRotator:
+    """Thread-safe round-robin API key rotator with per-key usage tracking."""
+
+    def __init__(self, keys: List[str], provider: str) -> None:
+        if not keys:
+            raise ValueError(f"KeyRotator({provider}): at least one key is required")
+        self._keys = list(keys)
+        self._provider = provider
+        self._index = 0
+        self._lock = threading.Lock()
+        # Per-key stats: {index: {count, errors, last_used}}
+        self._usage: dict[int, dict] = {
+            i: {"count": 0, "last_used": None, "errors": 0}
+            for i in range(len(keys))
+        }
+
+    @staticmethod
+    def _mask_key(key: str) -> str:
+        """Mask an API key for safe logging, e.g. 'gsk_abc...xyzQ'."""
+        if len(key) <= 8:
+            return key[:2] + "..." + key[-2:]
+        return key[:4] + "..." + key[-4:]
+
+    @property
+    def total_keys(self) -> int:
+        return len(self._keys)
+
+    def next_key(self) -> tuple[str, int]:
+        """Return (key, key_index) in a thread-safe round-robin."""
+        with self._lock:
+            idx = self._index
+            key = self._keys[idx]
+            self._index = (idx + 1) % len(self._keys)
+            self._usage[idx]["count"] += 1
+            self._usage[idx]["last_used"] = datetime.now(timezone.utc).isoformat()
+        _logger.debug(
+            "[KeyRotator/%s] Using key #%d/%d (%s) — total calls: %d",
+            self._provider,
+            idx + 1,
+            len(self._keys),
+            self._mask_key(key),
+            self._usage[idx]["count"],
+        )
+        return key, idx
+
+    def record_error(self, key_index: int) -> None:
+        """Increment the error count for a specific key index."""
+        with self._lock:
+            if key_index in self._usage:
+                self._usage[key_index]["errors"] += 1
+
+    def stats(self) -> list[dict]:
+        """Return per-key stats with masked key identifiers."""
+        with self._lock:
+            result = []
+            for i, key in enumerate(self._keys):
+                entry = self._usage[i]
+                result.append({
+                    "index": i,
+                    "masked": self._mask_key(key),
+                    "calls": entry["count"],
+                    "errors": entry["errors"],
+                    "last_used": entry["last_used"],
+                })
+            return result
+
+    def __repr__(self) -> str:
+        return f"KeyRotator(provider={self._provider!r}, keys={self.total_keys})"
 
 
 def _client_device_system_content(
@@ -123,18 +201,17 @@ class RotatingChatGroq(BaseChatModel):
     api_keys: List[str]
     model_name: str
     temperature: float
-    _key_cycle: Any = None
+    _rotator: Any = None
 
     def __init__(self, api_keys: List[str], model: str, temperature: float = 0, **kwargs: Any):
-        # We need to call the Pydantic init properly
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, **kwargs)
-        # Store cycle in a private attribute using object.__setattr__ to bypass Pydantic validation if needed
-        object.__setattr__(self, '_key_cycle', cycle(api_keys))
+        object.__setattr__(self, '_rotator', KeyRotator(api_keys, "groq"))
 
     def _get_model(self) -> ChatGroq:
-        """Get a ChatGroq instance with the next API key in the cycle"""
+        """Get a ChatGroq instance with the next API key in the rotation"""
+        key, _idx = self._rotator.next_key()
         return ChatGroq(
-            api_key=next(self._key_cycle),
+            api_key=key,
             model=self.model_name,
             temperature=self.temperature
         )
@@ -150,15 +227,12 @@ class RotatingChatGroq(BaseChatModel):
         bound = dummy.bind_tools(tools, **kwargs)
         
         # Extract formatted tools and tool_choice from the RunnableBinding
-        # We use getattr to safely access bound.kwargs if available
         new_kwargs = getattr(bound, "kwargs", {})
         
         # Groq API is picky about tool_choice: it only allows "none", "auto", or "required"
         # LangChain often converts specific tool names to a dict like {"type": "function", ...}
         # which Groq currently rejects with a 400 Bad Request error.
         if "tool_choice" in new_kwargs and isinstance(new_kwargs["tool_choice"], dict):
-            # If a specific tool was requested (the dict case), we fallback to "required"
-            # which is the closest allowed string value for Groq.
             new_kwargs["tool_choice"] = "required"
 
         return self.bind(**new_kwargs)
@@ -211,16 +285,17 @@ class RotatingChatOpenAI(BaseChatModel):
     model_name: str
     base_url: str
     temperature: float
-    _key_cycle: Any = None
+    _rotator: Any = None
 
     def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: float = 0.7, **kwargs: Any):
         super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, **kwargs)
-        object.__setattr__(self, '_key_cycle', cycle(api_keys))
+        object.__setattr__(self, '_rotator', KeyRotator(api_keys, "openai"))
 
     def _get_model(self) -> ChatOpenAI:
-        """Get a ChatOpenAI instance with the next API key in the cycle"""
+        """Get a ChatOpenAI instance with the next API key in the rotation"""
+        key, _idx = self._rotator.next_key()
         return ChatOpenAI(
-            openai_api_key=next(self._key_cycle),
+            openai_api_key=key,
             model_name=self.model_name,
             base_url=self.base_url,
             temperature=self.temperature
@@ -228,7 +303,6 @@ class RotatingChatOpenAI(BaseChatModel):
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
-        # Create a dummy ChatOpenAI to handle tool formatting correctly
         dummy = ChatOpenAI(
             openai_api_key=self.api_keys[0],
             model_name=self.model_name,
@@ -236,10 +310,7 @@ class RotatingChatOpenAI(BaseChatModel):
             temperature=self.temperature
         )
         bound = dummy.bind_tools(tools, **kwargs)
-        
-        # Extract formatted tools and tool_choice from the RunnableBinding
         new_kwargs = getattr(bound, "kwargs", {})
-        
         return self.bind(**new_kwargs)
 
     def _generate(
@@ -289,16 +360,17 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
     api_keys: List[str]
     model_name: str
     temperature: float
-    _key_cycle: Any = None
+    _rotator: Any = None
 
     def __init__(self, api_keys: List[str], model: str, temperature: float = 0, **kwargs: Any):
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, **kwargs)
-        object.__setattr__(self, '_key_cycle', cycle(api_keys))
+        object.__setattr__(self, '_rotator', KeyRotator(api_keys, "gemini"))
 
     def _get_model(self) -> ChatGoogleGenerativeAI:
-        """Get a ChatGoogleGenerativeAI instance with the next API key in the cycle"""
+        """Get a ChatGoogleGenerativeAI instance with the next API key in the rotation"""
+        key, _idx = self._rotator.next_key()
         return ChatGoogleGenerativeAI(
-            google_api_key=next(self._key_cycle),
+            google_api_key=key,
             model=self.model_name,
             temperature=self.temperature
         )
@@ -1358,6 +1430,22 @@ class AgentManager:
         print(f"DEBUG: agent_manager.is_configured check: {configured}")
         print(f"DEBUG: settings keys: {settings.GROQ_API_KEYS}")
         return configured
+
+    def get_key_rotation_stats(self) -> Optional[dict]:
+        """Return rotation stats for the currently active LLM, or None if not rotating."""
+        llm = self._llm
+        if llm is None:
+            return None
+        rotator: Optional[KeyRotator] = getattr(llm, "_rotator", None)
+        if rotator is None:
+            # Single-key provider or non-rotating LLM
+            return None
+        return {
+            "provider": self._resolve_provider(),
+            "total_keys": rotator.total_keys,
+            "keys": rotator.stats(),
+        }
+
 
     async def ensure_initialized(self) -> bool:
         """

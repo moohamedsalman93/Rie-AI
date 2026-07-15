@@ -573,6 +573,23 @@ async def get_ollama_models():
         return {"models": []}
 
 
+@router.get("/key-rotation-stats")
+async def get_key_rotation_stats():
+    """
+    Get per-key rotation usage statistics for the active LLM provider.
+    Returns null/empty if only a single key is configured or provider is not rotating.
+    """
+    stats = agent_manager.get_key_rotation_stats()
+    if stats is None:
+        return {
+            "rotating": False,
+            "provider": settings.LLM_PROVIDER or "unknown",
+            "total_keys": 0,
+            "keys": [],
+        }
+    return {"rotating": True, **stats}
+
+
 @router.get("/settings", response_model=SettingsResponse)
 async def get_settings():
     """
