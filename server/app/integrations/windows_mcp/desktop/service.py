@@ -353,14 +353,21 @@ class Desktop:
         if press_ctrl=='true':
             pg.keyDown('ctrl')
         for element in elements:
-            x,y=element
+            if isinstance(element, int):
+                x, y = self.get_coordinates_from_label(element)
+            else:
+                x, y = element
             pg.click(x,y,duration=0.2)
             pg.sleep(0.5)
         pg.keyUp('ctrl')
     
     def multi_edit(self,elements:list[tuple[int,int,str]|tuple[int,str]]):
         for element in elements:
-            x,y,text=element
+            if len(element) == 2:
+                label, text = element
+                x, y = self.get_coordinates_from_label(label)
+            else:
+                x, y, text = element
             self.type((x,y),text=text,clear='true')
     
     def scrape(self,url:str)->str:
@@ -477,7 +484,7 @@ class Desktop:
     def get_screenshot(self)->Image.Image:
         from PIL import ImageGrab
         try:
-            return ImageGrab.grab(all_screens=True)
+            return ImageGrab.grab()
         except Exception:
             return pg.screenshot()
     
