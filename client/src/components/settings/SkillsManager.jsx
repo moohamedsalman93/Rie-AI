@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Pencil, Trash2, Shield, Brain } from 'lucide-react';
+import { Plus, Pencil, Trash2, Shield, Brain, ChevronDown } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   fetchSkills,
   createSkill,
@@ -26,6 +27,14 @@ export function SkillsManager() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [expandedSkills, setExpandedSkills] = useState({});
+
+  const toggleExpand = (id) => {
+    setExpandedSkills((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }));
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,31 +163,39 @@ export function SkillsManager() {
         </div>
       )}
 
-      {/* Skills Grid */}
+      {/* Skills List */}
       {!loading && skills.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="flex flex-col gap-3">
           {skills.map((skill) => (
             <div
               key={skill.id}
-              className={`premium-card rounded-xl p-4 border border-white/5 flex flex-col justify-between gap-3 transition-all duration-200 ${
-                skill.enabled ? 'bg-white/[0.01]' : 'opacity-50 hover:opacity-75'
+              className={`premium-card rounded-xl border border-white/5 flex flex-col transition-all duration-200 ${
+                skill.enabled ? 'bg-white/[0.01]' : 'opacity-60 hover:opacity-85'
               }`}
             >
-              <div className="space-y-2">
-                {/* Card Top */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="text-xl p-1.5 bg-white/5 rounded-lg border border-white/5">
-                      {skill.icon || '🧠'}
-                    </div>
-                    <div>
-                      <h5 className="text-xs font-bold text-neutral-200">{skill.name}</h5>
-                      {skill.description && (
-                        <p className="text-[10px] text-neutral-500">{skill.description}</p>
-                      )}
-                    </div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4">
+                {/* Left side: Icon, Name, Description */}
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="text-xl p-2 bg-white/5 rounded-lg border border-white/5 shrink-0 select-none">
+                    {skill.icon || '🧠'}
                   </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h5 className="text-xs font-bold text-neutral-200 truncate">{skill.name}</h5>
+                      <span className={`text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded shrink-0 ${
+                        skill.enabled ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-500/15' : 'bg-neutral-800 text-neutral-400 border border-neutral-700/50'
+                      }`}>
+                        {skill.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                    {skill.description && (
+                      <p className="text-[10px] text-neutral-500 truncate mt-1">{skill.description}</p>
+                    )}
+                  </div>
+                </div>
 
+                {/* Right side: Toggle, Chevron, Actions */}
+                <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 border-t sm:border-t-0 border-white/5 pt-3 sm:pt-0">
                   {/* Toggle */}
                   <label className="skills-toggle" title={skill.enabled ? 'Enabled' : 'Disabled'}>
                     <input
@@ -188,39 +205,59 @@ export function SkillsManager() {
                     />
                     <span className="skills-toggle-slider" />
                   </label>
-                </div>
 
-                {/* Content preview */}
-                <div className="text-[10px] font-mono text-neutral-400 bg-black/35 rounded-lg p-2.5 max-h-[80px] overflow-hidden text-ellipsis whitespace-pre-wrap leading-relaxed border border-white/5">
-                  {skill.content}
+                  {/* Vertical divider */}
+                  <div className="hidden sm:block h-6 w-px bg-white/5" />
+
+                  {/* Action Buttons */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => toggleExpand(skill.id)}
+                      className="p-1.5 hover:bg-white/5 rounded-lg border border-transparent hover:border-white/5 text-neutral-400 hover:text-white transition-all"
+                      title={expandedSkills[skill.id] ? "Hide Instructions" : "Show Instructions"}
+                    >
+                      <ChevronDown
+                        size={12}
+                        className={`transition-transform duration-200 ${expandedSkills[skill.id] ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    <button
+                      onClick={() => openEdit(skill)}
+                      className="p-1.5 hover:bg-white/5 rounded-lg border border-transparent hover:border-white/5 text-neutral-400 hover:text-white transition-all"
+                      title="Edit"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirm(skill.id)}
+                      className="p-1.5 hover:bg-red-500/10 rounded-lg border border-transparent hover:border-red-500/10 text-neutral-400 hover:text-red-400 transition-all"
+                      title="Delete"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              {/* Actions */}
-              <div className="flex items-center justify-between border-t border-white/5 pt-3">
-                <span className={`text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded ${
-                  skill.enabled ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-500/15' : 'bg-neutral-800 text-neutral-400 border border-neutral-700/50'
-                }`}>
-                  {skill.enabled ? 'Enabled' : 'Disabled'}
-                </span>
-                
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => openEdit(skill)}
-                    className="p-1.5 hover:bg-white/5 rounded-lg border border-transparent hover:border-white/5 text-neutral-400 hover:text-white transition-all"
-                    title="Edit"
+              {/* Collapsible Content preview */}
+              <AnimatePresence initial={false}>
+                {expandedSkills[skill.id] && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden border-t border-white/5"
                   >
-                    <Pencil size={12} />
-                  </button>
-                  <button
-                    onClick={() => setDeleteConfirm(skill.id)}
-                    className="p-1.5 hover:bg-red-500/10 rounded-lg border border-transparent hover:border-red-500/10 text-neutral-400 hover:text-red-400 transition-all"
-                    title="Delete"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              </div>
+                    <div className="p-4 bg-black/25">
+                      <div className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold mb-2">Instructions</div>
+                      <div className="text-[10px] font-mono text-neutral-400 bg-black/35 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap leading-relaxed border border-white/5 custom-scrollbar max-h-[160px]">
+                        {skill.content}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ))}
         </div>

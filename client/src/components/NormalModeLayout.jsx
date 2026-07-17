@@ -512,7 +512,7 @@ export function NormalModeLayout({
                                             animate={{ opacity: 1, y: 0 }}
                                             className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
                                         >
-                                            <div className={`flex items-end gap-2 min-w-0 max-w-[85%] ${m.from === 'user' ? 'justify-end' : ''}`}>
+                                            <div className={`flex items-end gap-2 min-w-0  ${m.from === 'user' ? 'justify-end' : ''}`}>
 
                                                 {m.from === 'user' && m.error && (
                                                     <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
