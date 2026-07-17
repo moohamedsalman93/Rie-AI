@@ -203,6 +203,7 @@ class SettingsResponse(BaseModel):
 
     # Advanced Settings
     llm_provider: Optional[str] = None
+    fallback_llm_provider: Optional[str] = None
     vertex_project: Optional[str] = None
     vertex_location: Optional[str] = None
     vertex_credentials_path: Optional[str] = None

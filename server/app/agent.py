@@ -429,6 +429,84 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         return "rotating-google-generative-ai"
 
 
+class FallbackChatModel(BaseChatModel):
+    """A wrapper chat model that falls back to a secondary model if the primary model fails."""
+    _primary_model: Any = None
+    _fallback_model: Any = None
+
+    def __init__(self, primary_model: Any, fallback_model: Any, **kwargs: Any):
+        super().__init__(**kwargs)
+        object.__setattr__(self, '_primary_model', primary_model)
+        object.__setattr__(self, '_fallback_model', fallback_model)
+
+    def _generate(self, *args: Any, **kwargs: Any) -> Any:
+        if hasattr(self._primary_model, "_generate"):
+            return self._primary_model._generate(*args, **kwargs)
+        return self._primary_model.invoke(*args, **kwargs)
+
+    @property
+    def _llm_type(self) -> str:
+        return "fallback-chat-model"
+
+    def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
+        """Bind tools to both primary and fallback models"""
+        bound_primary = self._primary_model.bind_tools(tools, **kwargs) if hasattr(self._primary_model, "bind_tools") else self._primary_model
+        bound_fallback = self._fallback_model.bind_tools(tools, **kwargs) if hasattr(self._fallback_model, "bind_tools") else self._fallback_model
+        return FallbackChatModel(
+            primary_model=bound_primary,
+            fallback_model=bound_fallback
+        )
+
+    def invoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
+        try:
+            return self._primary_model.invoke(input, config=config, **kwargs)
+        except Exception as e:
+            _logger.warning(f"Primary model failed: {e}. Falling back to fallback model.")
+            return self._fallback_model.invoke(input, config=config, **kwargs)
+
+    async def ainvoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
+        try:
+            return await self._primary_model.ainvoke(input, config=config, **kwargs)
+        except Exception as e:
+            _logger.warning(f"Primary model failed: {e}. Falling back to fallback model.")
+            return await self._fallback_model.ainvoke(input, config=config, **kwargs)
+
+    def stream(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Iterator[Any]:
+        try:
+            iterator = self._primary_model.stream(input, config=config, **kwargs)
+            first_chunk = next(iterator)
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed to start: {e}. Falling back to fallback model.")
+            yield from self._fallback_model.stream(input, config=config, **kwargs)
+            return
+
+        yield first_chunk
+        try:
+            for chunk in iterator:
+                yield chunk
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed mid-stream: {e}. Cannot fall back mid-stream.")
+            raise e
+
+    async def astream(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> AsyncIterator[Any]:
+        try:
+            iterator = self._primary_model.astream(input, config=config, **kwargs)
+            first_chunk = await iterator.__anext__()
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed to start: {e}. Falling back to fallback model.")
+            async for chunk in self._fallback_model.astream(input, config=config, **kwargs):
+                yield chunk
+            return
+
+        yield first_chunk
+        try:
+            async for chunk in iterator:
+                yield chunk
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed mid-stream: {e}. Cannot fall back mid-stream.")
+            raise e
+
+
 @tool
 def load_skill(skill_name: str, runtime: ToolRuntime = None) -> str:
     """Load the full content of a skill into the agent's context.
@@ -893,6 +971,22 @@ class AgentManager:
                 del self._active_tasks[thread_id]
             reset_agent_context(tokens)
     
+    def _create_llm_by_provider(self, provider: str) -> Optional[BaseChatModel]:
+        """Create an LLM instance by provider name."""
+        if provider == "vertex":
+            return self._create_vertex_llm()
+        elif provider == "gemini":
+            return self._create_gemini_llm()
+        elif provider == "groq":
+            return self._create_llm()
+        elif provider == "openai":
+            return self._create_openai_llm()
+        elif provider == "rie":
+            return self._create_rie_llm()
+        elif provider == "ollama":
+            return self._create_ollama_llm()
+        return None
+
     def _create_llm(self) -> Optional[BaseChatModel]:
         """Create and return a Groq LLM instance (potentially rotating)"""
         keys = settings.GROQ_API_KEYS
@@ -1227,31 +1321,25 @@ class AgentManager:
 
         final_system_prompt = SYSTEM_PROMPT + mode_instructions + planner_main_section
 
-        if provider == "vertex":
-            self._llm = self._create_vertex_llm()
-            system_prompt = final_system_prompt
-        elif provider == "gemini":
-            self._llm = self._create_gemini_llm()
-            system_prompt = final_system_prompt
-        elif provider == "groq":
-            self._llm = self._create_llm()
-            system_prompt = final_system_prompt
-        elif provider == "openai":
-            self._llm = self._create_openai_llm()
-            system_prompt = final_system_prompt
-        elif provider == "rie":
-            self._llm = self._create_rie_llm()
-            system_prompt = final_system_prompt
-        elif provider == "ollama":
-            self._llm = self._create_ollama_llm()
-            system_prompt = final_system_prompt
-        else:
-            print("ERROR: No valid LLM provider selected or configured.")
-            self._agent = None
-            return
+        system_prompt = final_system_prompt
 
-        if not self._llm:
-            print(f"ERROR: Failed to create LLM for provider {provider}")
+        primary_llm = self._create_llm_by_provider(provider)
+        
+        fallback_provider = settings.FALLBACK_LLM_PROVIDER
+        fallback_llm = None
+        if fallback_provider and fallback_provider != provider:
+            fallback_llm = self._create_llm_by_provider(fallback_provider)
+            
+        if primary_llm and fallback_llm:
+            print(f"DEBUG: Creating FallbackChatModel with primary: {provider}, fallback: {fallback_provider}")
+            self._llm = FallbackChatModel(primary_model=primary_llm, fallback_model=fallback_llm)
+        elif primary_llm:
+            self._llm = primary_llm
+        elif fallback_llm:
+            print(f"WARNING: Primary LLM provider ({provider}) failed to initialize. Falling back to {fallback_provider}.")
+            self._llm = fallback_llm
+        else:
+            print(f"ERROR: Failed to create LLM for provider {provider} (and no fallback succeeded).")
             self._agent = None
             return
 

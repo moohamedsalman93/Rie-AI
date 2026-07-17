@@ -1075,6 +1075,37 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                         </div>
                       </div>
                     </div>
+
+                    <div className="flex items-center justify-between gap-4 border-t border-neutral-800/60 pt-3 mt-3">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-neutral-800 rounded-lg text-neutral-200">
+                          {PROVIDERS[settings.fallback_llm_provider || 'none']?.icon || <AlertTriangle className="w-5 h-5 text-amber-500/80" />}
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-medium text-neutral-200">Fallback Provider</h3>
+                          <p className="text-[10px] text-neutral-500">Backup LLM to handle requests if primary provider experiences errors.</p>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={settings.fallback_llm_provider || 'none'}
+                          onChange={(e) => handleLocalSettingChange('FALLBACK_LLM_PROVIDER', e.target.value)}
+                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
+                        >
+                          <option value="none">None (Disabled)</option>
+                          {Object.entries(PROVIDERS).map(([key, info]) => (
+                            <option key={key} value={key} disabled={key === selectedProvider}>
+                              {info.label}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                          <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                            <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                          </svg>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="premium-card rounded-xl p-5 space-y-4">

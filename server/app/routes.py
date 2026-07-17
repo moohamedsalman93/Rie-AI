@@ -697,6 +697,7 @@ async def get_settings():
         web_search_provider=settings.WEB_SEARCH_PROVIDER,
 
         llm_provider=settings.LLM_PROVIDER,
+        fallback_llm_provider=settings.FALLBACK_LLM_PROVIDER,
         vertex_project=settings.VERTEX_PROJECT,
         vertex_location=settings.VERTEX_LOCATION,
         vertex_credentials_path=settings.VERTEX_CREDENTIALS_PATH,
@@ -783,7 +784,7 @@ async def update_settings(data: SettingsUpdate):
         "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY",
         "WEB_SEARCH_PROVIDER",
         "VERTEX_PROJECT", "VERTEX_LOCATION", "VERTEX_CREDENTIALS_PATH",
-        "LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
+        "LLM_PROVIDER", "FALLBACK_LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",

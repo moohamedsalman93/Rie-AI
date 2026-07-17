@@ -222,6 +222,16 @@ class Settings:
         return self._get("LLM_PROVIDER")
 
     @property
+    def FALLBACK_LLM_PROVIDER(self) -> Optional[str]:
+        """
+        Backup LLM provider: 'groq', 'gemini', 'vertex', 'openai', 'rie', 'ollama' or 'none'
+        """
+        provider = self._get("FALLBACK_LLM_PROVIDER")
+        if not provider or provider == "none":
+            return None
+        return provider
+
+    @property
     def ENABLED_TOOLS(self) -> Optional[list[str]]:
         """
         List of enabled tool names.
