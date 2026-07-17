@@ -183,7 +183,7 @@ export function KnowledgeManager() {
         <div className="p-5 bg-neutral-800/50 border border-neutral-700 rounded-xl space-y-4">
           <h4 className="text-sm font-medium text-neutral-200">{editingId ? 'Edit Knowledge Pack' : 'New Knowledge Pack'}</h4>
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Name</label>
+            <label className="text-[10px] tracking-wider text-neutral-500 font-medium">Name</label>
             <input
               type="text"
               value={form.name}
@@ -193,7 +193,7 @@ export function KnowledgeManager() {
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Custom instructions</label>
+            <label className="text-[10px] tracking-wider text-neutral-500 font-medium">Custom instructions</label>
             <textarea
               value={form.instructions}
               onChange={(e) => setForm((p) => ({ ...p, instructions: e.target.value }))}

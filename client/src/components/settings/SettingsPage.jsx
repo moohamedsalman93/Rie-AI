@@ -55,6 +55,8 @@ import {
   Users,
   Fingerprint,
   Wifi,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen, emit } from '@tauri-apps/api/event';
@@ -144,6 +146,37 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
 
   // Kiosk mode state
   const [kioskOverlay, setKioskOverlay] = useState(false);
+
+  // Model cards expansion state
+  const [expandedProviders, setExpandedProviders] = useState({});
+
+  const isProviderConfigured = (key) => {
+    switch (key) {
+      case 'gemini': return !!settings.google_api_key;
+      case 'vertex': return !!settings.vertex_project;
+      case 'groq': return !!settings.groq_api_key;
+      case 'openai': return !!settings.openai_api_key;
+      case 'rie': return !!rieToken;
+      case 'ollama': return !!settings.ollama_model;
+      default: return false;
+    }
+  };
+
+  useEffect(() => {
+    const nextExpanded = { ...expandedProviders };
+    let changed = false;
+    if (selectedProvider && !nextExpanded[selectedProvider]) {
+      nextExpanded[selectedProvider] = true;
+      changed = true;
+    }
+    if (settings.fallback_llm_provider && settings.fallback_llm_provider !== 'none' && !nextExpanded[settings.fallback_llm_provider]) {
+      nextExpanded[settings.fallback_llm_provider] = true;
+      changed = true;
+    }
+    if (changed) {
+      setExpandedProviders(nextExpanded);
+    }
+  }, [selectedProvider, settings.fallback_llm_provider]);
 
   useEffect(() => {
     loadSettings();
@@ -1063,8 +1096,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                           className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
                         >
                           {Object.entries(PROVIDERS).map(([key, info]) => (
-                            <option key={key} value={key}>
-                              {info.label}
+                            <option key={key} value={key} disabled={!isProviderConfigured(key)}>
+                              {info.label} {!isProviderConfigured(key) && ' (Not Configured)'}
                             </option>
                           ))}
                         </select>
@@ -1094,8 +1127,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                         >
                           <option value="none">None (Disabled)</option>
                           {Object.entries(PROVIDERS).map(([key, info]) => (
-                            <option key={key} value={key} disabled={key === selectedProvider}>
-                              {info.label}
+                            <option key={key} value={key} disabled={key === selectedProvider || !isProviderConfigured(key)}>
+                              {info.label} {!isProviderConfigured(key) && ' (Not Configured)'}
                             </option>
                           ))}
                         </select>
@@ -1108,360 +1141,426 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
                     </div>
                   </div>
 
-                  <div className="premium-card rounded-xl p-5 space-y-4">
-                    <div className={SL.cardHeader}>
-                      <div className={SL.cardHeaderIcon}>
-                        {PROVIDERS[selectedProvider]?.icon}
-                      </div>
-                      <h3 className={SL.sectionTitle}>
-                        {PROVIDERS[selectedProvider]?.label === 'Rie' ? 'Rie Usage' : PROVIDERS[selectedProvider]?.label + ' Configuration'}
-                      </h3>
-                    </div>
+                  <div className="pt-3 pb-1">
+                    <h4 className="text-[11px] font-semibold text-neutral-400 tracking-wide">Model Configurations</h4>
+                  </div>
 
-                    {selectedProvider === 'gemini' && (
-                      <>
-                        <SettingInput
-                          label="Google API Key"
-                          dbKey="GOOGLE_API_KEY"
-                          value={settings.google_api_key}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          isSecret
-                          type="textarea"
-                          placeholder="Enter keys separated by commas or lines:
-key1,
-key2,
-..."
-                        />
-                        <p className="text-[10px] text-neutral-500 mt-1">
-                          Tip: Add multiple keys to bypass Google's rate limits. They will be rotated automatically.
-                        </p>
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
-                          <div className="flex items-center gap-2.5 shrink-0">
-                            <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Model</label>
-                          </div>
-                          <div className="flex-1 max-w-xs w-full sm:w-auto flex gap-2">
-                            <div className="relative flex-1">
-                              <select
-                                value={settings.gemini_model || ''}
-                                onChange={(e) => handleLocalSettingChange('GEMINI_MODEL', e.target.value)}
-                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10"
-                                disabled={isSavingAll || loadingGeminiModels}
-                              >
-                                <option value="" disabled>{loadingGeminiModels ? 'Loading models...' : 'Select a model'}</option>
-                                {geminiModels.length > 0 && geminiModels.map(model => (
-                                  <option key={model} value={model}>{model}</option>
-                                ))}
-                                {geminiModels.length === 0 && !loadingGeminiModels && settings.gemini_model && (
-                                  <option value={settings.gemini_model}>{settings.gemini_model} (Not in list)</option>
-                                )}
-                              </select>
-                              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
-                                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                                </svg>
+                  <div className="premium-card rounded-xl border border-neutral-800/80 bg-neutral-900/20 divide-y divide-white/5 overflow-hidden">
+                    {Object.entries(PROVIDERS).map(([key, providerInfo]) => {
+                      const isExpanded = !!expandedProviders[key];
+                      const isPrimary = selectedProvider === key;
+                      const isFallback = settings.fallback_llm_provider === key;
+                      const isConfigured = isProviderConfigured(key);
+
+                      return (
+                        <div
+                          key={key}
+                          className="transition-colors duration-200"
+                        >
+                          {/* Card Header (Clickable to toggle) */}
+                          <div
+                            onClick={() => setExpandedProviders(prev => ({ ...prev, [key]: !prev[key] }))}
+                            className={`flex items-center justify-between p-4 cursor-pointer select-none transition-colors duration-150 ${
+                              isExpanded ? 'bg-neutral-800/10' : 'hover:bg-neutral-800/10'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="p-2 bg-neutral-800/80 rounded-lg text-neutral-200 shrink-0">
+                                {providerInfo.icon}
                               </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                fetchGeminiModels();
-                              }}
-                              disabled={loadingGeminiModels}
-                              className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors shrink-0"
-                              title="Refresh models"
-                            >
-                              <RefreshCw size={18} className={loadingGeminiModels ? 'animate-spin' : ''} />
-                            </button>
-                          </div>
-                        </div>
-                        {!settings.google_api_key && (
-                          <p className="text-[10px] text-neutral-500 mt-1">Add a Google API key to load live models from Google. Showing common defaults until then.</p>
-                        )}
-                      </>
-                    )}
-
-                    {selectedProvider === 'vertex' && (
-                      <>
-                        <SettingInput
-                          label="Project ID"
-                          dbKey="VERTEX_PROJECT"
-                          value={settings.vertex_project}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                        />
-                        <SettingInput
-                          label="Location"
-                          dbKey="VERTEX_LOCATION"
-                          value={settings.vertex_location}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="us-central1"
-                        />
-                        <SettingInput
-                          label="Credentials JSON Path"
-                          dbKey="VERTEX_CREDENTIALS_PATH"
-                          value={settings.vertex_credentials_path}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="C:\path\to\credentials.json"
-                        />
-                        <SettingInput
-                          label="Model Name"
-                          dbKey="VERTEX_MODEL"
-                          value={settings.vertex_model}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="gemini-1.5-pro"
-                        />
-                      </>
-                    )}
-
-                    {selectedProvider === 'groq' && (
-                      <>
-                        <SettingInput
-                          label="Groq API Key"
-                          dbKey="GROQ_API_KEY"
-                          value={settings.groq_api_key}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          isSecret
-                          type="textarea"
-                          placeholder="Enter keys separated by commas or lines:
-gsk_key1,
-gsk_key2,
-..."
-                        />
-                        <p className="text-[10px] text-neutral-500 mt-1">
-                          Tip: Add multiple keys to bypass Groq's per-minute rate limits. They will be rotated automatically.
-                        </p>
-                        <SettingInput
-                          label="Model Name"
-                          dbKey="GROQ_MODEL"
-                          value={settings.groq_model}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="llama-3.1-70b-versatile"
-                        />
-                      </>
-                    )}
-
-                    {selectedProvider === 'openai' && (
-                      <>
-                        <SettingInput
-                          label="OpenAI API Key"
-                          dbKey="OPENAI_API_KEY"
-                          value={settings.openai_api_key}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          isSecret
-                          type="textarea"
-                          placeholder="Enter keys separated by commas or lines:
-key1,
-key2,
-..."
-                        />
-                        <p className="text-[10px] text-neutral-500 mt-1">
-                          Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
-                        </p>
-                        <SettingInput
-                          label="Base URL"
-                          dbKey="OPENAI_BASE_URL"
-                          value={settings.openai_base_url}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="https://api.z.ai/api/paas/v4/"
-                        />
-                        <SettingInput
-                          label="Model Name"
-                          dbKey="OPENAI_MODEL"
-                          value={settings.openai_model}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="glm-4.5-flash"
-                        />
-                      </>
-                    )}
-
-                    {selectedProvider === 'rie' && (
-                      <div className="space-y-4">
-                        {!rieToken ? (
-                          <div className=" p-12 rounded-2xl flex flex-col items-center justify-center text-center space-y-6">
-                            <div className="space-y-2">
-                              <h4 className="text-xl font-semibold text-neutral-100">Unlock the Full Power of Rie</h4>
-                              <p className="text-sm text-neutral-400 max-w-xs mx-auto">
-                                Sign in to access advanced models, system controls, and get up to 50 free requests per day.
-                              </p>
-                            </div>
-                            <button
-                              onClick={async () => {
-                                try {
-                                  const { openUrl } = await import('@tauri-apps/plugin-opener');
-                                  await openUrl('http://localhost:14200/login?redirect_to_app=true');
-                                } catch (e) {
-                                  console.error("Failed to open login URL:", e);
-                                  // Fallback for dev if plugin naming is different or not found
-                                  window.open('http://localhost:14200/login?redirect_to_app=true', '_blank');
-                                }
-                              }}
-                              className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95"
-                            >
-                              Sign In via Website
-                            </button>
-                          </div>
-                        ) : (
-                          <div className=" rounded-2xl  overflow-hidden">
-                            {/* Account Header */}
-                            <div className="px-6 py-4 flex items-center justify-between bg-neutral-800/20 border-b border-neutral-700/50">
-                              <div className="flex items-center gap-3">
-                                <div className="p-2 bg-emerald-500/10 rounded-xl">
-                                  <Shield className="w-5 h-5 text-emerald-400" />
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <h4 className="text-sm font-semibold text-neutral-200">
+                                    {providerInfo.label === 'Rie' ? 'Rie' : providerInfo.label}
+                                  </h4>
+                                  {isPrimary && (
+                                    <span className="text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded tracking-wide">
+                                      Primary
+                                    </span>
+                                  )}
+                                  {isFallback && (
+                                    <span className="text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded tracking-wide">
+                                      Fallback
+                                    </span>
+                                  )}
+                                  {isConfigured ? (
+                                    <span className="text-[10px] font-medium bg-emerald-500/5 text-emerald-400/90 border border-emerald-500/20 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1">
+                                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                                      Configured
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-medium bg-neutral-800/40 text-neutral-500 border border-neutral-800/80 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1">
+                                      <span className="w-1 h-1 rounded-full bg-neutral-600"></span>
+                                      Not Configured
+                                    </span>
+                                  )}
                                 </div>
-                                {rieUsage && (
-                                  <div>
-                                    <div className="text-xs text-neutral-500 font-medium lowercase">Account</div>
-                                    <div className="text-sm font-semibold text-neutral-100">{rieUsage.email || 'Authenticated'}</div>
-                                  </div>
-                                )}
-                              </div>
-                              <button
-                                onClick={handleRieSignOut}
-                                className="text-xs font-medium text-neutral-500 hover:text-red-400 transition-colors px-3 py-1.5 hover:bg-red-500/10 rounded-lg"
-                              >
-                                Sign Out
-                              </button>
-                            </div>
-
-                            {/* Usage Section */}
-                            <div className="p-6 space-y-6">
-                              {rieUsage && (
-                                <div className="space-y-4">
-                                  <div className="flex items-center justify-between">
-                                    <div className="space-y-1">
-                                      <h4 className="text-sm font-medium text-neutral-200">Request Usage</h4>
-                                      <p className="text-[11px] text-neutral-500">Reset daily at 00:00 UTC</p>
-                                    </div>
-                                    <div className="text-right">
-                                      <span className="text-lg font-bold text-emerald-400">{rieUsage.current_usage}</span>
-                                      <span className="text-sm text-neutral-500 font-medium"> / {rieUsage.limit}</span>
-                                    </div>
-                                  </div>
-
-                                  {/* Progress Bar */}
-                                  <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden border border-neutral-700/30">
-                                    <motion.div
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${(rieUsage.current_usage / rieUsage.limit) * 100}%` }}
-                                      transition={{ duration: 1, ease: "easeOut" }}
-                                      className={`h-full rounded-full ${(rieUsage.current_usage / rieUsage.limit) > 0.9
-                                        ? 'bg-red-500'
-                                        : (rieUsage.current_usage / rieUsage.limit) > 0.7
-                                          ? 'bg-amber-500'
-                                          : 'bg-emerald-500'
-                                        } shadow-[0_0_10px_rgba(16,185,129,0.3)]`}
-                                    />
-                                  </div>
-
-                                  <div className="grid grid-cols-2 gap-4 pt-2">
-                                    <div className="p-3 bg-neutral-900/40 rounded-xl border border-neutral-700/50">
-                                      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">Status</div>
-                                      <div className="flex items-center gap-1.5">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                                        <span className="text-xs font-medium text-neutral-200">Active</span>
-                                      </div>
-                                    </div>
-                                    <div className="p-3 bg-neutral-900/40 rounded-xl border border-neutral-700/50">
-                                      <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">Remaining</div>
-                                      <div className="text-xs font-semibold text-emerald-400">{rieUsage.remaining} requests</div>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Footer Info */}
-                              <div className="flex items-center gap-3 px-4 py-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10">
-                                <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                                <p className="text-[11px] text-emerald-300/80 leading-normal">
-                                  Your requests are optimized by Rie's backend using <span className="font-semibold text-emerald-400">glm-4.5-flash</span>.
+                                <p className="text-[10px] text-neutral-500 font-medium">
+                                  {key === 'rie' ? 'Rie usage limit and status' : `${providerInfo.label} configuration and model settings`}
                                 </p>
                               </div>
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {selectedProvider === 'ollama' && (
-                      <>
-                        <SettingInput
-                          label="Ollama Endpoint"
-                          dbKey="OLLAMA_API_URL"
-                          value={settings.ollama_api_url}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="http://localhost:11434"
-                          allowEmpty
-                        />
-                        <p className="text-[10px] text-neutral-500 -mt-1">
-                          Leave empty to use default <code className="text-neutral-400">http://localhost:11434</code>.
-                        </p>
-                        <SettingInput
-                          label="Ollama API Key (optional)"
-                          dbKey="OLLAMA_API_KEY"
-                          value={settings.ollama_api_key}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          isSecret
-                          placeholder="For secured or remote Ollama instances"
-                        />
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
-                          <div className="flex items-center gap-2.5 shrink-0">
-                            <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Ollama Model</label>
-                          </div>
-                          <div className="flex-1 max-w-xs w-full sm:w-auto flex gap-2">
-                            <div className="relative flex-1">
-                              <select
-                                value={settings.ollama_model || ''}
-                                onChange={(e) => handleLocalSettingChange('OLLAMA_MODEL', e.target.value)}
-                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10"
-                                disabled={isSavingAll || loadingOllamaModels}
-                              >
-                                <option value="" disabled>{loadingOllamaModels ? 'Loading models...' : 'Select a model'}</option>
-                                {ollamaModels.length > 0 && ollamaModels.map(model => (
-                                  <option key={model} value={model}>{model}</option>
-                                ))}
-                                {ollamaModels.length === 0 && !loadingOllamaModels && settings.ollama_model && (
-                                  <option value={settings.ollama_model}>{settings.ollama_model} (Not found)</option>
-                                )}
-                              </select>
-                              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
-                                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                                </svg>
-                              </div>
+                            <div className="text-neutral-400 hover:text-neutral-200 p-1 transition-colors">
+                              {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                             </div>
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                fetchOllamaModels();
-                              }}
-                              disabled={loadingOllamaModels}
-                              className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors shrink-0"
-                              title="Refresh models"
-                            >
-                              <RefreshCw size={18} className={loadingOllamaModels ? 'animate-spin' : ''} />
-                            </button>
                           </div>
+
+                          {/* Card Content (Expandable with Framer Motion) */}
+                          <AnimatePresence initial={false}>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.2, ease: 'easeInOut' }}
+                                className="overflow-hidden"
+                              >
+                                <div className="p-5 pt-3 border-t border-white/5 space-y-4 bg-neutral-900/40">
+                                  {key === 'gemini' && (
+                                    <>
+                                      <SettingInput
+                                        label="Google API Key"
+                                        dbKey="GOOGLE_API_KEY"
+                                        value={settings.google_api_key}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        isSecret
+                                        type="textarea"
+                                        placeholder="Enter keys separated by commas or lines:
+key1,
+key2,
+..."
+                                      />
+                                      <p className="text-[10px] text-neutral-500 mt-1">
+                                        Tip: Add multiple keys to bypass Google's rate limits. They will be rotated automatically.
+                                      </p>
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
+                                        <div className="flex items-center gap-2.5 shrink-0">
+                                          <label className="text-xs font-medium text-neutral-400 tracking-wider">Model</label>
+                                        </div>
+                                        <div className="flex-1 max-w-xs w-full sm:w-auto flex gap-2">
+                                          <div className="relative flex-1">
+                                            <select
+                                              value={settings.gemini_model || ''}
+                                              onChange={(e) => handleLocalSettingChange('GEMINI_MODEL', e.target.value)}
+                                              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10"
+                                              disabled={isSavingAll || loadingGeminiModels}
+                                            >
+                                              <option value="" disabled>{loadingGeminiModels ? 'Loading models...' : 'Select a model'}</option>
+                                              {geminiModels.length > 0 && geminiModels.map(model => (
+                                                <option key={model} value={model}>{model}</option>
+                                              ))}
+                                              {geminiModels.length === 0 && !loadingGeminiModels && settings.gemini_model && (
+                                                <option value={settings.gemini_model}>{settings.gemini_model} (Not in list)</option>
+                                              )}
+                                            </select>
+                                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                                              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                                                <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                                              </svg>
+                                            </div>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              fetchGeminiModels();
+                                            }}
+                                            disabled={loadingGeminiModels}
+                                            className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors shrink-0"
+                                            title="Refresh models"
+                                          >
+                                            <RefreshCw size={18} className={loadingGeminiModels ? 'animate-spin' : ''} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                      {!settings.google_api_key && (
+                                        <p className="text-[10px] text-neutral-500 mt-1">Add a Google API key to load live models from Google. Showing common defaults until then.</p>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {key === 'vertex' && (
+                                    <>
+                                      <SettingInput
+                                        label="Project ID"
+                                        dbKey="VERTEX_PROJECT"
+                                        value={settings.vertex_project}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                      />
+                                      <SettingInput
+                                        label="Location"
+                                        dbKey="VERTEX_LOCATION"
+                                        value={settings.vertex_location}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="us-central1"
+                                      />
+                                      <SettingInput
+                                        label="Credentials JSON Path"
+                                        dbKey="VERTEX_CREDENTIALS_PATH"
+                                        value={settings.vertex_credentials_path}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="C:\path\to\credentials.json"
+                                      />
+                                      <SettingInput
+                                        label="Model Name"
+                                        dbKey="VERTEX_MODEL"
+                                        value={settings.vertex_model}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="gemini-1.5-pro"
+                                      />
+                                    </>
+                                  )}
+
+                                  {key === 'groq' && (
+                                    <>
+                                      <SettingInput
+                                        label="Groq API Key"
+                                        dbKey="GROQ_API_KEY"
+                                        value={settings.groq_api_key}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        isSecret
+                                        type="textarea"
+                                        placeholder="Enter keys separated by commas or lines:\ngsk_key1,\ngsk_key2,\n..."
+                                      />
+                                      <p className="text-[10px] text-neutral-500 mt-1">
+                                        Tip: Add multiple keys to bypass Groq's per-minute rate limits. They will be rotated automatically.
+                                      </p>
+                                      <SettingInput
+                                        label="Model Name"
+                                        dbKey="GROQ_MODEL"
+                                        value={settings.groq_model}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="llama-3.1-70b-versatile"
+                                      />
+                                    </>
+                                  )}
+
+                                  {key === 'openai' && (
+                                    <>
+                                      <SettingInput
+                                        label="OpenAI API Key"
+                                        dbKey="OPENAI_API_KEY"
+                                        value={settings.openai_api_key}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        isSecret
+                                        type="textarea"
+                                        placeholder="Enter keys separated by commas or lines:\nkey1,\nkey2,\n..."
+                                      />
+                                      <p className="text-[10px] text-neutral-500 mt-1">
+                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
+                                      </p>
+                                      <SettingInput
+                                        label="Base URL"
+                                        dbKey="OPENAI_BASE_URL"
+                                        value={settings.openai_base_url}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="https://api.z.ai/api/paas/v4/"
+                                      />
+                                      <SettingInput
+                                        label="Model Name"
+                                        dbKey="OPENAI_MODEL"
+                                        value={settings.openai_model}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="glm-4.5-flash"
+                                      />
+                                    </>
+                                  )}
+
+                                  {key === 'rie' && (
+                                    <div className="space-y-4">
+                                      {!rieToken ? (
+                                        <div className=" p-12 rounded-2xl flex flex-col items-center justify-center text-center space-y-6">
+                                          <div className="space-y-2">
+                                            <h4 className="text-xl font-semibold text-neutral-100">Unlock the Full Power of Rie</h4>
+                                            <p className="text-sm text-neutral-400 max-w-xs mx-auto">
+                                              Sign in to access advanced models, system controls, and get up to 50 free requests per day.
+                                            </p>
+                                          </div>
+                                          <button
+                                            onClick={async () => {
+                                              try {
+                                                const { openUrl } = await import('@tauri-apps/plugin-opener');
+                                                await openUrl('http://localhost:14200/login?redirect_to_app=true');
+                                              } catch (e) {
+                                                console.error("Failed to open login URL:", e);
+                                                // Fallback for dev if plugin naming is different or not found
+                                                window.open('http://localhost:14200/login?redirect_to_app=true', '_blank');
+                                              }
+                                            }}
+                                            className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95"
+                                          >
+                                            Sign In via Website
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <div className=" rounded-2xl  overflow-hidden">
+                                          {/* Account Header */}
+                                          <div className="px-6 py-4 flex items-center justify-between bg-neutral-800/20 border-b border-neutral-700/50">
+                                            <div className="flex items-center gap-3">
+                                              <div className="p-2 bg-emerald-500/10 rounded-xl">
+                                                <Shield className="w-5 h-5 text-emerald-400" />
+                                              </div>
+                                              {rieUsage && (
+                                                <div>
+                                                  <div className="text-xs text-neutral-500 font-medium lowercase">Account</div>
+                                                  <div className="text-sm font-semibold text-neutral-100">{rieUsage.email || 'Authenticated'}</div>
+                                                </div>
+                                              )}
+                                            </div>
+                                            <button
+                                              onClick={handleRieSignOut}
+                                              className="text-xs font-medium text-neutral-500 hover:text-red-400 transition-colors px-3 py-1.5 hover:bg-red-500/10 rounded-lg"
+                                            >
+                                              Sign Out
+                                            </button>
+                                          </div>
+
+                                          {/* Usage Section */}
+                                          <div className="p-6 space-y-6">
+                                            {rieUsage && (
+                                              <div className="space-y-4">
+                                                <div className="flex items-center justify-between">
+                                                  <div className="space-y-1">
+                                                    <h4 className="text-sm font-medium text-neutral-200">Request Usage</h4>
+                                                    <p className="text-[11px] text-neutral-500">Reset daily at 00:00 UTC</p>
+                                                  </div>
+                                                  <div className="text-right">
+                                                    <span className="text-lg font-bold text-emerald-400">{rieUsage.current_usage}</span>
+                                                    <span className="text-sm text-neutral-500 font-medium"> / {rieUsage.limit}</span>
+                                                  </div>
+                                                </div>
+
+                                                {/* Progress Bar */}
+                                                <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden border border-neutral-700/30">
+                                                  <motion.div
+                                                    initial={{ width: 0 }}
+                                                    animate={{ width: `${(rieUsage.current_usage / rieUsage.limit) * 100}%` }}
+                                                    transition={{ duration: 1, ease: "easeOut" }}
+                                                    className={`h-full rounded-full ${(rieUsage.current_usage / rieUsage.limit) > 0.9
+                                                      ? 'bg-red-500'
+                                                      : (rieUsage.current_usage / rieUsage.limit) > 0.7
+                                                        ? 'bg-amber-500'
+                                                        : 'bg-emerald-500'
+                                                      } shadow-[0_0_10px_rgba(16,185,129,0.3)]`}
+                                                  />
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-4 pt-2">
+                                                  <div className="p-3 bg-neutral-900/40 rounded-xl border border-neutral-700/50">
+                                                    <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">Status</div>
+                                                    <div className="flex items-center gap-1.5">
+                                                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                                                      <span className="text-xs font-medium text-neutral-200">Active</span>
+                                                    </div>
+                                                  </div>
+                                                  <div className="p-3 bg-neutral-900/40 rounded-xl border border-neutral-700/50">
+                                                    <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">Remaining</div>
+                                                    <div className="text-xs font-semibold text-emerald-400">{rieUsage.remaining} requests</div>
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            )}
+
+                                            {/* Footer Info */}
+                                            <div className="flex items-center gap-3 px-4 py-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10">
+                                              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                                              <p className="text-[11px] text-emerald-300/80 leading-normal">
+                                                Your requests are optimized by Rie's backend using <span className="font-semibold text-emerald-400">glm-4.5-flash</span>.
+                                              </p>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {key === 'ollama' && (
+                                    <>
+                                      <SettingInput
+                                        label="Ollama Endpoint"
+                                        dbKey="OLLAMA_API_URL"
+                                        value={settings.ollama_api_url}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="http://localhost:11434"
+                                        allowEmpty
+                                      />
+                                      <p className="text-[10px] text-neutral-500 -mt-1">
+                                        Leave empty to use default <code className="text-neutral-400">http://localhost:11434</code>.
+                                      </p>
+                                      <SettingInput
+                                        label="Ollama API Key (optional)"
+                                        dbKey="OLLAMA_API_KEY"
+                                        value={settings.ollama_api_key}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        isSecret
+                                        placeholder="For secured or remote Ollama instances"
+                                      />
+                                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
+                                        <div className="flex items-center gap-2.5 shrink-0">
+                                          <label className="text-xs font-medium text-neutral-400 tracking-wider">Ollama Model</label>
+                                        </div>
+                                        <div className="flex-1 max-w-xs w-full sm:w-auto flex gap-2">
+                                          <div className="relative flex-1">
+                                            <select
+                                              value={settings.ollama_model || ''}
+                                              onChange={(e) => handleLocalSettingChange('OLLAMA_MODEL', e.target.value)}
+                                              className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10"
+                                              disabled={isSavingAll || loadingOllamaModels}
+                                            >
+                                              <option value="" disabled>{loadingOllamaModels ? 'Loading models...' : 'Select a model'}</option>
+                                              {ollamaModels.length > 0 && ollamaModels.map(model => (
+                                                <option key={model} value={model}>{model}</option>
+                                              ))}
+                                              {ollamaModels.length === 0 && !loadingOllamaModels && settings.ollama_model && (
+                                                <option value={settings.ollama_model}>{settings.ollama_model} (Not found)</option>
+                                              )}
+                                            </select>
+                                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
+                                              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                                                <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
+                                              </svg>
+                                            </div>
+                                          </div>
+                                          <button
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              fetchOllamaModels();
+                                            }}
+                                            disabled={loadingOllamaModels}
+                                            className="p-2 bg-neutral-800 border border-neutral-700 rounded-lg text-neutral-400 hover:text-emerald-400 transition-colors shrink-0"
+                                            title="Refresh models"
+                                          >
+                                            <RefreshCw size={18} className={loadingOllamaModels ? 'animate-spin' : ''} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-3 px-4 py-3 bg-neutral-800/30 rounded-xl border border-neutral-700/50 mt-3">
+                                        <Info className="w-4 h-4 text-neutral-400 shrink-0" />
+                                        <p className="text-[11px] text-neutral-400 leading-normal">
+                                          Using Ollama at <code className="text-neutral-300 bg-neutral-900 px-1 rounded">{settings.ollama_api_url?.trim() || 'http://localhost:11434'}</code>. Make sure it's running and you've downloaded at least one model.
+                                        </p>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
-                        <div className="flex items-center gap-3 px-4 py-3 bg-neutral-800/30 rounded-xl border border-neutral-700/50 mt-3">
-                          <Info className="w-4 h-4 text-neutral-400 shrink-0" />
-                          <p className="text-[11px] text-neutral-400 leading-normal">
-                            Using Ollama at <code className="text-neutral-300 bg-neutral-900 px-1 rounded">{settings.ollama_api_url?.trim() || 'http://localhost:11434'}</code>. Make sure it's running and you've downloaded at least one model.
-                          </p>
-                        </div>
-                      </>
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
               )}
