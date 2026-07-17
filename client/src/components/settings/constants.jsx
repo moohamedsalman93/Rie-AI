@@ -17,11 +17,11 @@ const OllamaIcon = (props) => (
 );
 
 export const PROVIDERS = {
+  rie: { label: 'Rie', icon: <img src={logo} alt="Rie" className="w-5 h-5 object-contain" /> },
   gemini: { label: 'Google Gemini', icon: <img src={geminiIcon} alt="Google Gemini" className="w-5 h-5 object-contain" /> },
   vertex: { label: 'Vertex AI', icon: <Cloud className="w-5 h-5" /> },
   groq: { label: 'Groq', icon: <Zap className="w-5 h-5" /> },
   openai: { label: 'OpenAI', icon: <OpenaiIcon className="w-5 h-5" /> },
-  rie: { label: 'Rie', icon: <img src={logo} alt="Rie" className="w-5 h-5 object-contain" /> },
   ollama: { label: 'Ollama', icon: <OllamaIcon className="w-5 h-5" /> },
 };
 

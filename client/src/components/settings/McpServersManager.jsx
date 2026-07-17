@@ -371,7 +371,7 @@ export function McpServersManager({ servers, onSave, isSaving }) {
 
           <div className="space-y-3">
             <div>
-              <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium mb-1 block">MCP Server JSON</label>
+              <label className="text-[10px] tracking-wider text-neutral-500 font-medium mb-1 block">MCP Server JSON</label>
               <textarea
                 value={newServerJson}
                 onChange={(e) => setNewServerJson(e.target.value)}

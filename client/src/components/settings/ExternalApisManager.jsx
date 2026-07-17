@@ -176,7 +176,7 @@ export function ExternalApisManager({ apis, onSave, isSaving }) {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Tool Name</label>
+              <label className="text-[10px] tracking-wider text-neutral-500 font-medium">Tool Name</label>
               <input
                 type="text"
                 value={newApi.name}
@@ -186,7 +186,7 @@ export function ExternalApisManager({ apis, onSave, isSaving }) {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">HTTP Method</label>
+              <label className="text-[10px] tracking-wider text-neutral-500 font-medium">HTTP Method</label>
               <select
                 value={newApi.method}
                 onChange={(e) => setNewApi(prev => ({ ...prev, method: e.target.value }))}
@@ -202,7 +202,7 @@ export function ExternalApisManager({ apis, onSave, isSaving }) {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Description (For AI context)</label>
+            <label className="text-[10px] tracking-wider text-neutral-500 font-medium">Description (For AI context)</label>
             <input
               type="text"
               value={newApi.description}
@@ -213,7 +213,7 @@ export function ExternalApisManager({ apis, onSave, isSaving }) {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">API URL (Supports {'{param}'} placeholders)</label>
+            <label className="text-[10px] tracking-wider text-neutral-500 font-medium">API URL (Supports {'{param}'} placeholders)</label>
             <input
               type="text"
               value={newApi.url}
@@ -225,7 +225,7 @@ export function ExternalApisManager({ apis, onSave, isSaving }) {
 
           {(newApi.method === 'POST' || newApi.method === 'PUT' || newApi.method === 'PATCH') && (
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Request body (JSON)</label>
+              <label className="text-[10px] tracking-wider text-neutral-500 font-medium">Request body (JSON)</label>
               <textarea
                 value={newApi.body}
                 onChange={(e) => setNewApi(prev => ({ ...prev, body: e.target.value }))}
@@ -237,7 +237,7 @@ export function ExternalApisManager({ apis, onSave, isSaving }) {
           )}
 
           <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">Headers (JSON)</label>
+            <label className="text-[10px] tracking-wider text-neutral-500 font-medium">Headers (JSON)</label>
             <textarea
               value={newApi.headers}
               onChange={(e) => setNewApi(prev => ({ ...prev, headers: e.target.value }))}
