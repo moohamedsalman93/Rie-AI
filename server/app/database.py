@@ -378,6 +378,12 @@ def init_db():
             "PDF Generation Expert",
             "Conventions for generating professional programmatical PDFs.",
             "When generating PDFs:\n- In Python, prefer `reportlab` (using PLATYPUS Flowables for page-layout management) or `fpdf2` for simpler reports.\n- Avoid hardcoded layout coordinates `(x, y)` where possible; use flowables, Paragraphs, and Spacers to handle page-breaks and margins dynamically.\n- Always wrap text inside Paragraph flowables to enable automatic word wrapping in tables.\n- Define styles and reuse them to maintain color scheme and font consistency.\n- Ensure all custom fonts are registered before drawing them.\n- When generating in Node.js, prefer `pdf-lib` or HTML-to-PDF converters like `puppeteer`/`playwright` for design-heavy layouts."
+        ),
+        (
+            "💻",
+            "Computer Use Guide",
+            "Instructions for controlling and automating the Windows OS using mouse, keyboard, and terminal tools.",
+            "Guidelines for using computer control tools (desktop state, click, type, scroll, drag, shortcuts, wait, scrape):\n1. **Always Check State First**: Before clicking, typing, or performing actions, call `get_desktop_state` to see the currently open applications, focused window, and interactive elements.\n2. **Visual Verification**: If you are unsure of an element's location, or a text description is insufficient, call `get_desktop_state` with `use_vision=True` to receive a visual screenshot.\n3. **Coordinate Accuracy**: The coordinates returned by `get_desktop_state` are in `[x, y]` format. Always click or type exactly on the identified interactive element's coordinates.\n4. **App Launch & Control**: Use `app_control` to launch or switch to windows. If an app is already running, switch to it instead of starting a new instance.\n5. **Typing Best Practices**: When using `keyboard_type`, click on the input field first. Use `clear=True` if you need to replace existing content, and `press_enter=True` to submit forms or search boxes.\n6. **Wait for UI Transitions**: UI updates are not instantaneous. After launching a program or clicking a button that changes the screen, use the `wait` tool (typically 1-3 seconds) to allow the interface to settle before querying the new state.\n7. **Verify Actions**: After executing clicks or keystrokes, call `get_desktop_state` again to verify that your action was successful and the UI changed as expected. Make sure to verify each step and do not proceed blindly.\n8. **Keyboard Shortcuts**: Use `press_keys` (shortcut tool) for common actions: 'ctrl+c' to copy, 'ctrl+v' to paste, 'alt+tab' to switch active windows, 'win' or 'win+s' to open search."
         )
     ]
     
@@ -391,6 +397,15 @@ def init_db():
                 VALUES (?, ?, ?, ?, ?, '[]', 0, ?, ?)
                 """,
                 (skill_id, name, desc, content, icon, now, now)
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE skills 
+                SET description = ?, content = ?, icon = ?, updated_at = ? 
+                WHERE name = ?
+                """,
+                (desc, content, icon, now, name)
             )
 
     conn.commit()

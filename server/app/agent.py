@@ -174,9 +174,10 @@ def _client_device_system_content(
 SYSTEM_PROMPT = """
 You are Rie, an autonomous AI assistant specialized in technical tasks.
 
-Priorities: accuracy first, efficiency second.
+Priorities: check and use available skills first, accuracy second, efficiency third.
 
 Rules:
+- Prioritize using specialized skills/instructions. Before starting any task, check the "Available Skills" section. If any available skill matches or relates to the task, you MUST first call the `load_skill` tool to retrieve and follow its instructions.
 - Prefer verified information and reasoning over assumptions.
 - Select and invoke the single most specific and efficient tool for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
 - When executing terminal commands on Windows, you MUST write correct and native Windows/PowerShell commands. Never use Linux commands (e.g. do not use `cat`, `touch`, `rm`, `cp`, `mv`, or `/` slash path separators; instead use `Get-Content`/`type`, `New-Item`/`echo`, `Remove-Item`, `Copy-Item`, `Move-Item`, and use backslashes `\\` for file paths).
@@ -429,7 +430,7 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
 
 
 @tool
-def load_skill(skill_name: str, runtime: ToolRuntime) -> str:
+def load_skill(skill_name: str, runtime: ToolRuntime = None) -> str:
     """Load the full content of a skill into the agent's context.
     Use this when you need detailed instructions or guidelines for a specific domain/task.
     
@@ -438,14 +439,14 @@ def load_skill(skill_name: str, runtime: ToolRuntime) -> str:
     """
     try:
         from app.database import list_skills
-        db_skills = list_skills()
         normalized_name = skill_name.strip().lower()
+        db_skills = list_skills()
         for row in db_skills:
-            if row.get("name", "").strip().lower() == normalized_name:
+            if row.get("name", "").strip().lower() == normalized_name or row.get("id", "").strip().lower() == normalized_name:
                 content = (row.get("content") or "").strip()
                 return f"Loaded Skill: {row.get('name')}\n\n{content}"
     except Exception as exc:
-        return f"Error loading skill '{skill_name}' from database: {exc}"
+        return f"Error loading skill '{skill_name}': {exc}"
         
     return f"Skill '{skill_name}' not found."
 
@@ -454,32 +455,68 @@ class SkillMiddleware(AgentMiddleware):
     """Middleware that injects available database skill descriptions into the system prompt."""
     tools = [load_skill]
 
+    def _build_skills_prompt(self) -> str:
+        skills_list = []
+        try:
+            from app.database import list_skills
+            from langgraph.config import get_config
+            
+            config = None
+            try:
+                config = get_config()
+            except Exception:
+                pass
+                
+            thread_id = None
+            skill_ids_from_config = []
+            if config and "configurable" in config:
+                thread_id = config["configurable"].get("thread_id")
+                skill_ids_from_config = config["configurable"].get("skill_ids", [])
+
+            # Collect active/available database skills:
+            db_skills = list_skills()
+            for row in db_skills:
+                # check if globally enabled or attached via skill_ids from config
+                is_active = row.get("enabled") or row.get("id") in skill_ids_from_config
+                # check if attached to this thread
+                if not is_active and thread_id:
+                    from app.database import get_db_path
+                    import sqlite3
+                    try:
+                        db_path = get_db_path()
+                        conn = sqlite3.connect(db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT COUNT(*) FROM thread_skills WHERE thread_id = ? AND skill_id = ?", (thread_id, row.get("id")))
+                        if cursor.fetchone()[0] > 0:
+                            is_active = True
+                        conn.close()
+                    except Exception:
+                        pass
+                
+                if is_active:
+                    name = row.get("name", "Skill")
+                    desc = row.get("description", "").strip() or "Database-defined skill instructions."
+                    skills_list.append(f"- **{name}**: {desc}")
+
+        except Exception as exc:
+            pass
+            
+        return "\n".join(skills_list)
+
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        skills_list = []
-        try:
-            from app.database import list_skills
-            db_skills = list_skills()
-            for row in db_skills:
-                if row.get("enabled"):
-                    name = row.get("name", "Skill")
-                    desc = row.get("description", "").strip() or "Database-defined skill instructions."
-                    skills_list.append(f"- **{name}**: {desc}")
-        except Exception:
-            pass
-
-        if skills_list:
-            skills_prompt = "\n".join(skills_list)
+        skills_prompt = self._build_skills_prompt()
+        if skills_prompt:
             skills_addendum = (
                 f"\n\n## Available Skills\n"
                 f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
-                f"If a user task requires specific business rules, development standards, or instructions associated with one of these skills, "
-                f"you MUST call the load_skill tool with the exact skill name to load its full content into your context BEFORE responding.\n\n"
+                f"PRIORITY: If a user task relates to any of these skills, you MUST prioritize loading and adhering to them. "
+                f"Call the load_skill tool with the exact skill name to load its full content into your context BEFORE proceeding with the task.\n\n"
                 f"{skills_prompt}\n\n"
-                f"Do not assume the content of a skill. Always load it first if you need it."
+                f"Do not assume the content of a skill. Always load it first if you need it. Treating these skills as priority is required."
             )
 
             new_content = list(request.system_message.content_blocks) + [
@@ -496,27 +533,15 @@ class SkillMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        skills_list = []
-        try:
-            from app.database import list_skills
-            db_skills = list_skills()
-            for row in db_skills:
-                if row.get("enabled"):
-                    name = row.get("name", "Skill")
-                    desc = row.get("description", "").strip() or "Database-defined skill instructions."
-                    skills_list.append(f"- **{name}**: {desc}")
-        except Exception:
-            pass
-
-        if skills_list:
-            skills_prompt = "\n".join(skills_list)
+        skills_prompt = self._build_skills_prompt()
+        if skills_prompt:
             skills_addendum = (
                 f"\n\n## Available Skills\n"
                 f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
-                f"If a user task requires specific business rules, development standards, or instructions associated with one of these skills, "
-                f"you MUST call the load_skill tool with the exact skill name to load its full content into your context BEFORE responding.\n\n"
+                f"PRIORITY: If a user task relates to any of these skills, you MUST prioritize loading and adhering to them. "
+                f"Call the load_skill tool with the exact skill name to load its full content into your context BEFORE proceeding with the task.\n\n"
                 f"{skills_prompt}\n\n"
-                f"Do not assume the content of a skill. Always load it first if you need it."
+                f"Do not assume the content of a skill. Always load it first if you need it. Treating these skills as priority is required."
             )
 
             new_content = list(request.system_message.content_blocks) + [
@@ -1715,7 +1740,7 @@ class AgentManager:
         friend_target_id: Optional[str] = None,
         friend_target_name: Optional[str] = None,
         knowledge_context: Optional[str] = None,
-        skill_context: Optional[str] = None,
+        skill_ids: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
         """Stream the agent with messages or resume with decisions (Async/thread-aware)."""
         # Check if modes changed and re-initialize if needed
@@ -1769,7 +1794,6 @@ class AgentManager:
                     "content": f"[Custom Knowledge Context]\n{knowledge_context.strip()}",
                 })
 
-
             for msg in messages:
                 if isinstance(msg, dict) and msg.get("image_url") and msg.get("role") == "user":
                     content = [
@@ -1794,6 +1818,8 @@ class AgentManager:
             config["configurable"]["thread_id"] = thread_id
         if project_root:
             config["configurable"]["project_root"] = project_root
+        if skill_ids:
+            config["configurable"]["skill_ids"] = skill_ids
 
         logger = logging.getLogger(__name__)
         

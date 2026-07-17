@@ -1,4 +1,4 @@
-"""
+"""  """"""
 API routes/endpoints
 """
 import asyncio
@@ -173,7 +173,78 @@ def _runtime_catalog_help_text() -> str:
 
 def _build_skill_context(skill_ids: List[str], project_root: Optional[str] = None) -> str:
     """Build a concatenated skill instructions block for system message injection, including workspace auto-discovered skills."""
-    return ""
+    if not skill_ids:
+        return ""
+    
+    parts = []
+    import os
+    
+    # Pre-fetch database skills to look up by ID
+    db_skills_dict = {}
+    try:
+        db_skills = list_skills()
+        for item in db_skills:
+            db_skills_dict[item["id"]] = item
+    except Exception as exc:
+        logging.warning("Failed to list skills in _build_skill_context: %s", exc)
+
+    home_dir = os.path.expanduser("~")
+    global_rie_dir = os.path.join(home_dir, ".rie")
+
+    for sid in skill_ids:
+        content = ""
+        title = sid
+        
+        # 1. DB skill check
+        if sid in db_skills_dict:
+            skill = db_skills_dict[sid]
+            title = skill.get("name", sid)
+            content = skill.get("content") or ""
+        
+        # 2. Workspace skill check
+        elif sid.startswith("ws_") and project_root and os.path.isdir(project_root):
+            sub_id = sid[3:]
+            if sub_id == "claude":
+                path = os.path.join(project_root, "CLAUDE.md")
+                title = "Workspace CLAUDE.md"
+            elif sub_id == "rie":
+                path = os.path.join(project_root, "RIE.md")
+                title = "Workspace RIE.md"
+            else:
+                path = os.path.join(project_root, ".rie", "skills", sub_id)
+                title = f"Workspace Skill ({sub_id})"
+                
+            if os.path.isfile(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception as exc:
+                    logging.warning("Failed to read workspace skill file %s: %s", path, exc)
+                    
+        # 3. Global skill check
+        elif sid.startswith("global_"):
+            sub_id = sid[7:]
+            if sub_id == "claude":
+                path = os.path.join(global_rie_dir, "CLAUDE.md")
+                title = "Global CLAUDE.md"
+            elif sub_id == "rie":
+                path = os.path.join(global_rie_dir, "RIE.md")
+                title = "Global RIE.md"
+            else:
+                path = os.path.join(global_rie_dir, "skills", sub_id)
+                title = f"Global Skill ({sub_id})"
+                
+            if os.path.isfile(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception as exc:
+                    logging.warning("Failed to read global skill file %s: %s", path, exc)
+                    
+        if content.strip():
+            parts.append(f"--- START SKILL: {title} ---\n{content.strip()}\n--- END SKILL: {title} ---")
+            
+    return "\n\n".join(parts)
 
 
 def _validate_subagents_config(raw_value: str) -> list[dict]:
@@ -2718,7 +2789,7 @@ async def _agent_stream_generator(
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
     knowledge_context: Optional[str] = None,
-    skill_context: Optional[str] = None,
+    skill_ids: Optional[List[str]] = None,
 ) -> AsyncIterator[str]:
     """
     Wrap the Deep Agent `.stream()` generator into Server‑Sent Events (SSE) lines.
@@ -2779,7 +2850,7 @@ async def _agent_stream_generator(
                     friend_target_id=friend_target_id,
                     friend_target_name=friend_target_name,
                     knowledge_context=knowledge_context,
-                    skill_context=skill_context,
+                    skill_ids=skill_ids,
                 ):
                     # Token-level LLM chunks (LangGraph stream_mode includes "messages")
                     if "__lg_messages__" in chunk:
@@ -2947,7 +3018,7 @@ async def _agent_stream_generator_with_save(
     friend_target_id: Optional[str] = None,
     friend_target_name: Optional[str] = None,
     knowledge_context: Optional[str] = None,
-    skill_context: Optional[str] = None,
+    skill_ids: Optional[List[str]] = None,
     knowledge_lock_thread_id: Optional[str] = None,
     knowledge_snapshots: Optional[Dict[str, str]] = None,
 ) -> AsyncIterator[str]:
@@ -2973,7 +3044,7 @@ async def _agent_stream_generator_with_save(
         friend_target_id,
         friend_target_name,
         knowledge_context,
-        skill_context,
+        skill_ids,
     ):
         yield chunk
         # Parse chunk to extract content
@@ -3056,7 +3127,7 @@ async def _chat_stream_with_url_previews(
     knowledge_context: Optional[str] = None,
     knowledge_lock_thread_id: Optional[str] = None,
     knowledge_snapshots: Optional[Dict[str, str]] = None,
-    skill_context: Optional[str] = None,
+    skill_ids: Optional[List[str]] = None,
 ) -> AsyncIterator[str]:
     """Emit URL preview SSE events, enrich the user message, then stream the agent."""
     agent_message = message
@@ -3068,7 +3139,7 @@ async def _chat_stream_with_url_previews(
             preview_context = format_previews_for_agent(previews)
             if preview_context:
                 agent_message = f"{message}{preview_context}"
-
+ 
     messages = [{"role": "user", "content": agent_message, "image_url": image_url}]
     async for chunk in _agent_stream_generator_with_save(
         messages,
@@ -3088,7 +3159,7 @@ async def _chat_stream_with_url_previews(
         knowledge_context=knowledge_context,
         knowledge_lock_thread_id=knowledge_lock_thread_id,
         knowledge_snapshots=knowledge_snapshots,
-        skill_context=skill_context,
+        skill_ids=skill_ids,
     ):
         yield chunk
 
@@ -3141,13 +3212,6 @@ async def chat_stream_post(
     except Exception as exc:
         logging.warning("Failed to prepare thread knowledge: %s", exc)
 
-    # Build skill context
-    skill_context = ""
-    try:
-        skill_context = await run_in_threadpool(_build_skill_context, skill_ids, project_root)
-    except Exception as exc:
-        logging.warning("Failed to build skill context: %s", exc)
-
     # 2. Save User Message (original text only; previews are injected for the agent at stream time)
     await run_in_threadpool(save_message, real_thread_id, "user", message, image_url)
 
@@ -3176,7 +3240,7 @@ async def chat_stream_post(
             knowledge_context=knowledge_context or None,
             knowledge_lock_thread_id=real_thread_id if knowledge_context else None,
             knowledge_snapshots=knowledge_snapshots if knowledge_context else None,
-            skill_context=skill_context or None,
+            skill_ids=skill_ids or None,
         ),
         media_type="text/event-stream",
         headers=_SSE_CHAT_HEADERS,
