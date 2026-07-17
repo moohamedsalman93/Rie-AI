@@ -2,9 +2,8 @@
 Pydantic models for request/response schemas
 """
 from datetime import datetime
+from typing import Literal, Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field
-
-from typing import Optional, List, Dict, Any, Union
 
 
 class ChatMessage(BaseModel):
@@ -25,6 +24,8 @@ class ChatMessage(BaseModel):
     clipboard_text: Optional[str] = None
     chat_mode: Optional[str] = None  # "agent" or "chat"
     speed_mode: Optional[str] = None  # "thinking" or "flash"
+    friend_target_id: Optional[str] = None
+    friend_target_name: Optional[str] = None
     # Client device clock — used so the model does not guess wrong year/day for scheduling
     client_timezone: Optional[str] = Field(
         default=None,
@@ -34,11 +35,76 @@ class ChatMessage(BaseModel):
         default=None,
         description="User's local date and time as ISO 8601 with numeric offset (from browser)",
     )
+    client_latitude: Optional[float] = Field(
+        default=None,
+        description="User device latitude (WGS84) when location sharing is enabled",
+    )
+    client_longitude: Optional[float] = Field(
+        default=None,
+        description="User device longitude (WGS84) when location sharing is enabled",
+    )
+    client_location_accuracy_m: Optional[float] = Field(
+        default=None,
+        description="Reported GPS accuracy in meters, if available",
+    )
+    knowledge_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Custom knowledge pack ids newly attached this turn",
+    )
+    skill_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Active skill IDs whose instructions should be injected this turn",
+    )
+
+
+class KnowledgePackCreate(BaseModel):
+    name: str = Field(..., description="Display name for the knowledge pack")
+    instructions: str = Field("", description="Custom instructions for this knowledge")
+
+
+class KnowledgePackUpdate(BaseModel):
+    name: Optional[str] = None
+    instructions: Optional[str] = None
+
+
+class KnowledgeAssetResponse(BaseModel):
+    id: str
+    pack_id: str
+    filename: str
+    asset_type: str
+    summary: Optional[str] = None
+    created_at: str
+
+
+class KnowledgePackResponse(BaseModel):
+    id: str
+    name: str
+    instructions: Optional[str] = None
+    created_at: str
+    updated_at: str
+    asset_count: int = 0
+    assets: Optional[List[KnowledgeAssetResponse]] = None
+
+
+class ThreadKnowledgeItem(BaseModel):
+    thread_id: str
+    knowledge_id: str
+    knowledge_name: str
+    is_locked: bool = False
+    attached_at: str
 
 
 class CancelRequest(BaseModel):
     """Request model for cancelling a running chat stream"""
     thread_id: str = Field(..., description="The thread ID of the stream to cancel")
+
+
+class ForkThreadRequest(BaseModel):
+    """Fork a thread with history through a given user message."""
+    new_thread_id: str
+    source_thread_id: Optional[str] = None
+    until_message_id: Optional[Union[int, str]] = None
+    messages: Optional[List[Dict[str, Any]]] = None
 
 
 class SpeakRequest(BaseModel):
@@ -60,6 +126,7 @@ class CustomAPIConfig(BaseModel):
     headers: Optional[Dict[str, str]] = Field(default_factory=dict, description="HTTP headers")
     body: Optional[str] = Field(None, description="Request body as JSON string for POST/PUT/PATCH. Use {param_name} for values the AI will fill. Omit to send tool parameters as JSON body.")
     parameters_schema: Optional[Dict[str, Any]] = Field(None, description="JSON schema for tool parameters (optional)")
+    enabled: bool = Field(True, description="Whether this custom API tool is enabled for runtime registration")
 
 class SubAgentConfig(BaseModel):
     """Configuration for a user-defined sub-agent."""
@@ -116,6 +183,8 @@ class HealthResponse(BaseModel):
     message: str
     agent_configured: bool
     tavily_configured: bool
+    web_search_configured: bool
+    web_search_provider: str
 
 class SettingsUpdate(BaseModel):
     """Request model for updating settings"""
@@ -129,9 +198,12 @@ class SettingsResponse(BaseModel):
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
-    
+    brave_search_api_key: Optional[str] = None
+    web_search_provider: str = "tavily"
+
     # Advanced Settings
     llm_provider: Optional[str] = None
+    fallback_llm_provider: Optional[str] = None
     vertex_project: Optional[str] = None
     vertex_location: Optional[str] = None
     vertex_credentials_path: Optional[str] = None
@@ -169,7 +241,12 @@ class SettingsResponse(BaseModel):
     langsmith_project: str = "Rie-AI"
     langsmith_endpoint: str = "https://api.smith.langchain.com"
     voice_reply: bool = True
-    
+    share_location: bool = True
+    exclude_from_capture: bool = True
+    capture_screen_as_text: bool = False
+    floating_chat_opacity: float = 0.85
+    show_bubble: bool = True
+
     # TTS Settings
     tts_provider: str = "edge-tts"
     tts_voice: str = "en-US-EmmaNeural"
@@ -179,6 +256,11 @@ class SettingsResponse(BaseModel):
     subagents_config: Optional[List[SubAgentConfig]] = None
     subagent_planner_graph: Optional[PlannerGraphConfig] = None
     agent_orchestration_mode: str = "team"
+    connectivity_ngrok_enabled: bool = False
+    connectivity_public_url: Optional[str] = None
+    connectivity_device_name: Optional[str] = None
+    connectivity_ngrok_install_path: Optional[str] = None
+    connectivity_ngrok_domain: Optional[str] = None
 
 
 class ActionRequest(BaseModel):
@@ -205,8 +287,11 @@ class ResumeChatRequest(BaseModel):
     speed_mode: Optional[str] = None  # "thinking" or "flash"
     client_timezone: Optional[str] = None
     client_local_datetime_iso: Optional[str] = None
- 
- 
+    client_latitude: Optional[float] = None
+    client_longitude: Optional[float] = None
+    client_location_accuracy_m: Optional[float] = None
+
+
 class ScheduleTaskRequest(BaseModel):
     """Request model for scheduling a chat message"""
     text: str
@@ -245,5 +330,212 @@ class ScheduleNotificationItem(BaseModel):
     title: str
     body: str
     created_at: str
+
+
+class DeviceIdentity(BaseModel):
+    device_id: str
+    name: str
+    public_key: str
+    fingerprint: str
+    public_url: Optional[str] = None
+
+
+class FriendPeerAccessPolicy(BaseModel):
+    """Effective inbound peer policy (merged defaults)."""
+
+    receive_profile: Literal["chat", "agent"] = "chat"
+    allowed_tool_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Subset of runtime tools; None means allow full profile default set.",
+    )
+    memory_enabled: bool = True
+
+
+class FriendPeerAccessPatch(BaseModel):
+    receive_profile: Literal["chat", "agent"] = "chat"
+    allowed_tool_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Omit or null to mean 'all tools allowed for this profile' when saved.",
+    )
+    memory_enabled: bool = True
+
+
+class PeerAccessCatalogResponse(BaseModel):
+    chat_eligible: List[str]
+    agent_eligible: List[str]
+
+
+class FriendRecord(BaseModel):
+    id: str
+    name: str
+    device_id: str
+    fingerprint: str
+    public_key: str
+    public_url: Optional[str] = None
+    created_at: str
+    updated_at: str
+    peer_access: Optional[FriendPeerAccessPolicy] = None
+
+
+class PairingRequest(BaseModel):
+    name: Optional[str] = None
+
+
+class PairingInitResponse(BaseModel):
+    pairing_token: str
+    identity: DeviceIdentity
+
+
+class PairingConfirmRequest(BaseModel):
+    pairing_token: str
+    peer_name: str
+    peer_device_id: str
+    peer_fingerprint: str
+    peer_public_key: str
+    peer_public_url: Optional[str] = None
+
+
+class PairingFinalizeRequest(BaseModel):
+    peer_name: str
+    peer_device_id: str
+    peer_fingerprint: str
+    peer_public_key: str
+    peer_public_url: Optional[str] = None
+
+
+class PairingConfirmResponse(BaseModel):
+    friend: FriendRecord
+    reciprocal_synced: bool = False
+    reciprocal_status: str = "not_attempted"
+    reciprocal_code: Optional[str] = None
+    reciprocal_message: Optional[str] = None
+    finalize_endpoint: Optional[str] = None
+    finalize_payload: Optional[PairingFinalizeRequest] = None
+
+
+class PeerAskRequest(BaseModel):
+    friend_id: str
+    query: str
+    thread_id: Optional[str] = None
+
+
+class PeerStreamCancelRequest(BaseModel):
+    thread_id: str
+    stream_id: Optional[str] = None
+
+
+class PeerReceiveRequest(BaseModel):
+    from_device_id: str
+    from_fingerprint: str
+    query: str
+    thread_id: Optional[str] = None
+
+
+class PeerAskResponse(BaseModel):
+    status: str
+    message: str
+    thread_id: Optional[str] = None
+    responder_device_id: Optional[str] = None
+    responder_public_url: Optional[str] = None
+    failure_code: Optional[str] = None
+
+
+class FriendStatusResponse(BaseModel):
+    friend_id: str
+    reachable: bool
+    status: str
+    latency_ms: Optional[int] = None
+    message: str
+    checked_at: str
+    failure_code: Optional[str] = None
+    failure_stage: Optional[str] = None
+
+
+class PeerQueryEventItem(BaseModel):
+    id: str
+    direction: Literal["inbound", "outbound"]
+    friend_id: Optional[str] = None
+    friend_name: Optional[str] = None
+    query_text: str
+    status: Literal["ok", "error"]
+    response_preview: Optional[str] = None
+    error_detail: Optional[str] = None
+    created_at: str
+
+
+class FriendApprovalRequest(BaseModel):
+    thread_id: str
+
+
+class FriendEndpointUpdateRequest(BaseModel):
+    public_url: str
+
+
+class NgrokInstallRequest(BaseModel):
+    confirmed: bool = False
+    auth_token: Optional[str] = None
+    domain: Optional[str] = None
+
+
+class NgrokInstallResponse(BaseModel):
+    ok: bool
+    installed: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+    enabled: bool = False
+    public_url: Optional[str] = None
+    tunnel_running: bool = False
+    tunnel_pid: Optional[int] = None
+    domain: Optional[str] = None
+    ready_state: str = "failed"
+    steps: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class NgrokStatusResponse(BaseModel):
+    installed: bool
+    path: Optional[str] = None
+    version: Optional[str] = None
+    enabled: bool = False
+    public_url: Optional[str] = None
+    tunnel_running: bool = False
+    tunnel_pid: Optional[int] = None
+    domain: Optional[str] = None
+    ready_state: str = "not_ready"
+
+
+# ---------------------------------------------------------------------------
+# Skills
+# ---------------------------------------------------------------------------
+
+class SkillCreate(BaseModel):
+    """Request model for creating a skill."""
+    name: str = Field(..., description="Display name for the skill")
+    description: str = Field("", description="Short description of what this skill does")
+    content: str = Field(..., description="Markdown instructions the agent will follow")
+    icon: str = Field("🧠", description="Emoji or short icon string")
+    tool_ids: List[str] = Field(default_factory=list, description="Tool IDs this skill grants advisory access to")
+
+
+class SkillUpdate(BaseModel):
+    """Request model for updating a skill (all fields optional)."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    content: Optional[str] = None
+    icon: Optional[str] = None
+    tool_ids: Optional[List[str]] = None
+    enabled: Optional[bool] = None
+
+
+class SkillResponse(BaseModel):
+    """Response model for a single skill."""
+    id: str
+    name: str
+    description: str
+    content: str
+    icon: str
+    tool_ids: List[str]
+    enabled: bool
+    created_at: str
+    updated_at: str
 
 

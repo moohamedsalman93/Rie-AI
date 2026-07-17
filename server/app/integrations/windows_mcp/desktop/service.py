@@ -475,7 +475,11 @@ class Desktop:
         return Size(width=width,height=height)
 
     def get_screenshot(self)->Image.Image:
-        return pg.screenshot()
+        from PIL import ImageGrab
+        try:
+            return ImageGrab.grab(all_screens=True)
+        except Exception:
+            return pg.screenshot()
     
     @contextmanager
     def auto_minimize(self):

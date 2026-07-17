@@ -3,7 +3,7 @@ export const WINDOW_SIZES = {
   CHAT: { width: 360, height: 520 },
   NORMAL: { width: 988, height: 629 },
   BUBBLE: { width: 180, height: 50 },
-  SETTINGS: { width: 988, height: 629 },
+  SETTINGS: { width: 920, height: 600 },
   LOADING: { width: 520, height: 420 },
 };
 
@@ -41,10 +41,4 @@ export const getToolDisplayName = (name) => {
     .join(' ');
 };
 
-export const initialMessages = [
-  {
-    id: 1,
-    from: "bot",
-    blocks: [{ type: "text", text: "Hey! I'm Rie-AI, your floating chat assistant. Drag me by the top bar, or minimize me to a bubble. How can I help you today?" }],
-  },
-];
+export const initialMessages = [];

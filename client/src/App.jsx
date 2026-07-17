@@ -7,8 +7,12 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, streamChat, getScreenshot, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead } from "./services/chatApi";
-import { saveThreadId, getStoredThreadId } from "./services/historyService";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread } from "./services/chatApi";
+import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
+import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
+import { isTauri, startNativeRecording, stopNativeRecording } from "./utils/tauriNative";
+import { extractUrls } from "./utils/urlUtils";
+import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -26,6 +30,8 @@ import {
 } from "./constants/appConfig";
 import { useWindowManager } from "./hooks/useWindowManager";
 import { useAttachments } from "./hooks/useAttachments";
+import { useKnowledgeAttachment } from "./hooks/useKnowledgeAttachment";
+
 
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
 function mergeScheduleNotificationLog(prev, incoming) {
@@ -63,10 +69,44 @@ function playScheduleAlertSound() {
   }
 }
 
+function normalizeFriendMetaMap(metaMap) {
+  const source = metaMap && typeof metaMap === "object" ? metaMap : {};
+  const normalized = {};
+  Object.entries(source).forEach(([threadId, meta]) => {
+    if (!meta || typeof meta !== "object") return;
+    const friendId = meta.friendId || meta.friend_id || null;
+    const friendName = meta.friendName || meta.friend_name || "Friend";
+    if (!friendId) return;
+    normalized[String(threadId)] = {
+      friendId,
+      friendName,
+      isFriendChat: true,
+    };
+  });
+  return normalized;
+}
+
+function mergeFriendMetaFromHistoryRows(baseMap, rows) {
+  const next = { ...(baseMap || {}) };
+  (rows || []).forEach((row) => {
+    const threadId = String(row?.thread_id || row?.id || "");
+    const friendId = row?.friend_id || null;
+    const friendName = row?.friend_name || "Friend";
+    if (!threadId || !friendId) return;
+    next[threadId] = {
+      friendId,
+      friendName,
+      isFriendChat: true,
+    };
+  });
+  return next;
+}
+
 function MainApp() {
   //#region State
   const [isOpen, setIsOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState({});
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [input, setInput] = useState("");
@@ -77,6 +117,8 @@ function MainApp() {
   const [apiStatus, setApiStatus] = useState("checking");
 
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
+  const [kioskOverlay, setKioskOverlay] = useState(false);
+  const [kioskSelection, setKioskSelection] = useState(null);
   const [terminalLogs, setTerminalLogs] = useState([]);
   const [availableUpdate, setAvailableUpdate] = useState(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -94,6 +136,9 @@ function MainApp() {
   const [scheduleNotifications, setScheduleNotifications] = useState([]);
   const [scheduleNotificationLog, setScheduleNotificationLog] = useState([]);
   const [isFloatingScheduleOpen, setIsFloatingScheduleOpen] = useState(false);
+  const [isFloatingFriendsOpen, setIsFloatingFriendsOpen] = useState(false);
+  const [friends, setFriends] = useState([]);
+  const [friendThreadMeta, setFriendThreadMeta] = useState({});
   const scheduleNotifInitializedRef = useRef(false);
   const scheduleNotifSeenIdsRef = useRef(new Set());
   const prevThreadScheduleNotifIdsRef = useRef(new Set());
@@ -117,6 +162,15 @@ function MainApp() {
   } = windowManager;
 
   const attachments = useAttachments();
+  const knowledgeAttachment = useKnowledgeAttachment();
+  const {
+    attachedKnowledge,
+    loadThreadKnowledge,
+    attachKnowledge,
+    detachKnowledge,
+    getNewKnowledgeIds,
+    markAllLocked,
+  } = knowledgeAttachment;
   const {
     attachedImage,
     setAttachedImage,
@@ -140,6 +194,8 @@ function MainApp() {
     processFilePath,
   } = attachments;
   //#endregion
+
+
 
   //#region Refs
   const messagesEndRef = useRef(null);
@@ -166,6 +222,7 @@ function MainApp() {
   const isPlayingRef = useRef(false);
   const sentenceBufferRef = useRef("");
   const isRecordingRef = useRef(isRecording);
+  const friendStreamStateRef = useRef({});
   const messages = sessions[activeThreadId] || initialMessages;
   const isLoading = streamingThreads.has(activeThreadId);
   const isLoadingRef = useRef(isLoading);
@@ -188,6 +245,48 @@ function MainApp() {
     setTerminalLogs([]);
   }, []);
 
+  const loadFriends = useCallback(async () => {
+    try {
+      const data = await getFriends();
+      setFriends(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("Failed to load friends:", err);
+    }
+  }, []);
+
+  const persistFriendMeta = useCallback((updater) => {
+    setFriendThreadMeta((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveFriendThreadMeta(next);
+      return next;
+    });
+  }, []);
+
+  const handleAssignFriendToThread = useCallback((threadId, friend) => {
+    if (!threadId || !friend?.id) return;
+    persistFriendMeta((prev) => ({
+      ...prev,
+      [String(threadId)]: {
+        friendId: friend.id,
+        friendName: friend.name || "Friend",
+        isFriendChat: true,
+      },
+    }));
+  }, [persistFriendMeta]);
+
+  const handleStartFriendChat = useCallback((friend) => {
+    if (!friend?.id) return;
+    const newThreadId = crypto.randomUUID();
+    setSessions((prev) => ({ ...prev, [newThreadId]: initialMessages }));
+    setActiveThreadId(newThreadId);
+    saveThreadId(newThreadId);
+    threadIdRef.current = newThreadId;
+    handleAssignFriendToThread(newThreadId, friend);
+    setAttachedImage(null);
+    setInput("");
+    setIsMenuOpen(false);
+  }, [handleAssignFriendToThread]);
+
   const handleToggleWindowMode = useCallback(async () => {
     const newMode = windowMode === "floating" ? "normal" : "floating";
     // Save setting first
@@ -202,6 +301,7 @@ function MainApp() {
       setIsMenuOpen(false);
     }
   }, [windowMode]);
+
 
   const handleOpenSettingsWindow = useCallback(async () => {
     // In plain web/dev mode, keep existing in-window settings behavior.
@@ -248,6 +348,10 @@ function MainApp() {
       setShowWelcome(false);
       setIsSettingsOpen(true);
     }
+  }, []);
+
+  const handleCompleteOnboarding = useCallback(() => {
+    setShowWelcome(false);
   }, []);
 
   const handleCloseApp = useCallback(async () => {
@@ -345,6 +449,22 @@ function MainApp() {
         return;
       }
 
+      if (data.step === "url_preview" && Array.isArray(data.previews) && data.previews.length > 0) {
+        setSessions((prev) => {
+          const newSessions = { ...prev };
+          if (newSessions[threadId]) {
+            newSessions[threadId] = newSessions[threadId].map((m) => {
+              if (m.id === userMessageId) {
+                return { ...m, url_previews: data.previews };
+              }
+              return m;
+            });
+          }
+          return newSessions;
+        });
+        return;
+      }
+
       if (data.step === "interrupt") {
         const hitl = data.hitl;
         const firstActionName = hitl?.action_requests?.[0]?.name;
@@ -369,7 +489,18 @@ function MainApp() {
       }
 
       if (data.error) {
-        const errorMsg = data.error || "Unable to connect to chat API.";
+        const rawError = typeof data.error === "string" ? data.error.trim() : "";
+        const rawDetails = typeof data.details === "string" ? data.details.trim() : "";
+        const isGenericStreamError =
+          !rawError ||
+          rawError.toLowerCase() === "internal stream error" ||
+          rawError.toLowerCase() === "internal server error";
+        const errorMsg =
+          rawDetails && isGenericStreamError
+            ? rawDetails
+            : rawDetails && rawError
+              ? `${rawError}: ${rawDetails}`
+              : rawError || "Unable to connect to chat API.";
         setError(errorMsg);
         setSessions((prev) => {
           const newSessions = { ...prev };
@@ -553,10 +684,47 @@ function MainApp() {
       console.error("Stream processing error:", err);
     }
   }, [windowMode, queueSentence, handleOpen, minimizeToBottomCenter]);
+
+  const handleRekeyThread = useCallback((fromThreadId, toThreadId) => {
+    const fromKey = String(fromThreadId || "");
+    const toKey = String(toThreadId || "");
+    if (!fromKey || !toKey || fromKey === toKey) return;
+
+    setSessions((prev) => {
+      if (!prev[fromKey]) return prev;
+      const next = { ...prev };
+      next[toKey] = next[toKey] ? [...next[toKey], ...next[fromKey]] : next[fromKey];
+      delete next[fromKey];
+      return next;
+    });
+    persistFriendMeta((prev) => {
+      if (!prev[fromKey]) return prev;
+      const next = { ...prev };
+      next[toKey] = prev[fromKey];
+      delete next[fromKey];
+      return next;
+    });
+    if (threadIdRef.current === fromKey) {
+      threadIdRef.current = toKey;
+    }
+    if (String(activeThreadId || "") === fromKey) {
+      setActiveThreadId(toKey);
+      saveThreadId(toKey);
+    }
+    if (lastTurnIdsRef.current[fromKey]) {
+      lastTurnIdsRef.current[toKey] = lastTurnIdsRef.current[fromKey];
+      delete lastTurnIdsRef.current[fromKey];
+    }
+    if (lastSentInputsRef.current[fromKey]) {
+      lastSentInputsRef.current[toKey] = lastSentInputsRef.current[fromKey];
+      delete lastSentInputsRef.current[fromKey];
+    }
+  }, [activeThreadId, persistFriendMeta]);
+
   const handleSend = useCallback(async (overrideText = null, isVoice = false, overrideImage = null) => {
     const textToSend = (typeof overrideText === 'string') ? overrideText : input;
     const trimmed = textToSend.trim();
-    const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage;
+    const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage || attachedKnowledge.length > 0;
     if (!trimmed && !hasAttachments || isLoading) return;
 
     // Stop and clear audio
@@ -581,15 +749,29 @@ function MainApp() {
     const isScreenToUse = isScreenAttached;
     const imageToUseFromState = overrideImage || attachedImage;
 
-    const performSend = async (imageToUse = imageToUseFromState) => {
+    const performSend = async (imageToUse = imageToUseFromState, desktopText = null) => {
       const threadId = threadIdRef.current;
       lastTurnWasVoiceRef.current = isVoice;
+      const friendMeta = friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
+      const friendTarget = friendMeta?.friendId
+        ? { id: friendMeta.friendId, name: friendMeta.friendName || "Friend" }
+        : null;
+
+      const detectedUrls = !friendTarget ? extractUrls(trimmed) : [];
+      let finalMsgText = trimmed;
+      if (desktopText) {
+        finalMsgText = `${trimmed}\n\n[Attached Screen Content (extracted via Windows UI Automation)]:\n${desktopText}`;
+      }
+
       const userMessage = {
         id: Date.now(),
         from: "user",
-        text: trimmed,
+        text: finalMsgText,
         image_url: imageToUse,
         clipboard: clipboardToUse,
+        ...(detectedUrls.length > 0
+          ? { url_previews: detectedUrls.map((url) => ({ url, loading: true })) }
+          : {}),
       };
 
       setSessions((prev) => ({
@@ -606,7 +788,7 @@ function MainApp() {
       const userMessageId = userMessage.id;
       const botMessageId = Date.now() + 1;
       lastTurnIdsRef.current[threadId] = { userMessageId, botMessageId };
-      lastSentInputsRef.current[threadId] = { text: trimmed, image_url: imageToUse };
+      lastSentInputsRef.current[threadId] = { text: finalMsgText, image_url: imageToUse };
 
       setStreamingThreads(prev => new Set(prev).add(threadId));
       setError(null);
@@ -627,11 +809,90 @@ function MainApp() {
       const controller = new AbortController();
       abortControllersRef.current[threadId] = controller;
       const signal = controller.signal;
+      const toConnectivityHint = (message) => {
+        const text = (message || "").toLowerCase();
+        if (text.includes("[auth_failed]")) return "Peer rejected authentication. Re-run pairing or finalize on receiver.";
+        if (text.includes("[timeout]")) return "Peer request timed out. Confirm receiver app is running and endpoint is reachable.";
+        if (text.includes("[unreachable]")) return "Peer endpoint unreachable. Update the friend's endpoint in Connectivity settings.";
+        return message || "Connection failed";
+      };
+      const resetFailedTurn = (errorMessage = null) => {
+        if (errorMessage) {
+          setError(errorMessage);
+        }
+        setStreamingThreads(prev => {
+          const next = new Set(prev);
+          next.delete(threadId);
+          return next;
+        });
+        delete abortControllersRef.current[threadId];
+        setSessions((prev) => ({
+          ...prev,
+          [threadId]: (prev[threadId] || []).filter((m) => m.id !== botMessageId),
+        }));
+      };
 
       try {
         const token = localStorage.getItem('rie_token');
+        const newKnowledgeIds = getNewKnowledgeIds();
+        if (friendTarget?.id) {
+          friendStreamStateRef.current[threadId] = {
+            friendId: friendTarget.id,
+            streamId: null,
+          };
+          const approval = await getFriendApproval(friendTarget.id, threadId);
+          if (!approval?.approved) {
+            const yes = window.confirm(`Allow asking ${friendTarget.name} in this chat? This is required only once per chat.`);
+            if (!yes) {
+              resetFailedTurn("Friend ask canceled by user");
+              return;
+            }
+            try {
+              await approveFriendForThread(friendTarget.id, threadId);
+            } catch (approvalErr) {
+              resetFailedTurn(approvalErr?.message || "Failed to save friend approval");
+              return;
+            }
+          }
+          try {
+            await streamFriendChat(
+              friendTarget.id,
+              finalMsgText,
+              threadId,
+              (data) => {
+                if (data?.step === "start") {
+                  friendStreamStateRef.current[threadId] = {
+                    friendId: friendTarget.id,
+                    streamId: data.stream_id || null,
+                  };
+                }
+                processStreamChunk(data, botMessageId, threadId, userMessageId);
+              },
+              () => {
+                setStreamingThreads(prev => {
+                  const next = new Set(prev);
+                  next.delete(threadId);
+                  return next;
+                });
+                setCurrentTool(null);
+                delete abortControllersRef.current[threadId];
+                delete friendStreamStateRef.current[threadId];
+              },
+              (friendErr) => {
+                resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
+                delete friendStreamStateRef.current[threadId];
+              },
+              signal
+            );
+            return;
+          } catch (friendErr) {
+            resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
+            delete friendStreamStateRef.current[threadId];
+            return;
+          }
+        }
         await streamChat(
-          trimmed,
+          finalMsgText,
           threadId,
           imageToUse,
           (data) => processStreamChunk(data, botMessageId, threadId, userMessageId),
@@ -643,10 +904,12 @@ function MainApp() {
             });
             setCurrentTool(null);
             delete abortControllersRef.current[threadId];
+            markAllLocked();
+            loadThreadKnowledge(threadId);
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
           },
           (err) => {
-            setError(err.message || "Connection failed");
+            setError(toConnectivityHint(err.message));
             setStreamingThreads(prev => {
               const next = new Set(prev);
               next.delete(threadId);
@@ -662,10 +925,14 @@ function MainApp() {
           token,
           clipboardToUse,
           chatMode,
-          speedMode
+          speedMode,
+          friendTarget || undefined,
+          newKnowledgeIds.length ? newKnowledgeIds : null,
+          null
         );
       } catch (err) {
         console.error("Chat error:", err);
+        resetFailedTurn(toConnectivityHint(err?.message));
       } finally {
         setIsCapturing(false);
       }
@@ -674,19 +941,66 @@ function MainApp() {
       setIsCapturing(true);
       try {
         const win = getWindow();
-        await win.hide();
-        await new Promise(resolve => setTimeout(resolve, 300));
-        const response = await getScreenshot();
-        await win.show();
-        await win.unminimize();
-        await win.setFocus();
+        const shouldHide = settings.exclude_from_capture !== false;
 
-        const capturedImage = response?.image || null;
-        await performSend(capturedImage);
+        if (shouldHide) {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_foreground_lock", { lock: false });
+          } catch (e) {
+            console.error("Failed to unlock foreground for capture:", e);
+          }
+          await win.hide();
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        let capturedImage = null;
+        let desktopText = null;
+
+        if (settings.capture_screen_as_text === true || settings.capture_screen_as_text === 'true') {
+          try {
+            const res = await getDesktopText();
+            desktopText = res?.text || null;
+          } catch (e) {
+            console.error("Delayed desktop text capture failed:", e);
+          }
+        } else {
+          try {
+            const response = await getScreenshot();
+            capturedImage = response?.image || null;
+          } catch (e) {
+            console.error("Delayed capture failed:", e);
+          }
+        }
+
+        if (shouldHide) {
+          await win.show();
+          await win.unminimize();
+          await win.setFocus();
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_foreground_lock", { lock: true });
+          } catch (e) {
+            console.error("Failed to lock foreground post-capture:", e);
+          }
+        }
+
+        await performSend(capturedImage, desktopText);
       } catch (err) {
-        console.error("Delayed capture failed:", err);
-        const win = getWindow();
-        await win.show();
+        console.error("Delayed capture overall outer wrapper failed:", err);
+        const shouldHide = settings.exclude_from_capture !== false;
+        if (shouldHide) {
+          const win = getWindow();
+          await win.show();
+          await win.unminimize();
+          await win.setFocus();
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_foreground_lock", { lock: true });
+          } catch (e) {
+            console.error("Failed to lock foreground post-capture-fail:", e);
+          }
+        }
         await performSend(null);
       } finally {
         setIsCapturing(false);
@@ -694,7 +1008,7 @@ function MainApp() {
     } else {
       await performSend();
     }
-  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode]);
+  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, attachedKnowledge, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread, getNewKnowledgeIds, markAllLocked, loadThreadKnowledge]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -704,11 +1018,15 @@ function MainApp() {
         currentAudioRef.current.pause();
         currentAudioRef.current = null;
       }
-      // Reset queues
       audioQueueRef.current = [];
       isPlayingRef.current = false;
       sentenceBufferRef.current = "";
 
+      if (isTauri()) {
+        await startNativeRecording();
+        setIsRecording(true);
+        return;
+      }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
@@ -721,18 +1039,17 @@ function MainApp() {
       };
 
       mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         try {
           const { text } = await transcribeAudio(audioBlob);
           if (text) {
-            handleSend(text, true); // Mark as voice to enable auto-speak
+            handleSend(text, true);
           }
         } catch (err) {
           console.error("Transcription failed:", err);
           setError("Transcription failed. Please try again.");
         } finally {
-          // Stop all tracks to release the microphone
-          stream.getTracks().forEach(track => track.stop());
+          stream.getTracks().forEach((track) => track.stop());
         }
       };
 
@@ -744,12 +1061,33 @@ function MainApp() {
     }
   }, [isRecording, handleSend]);
 
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && isRecording) {
+  const stopRecording = useCallback(async () => {
+    if (!isRecording) return;
+
+    if (isTauri()) {
+      setIsRecording(false);
+      try {
+        const audioBlob = await stopNativeRecording();
+        const { text } = await transcribeAudio(audioBlob, "recording.wav");
+        if (text) {
+          handleSend(text, true);
+        }
+      } catch (err) {
+        console.error("Transcription failed:", err);
+        setError(
+          err?.message?.includes("denied") || err?.toString?.().includes("denied")
+            ? "Microphone access denied. Allow Rie-AI under Windows Settings → Privacy → Microphone."
+            : "Transcription failed. Please try again."
+        );
+      }
+      return;
+    }
+
+    if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
-  }, [isRecording]);
+  }, [isRecording, handleSend]);
 
     const handleCancelRequest = useCallback((targetThreadId = null) => {
     // If invoked from onClick, first arg is the event; ignore non-strings
@@ -762,6 +1100,14 @@ function MainApp() {
     if (abortControllersRef.current[threadId]) {
       abortControllersRef.current[threadId].abort();
       delete abortControllersRef.current[threadId];
+    }
+
+    const friendStreamState = friendStreamStateRef.current[threadId];
+    if (friendStreamState?.friendId) {
+      cancelFriendStream(friendStreamState.friendId, threadId, friendStreamState.streamId).catch((err) =>
+        console.error("Failed to cancel friend stream:", err)
+      );
+      delete friendStreamStateRef.current[threadId];
     }
 
     // Explicitly cancel on backend
@@ -906,8 +1252,51 @@ function MainApp() {
     saveThreadId(newThreadId);
     threadIdRef.current = newThreadId;
     setAttachedImage(null);
+    loadThreadKnowledge(newThreadId);
     setIsMenuOpen(false);
-  }, []);
+  }, [loadThreadKnowledge]);
+
+  const handleOpenMessageInNewChat = useCallback(async (message) => {
+    if (!message || message.from !== "user") return;
+    const sourceThreadId = activeThreadId;
+    const threadMessages = sessions[sourceThreadId] || [];
+    const branchMessages = sliceMessagesForBranch(threadMessages, message.id);
+    if (branchMessages === null) return;
+
+    const newThreadId = crypto.randomUUID();
+    const forkPayloads = messagesToForkPayloads(branchMessages);
+
+    try {
+      await forkThread({
+        newThreadId,
+        sourceThreadId,
+        untilMessageId: message.id,
+        messages: forkPayloads,
+      });
+    } catch (err) {
+      console.error("Failed to fork thread:", err);
+      setError("Failed to branch chat with history.");
+      return;
+    }
+
+    setSessions((prev) => ({ ...prev, [newThreadId]: branchMessages }));
+    setActiveThreadId(newThreadId);
+    saveThreadId(newThreadId);
+    threadIdRef.current = newThreadId;
+
+    const sourceMeta =
+      friendThreadMeta[sourceThreadId] || friendThreadMeta[String(sourceThreadId)];
+    if (sourceMeta) {
+      persistFriendMeta((prev) => ({
+        ...prev,
+        [newThreadId]: { ...sourceMeta },
+      }));
+    }
+
+    setAttachedImage(message.image_url || null);
+    setInput(message.text || "");
+    setIsMenuOpen(false);
+  }, [activeThreadId, sessions, friendThreadMeta, persistFriendMeta]);
 
   const handleSelectThread = useCallback(async (threadId) => {
     if (!threadId) return;
@@ -918,7 +1307,10 @@ function MainApp() {
     // Update active state immediately to provide feedback
     setActiveThreadId(threadId);
     threadIdRef.current = threadId;
+
     saveThreadId(threadId);
+
+    loadThreadKnowledge(threadId);
 
     // If session already exists in memory and not empty, don't refetch
     if (sessions[threadId] && sessions[threadId].length > 0) {
@@ -928,6 +1320,11 @@ function MainApp() {
     setStreamingThreads(prev => new Set(prev).add(threadId)); // Use as loading indicator
     try {
       const msgs = await getThreadMessages(threadId);
+      const mergedMeta = mergeFriendMetaFromHistoryRows(friendThreadMeta, msgs);
+      if (Object.keys(mergedMeta).length !== Object.keys(friendThreadMeta).length) {
+        setFriendThreadMeta(mergedMeta);
+        saveFriendThreadMeta(mergedMeta);
+      }
       if (msgs && msgs.length > 0) {
         const formatted = msgs.map(m => ({
           id: m.id,
@@ -952,7 +1349,39 @@ function MainApp() {
         return next;
       });
     }
-  }, [sessions]);
+  }, [sessions, friendThreadMeta, loadThreadKnowledge]);
+
+  const handleDeleteThread = useCallback(async (threadId) => {
+    if (!threadId) return;
+    try {
+      await deleteThread(threadId);
+    } catch (err) {
+      // Local-only threads will not exist in backend history.
+      console.warn("Backend delete skipped/failed, removing local thread:", err?.message || err);
+    } finally {
+      setSessions((prev) => {
+        const next = { ...prev };
+        delete next[threadId];
+        delete next[String(threadId)];
+        return next;
+      });
+      persistFriendMeta((prev) => {
+        const next = { ...prev };
+        delete next[threadId];
+        delete next[String(threadId)];
+        return next;
+      });
+      if (threadIdRef.current === threadId || activeThreadId === threadId) {
+        handleNewChat();
+      }
+    }
+  }, [activeThreadId, handleNewChat, persistFriendMeta]);
+
+  const handleSelectFriendChat = useCallback(async (threadId, friend) => {
+    if (!threadId || !friend) return;
+    handleAssignFriendToThread(threadId, friend);
+    await handleSelectThread(threadId);
+  }, [handleAssignFriendToThread, handleSelectThread]);
 
   const handleScheduleMarkRead = useCallback(async (id) => {
     if (!id) return;
@@ -995,7 +1424,10 @@ function MainApp() {
   }, [isOpen]);
 
   useEffect(() => {
-    if (windowMode !== "floating") setIsFloatingScheduleOpen(false);
+    if (windowMode !== "floating") {
+      setIsFloatingScheduleOpen(false);
+      setIsFloatingFriendsOpen(false);
+    }
   }, [windowMode]);
 
   useEffect(() => {
@@ -1061,13 +1493,26 @@ function MainApp() {
               if (!isOpen) {
                 await handleOpen();
               } else {
-                await getWindow().setFocus();
+                const win = getWindow();
+                await win.setFocus();
+                try {
+                  const { invoke } = await import("@tauri-apps/api/core");
+                  await invoke("set_foreground_lock", { lock: true });
+                } catch (e) {
+                  console.error("Failed to lock foreground on schedule notification:", e);
+                }
               }
             } else {
               const win = getWindow();
               await win.show();
               await win.unminimize();
               await win.setFocus();
+              try {
+                const { invoke } = await import("@tauri-apps/api/core");
+                await invoke("set_foreground_lock", { lock: true });
+              } catch (e) {
+                console.error("Failed to lock foreground on schedule notification:", e);
+              }
             }
           } catch (e) {
             console.warn("Failed to open/focus window for schedule notification:", e);
@@ -1278,10 +1723,25 @@ function MainApp() {
   // Load history and thread ID on mount
   useEffect(() => {
     const initChat = async () => {
+      let normalizedMeta = normalizeFriendMetaMap(getFriendThreadMeta());
+      try {
+        const historyRows = await getHistory();
+        normalizedMeta = mergeFriendMetaFromHistoryRows(normalizedMeta, historyRows);
+      } catch (e) {
+        console.warn("Failed to hydrate friend metadata from history:", e);
+      }
+      setFriendThreadMeta(normalizedMeta);
+      saveFriendThreadMeta(normalizedMeta);
       let storedThreadId = getStoredThreadId();
       if (storedThreadId) {
         try {
           const msgs = await getThreadMessages(storedThreadId);
+          const hydrated = mergeFriendMetaFromHistoryRows(normalizedMeta, msgs);
+          if (Object.keys(hydrated).length !== Object.keys(normalizedMeta).length) {
+            setFriendThreadMeta(hydrated);
+            saveFriendThreadMeta(hydrated);
+            normalizedMeta = hydrated;
+          }
           if (msgs && msgs.length > 0) {
             const formatted = msgs.map(m => ({
               id: m.id,
@@ -1293,6 +1753,7 @@ function MainApp() {
             setSessions(prev => ({ ...prev, [storedThreadId]: formatted }));
             setActiveThreadId(storedThreadId);
             threadIdRef.current = storedThreadId;
+            loadThreadKnowledge(storedThreadId);
             return;
           }
         } catch (e) {
@@ -1343,6 +1804,71 @@ function MainApp() {
     };
   }, [processFilePath, isLoading]);
 
+  // Listen for settings-updated events from settings window
+  useEffect(() => {
+    const unlistenPromise = listen("settings-updated", (event) => {
+      const { key, value } = event.payload;
+      const field = key.toLowerCase();
+      const parsedValue =
+        key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'HITL_ENABLED' || key === 'LANGSMITH_TRACING' || key === 'CONNECTIVITY_NGROK_ENABLED' || key === 'SHOW_BUBBLE' || key === 'CAPTURE_SCREEN_AS_TEXT'
+          ? (value === 'true' || value === true)
+          : value;
+
+      setSettings((prev) => ({ ...prev, [field]: parsedValue }));
+
+      if (key === 'EXCLUDE_FROM_CAPTURE') {
+        const applyAffinity = async () => {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_window_capture_excluded", { exclude: parsedValue });
+          } catch (e) {
+            console.error("Failed to update capture affinity in main window:", e);
+          }
+        };
+        applyAffinity();
+      } else if (key === 'SHARE_LOCATION') {
+        setShareLocationEnabled(parsedValue);
+        if (parsedValue) {
+          prefetchClientLocation();
+        }
+      } else if (key === 'WINDOW_MODE') {
+        setWindowMode(parsedValue);
+      } else if (key === 'CHAT_MODE') {
+        setChatMode(parsedValue);
+      } else if (key === 'SPEED_MODE') {
+        setSpeedMode(parsedValue);
+      } else if (key === 'VOICE_REPLY') {
+        voiceReplyRef.current = parsedValue;
+      } else if (key === 'TTS_PROVIDER') {
+        ttsProviderRef.current = parsedValue;
+      } else if (key === 'TTS_VOICE') {
+        ttsVoiceRef.current = parsedValue;
+      }
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
+
+  // Listen for tray show events
+  useEffect(() => {
+    let unlisten;
+    const setupListener = async () => {
+      try {
+        unlisten = await listen("tray-show", () => {
+          handleOpen();
+        });
+      } catch (err) {
+        console.error("Failed to listen to tray-show:", err);
+      }
+    };
+    setupListener();
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [handleOpen]);
+
 
   // Initial configuration and window mode check
   useEffect(() => {
@@ -1375,7 +1901,9 @@ function MainApp() {
           }
         }
 
-        const settings = await getSettings();
+        const settingsData = await getSettings();
+        setSettings(settingsData);
+        const settings = settingsData;
         const hasAnyKey = settings.google_api_key ||
           settings.groq_api_key ||
           settings.vertex_project ||
@@ -1400,6 +1928,22 @@ function MainApp() {
 
         if (settings.hasOwnProperty('voice_reply')) {
           voiceReplyRef.current = settings.voice_reply;
+        }
+
+        if (settings.hasOwnProperty('share_location')) {
+          setShareLocationEnabled(settings.share_location);
+          if (settings.share_location) {
+            prefetchClientLocation();
+          }
+        }
+
+        if (settings.hasOwnProperty('exclude_from_capture')) {
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_window_capture_excluded", { exclude: settings.exclude_from_capture });
+          } catch (e) {
+            console.error("Failed to apply capture exclusion preference:", e);
+          }
         }
 
         if (settings.tts_provider) {
@@ -1428,9 +1972,17 @@ function MainApp() {
     if (!isSettingsOpen && !isAppInitializing) {
       const reloadSettings = async () => {
         try {
-          const settings = await getSettings();
+          const settingsData = await getSettings();
+          setSettings(settingsData);
+          const settings = settingsData;
           if (settings.hasOwnProperty('voice_reply')) {
             voiceReplyRef.current = settings.voice_reply;
+          }
+          if (settings.hasOwnProperty('share_location')) {
+            setShareLocationEnabled(settings.share_location);
+            if (settings.share_location) {
+              prefetchClientLocation();
+            }
           }
           if (settings.window_mode) {
             setWindowMode(settings.window_mode);
@@ -1454,6 +2006,24 @@ function MainApp() {
       reloadSettings();
     }
   }, [isSettingsOpen, isAppInitializing]);
+
+  useEffect(() => {
+    loadFriends();
+  }, [loadFriends]);
+
+  useEffect(() => {
+    if (input.includes("/") && friends.length === 0) {
+      loadFriends();
+    }
+  }, [input, friends.length, loadFriends]);
+
+  // Force chat mode if using Rie provider (or if LLM provider is unset/default)
+  useEffect(() => {
+    const provider = settings?.llm_provider || 'rie';
+    if (provider === 'rie' && chatMode === 'agent') {
+      setChatMode('chat');
+    }
+  }, [settings?.llm_provider, chatMode]);
 
   // Persist chatMode to backend when it changes
   useEffect(() => {
@@ -1554,6 +2124,10 @@ function MainApp() {
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   useEffect(() => {
+    // On Windows, we intercept shortcuts via Raw Input in the backend to hide them from the kiosk
+    const isWindows = navigator.userAgent.includes("Windows");
+    if (isWindows) return;
+
     const shortcuts = ["Alt+Shift+S", "Alt+Shift+C", "Alt+Shift+A"];
     let mounted = true;
 
@@ -1628,20 +2202,16 @@ function MainApp() {
 
   // Listen for clipboard updates from backend
   useEffect(() => {
-    let unlisten;
-    const setupListener = async () => {
-      unlisten = await listen("clipboard-update", (event) => {
+    let unlistenClipboard;
+
+    const setup = async () => {
+      unlistenClipboard = await listen("clipboard-update", (event) => {
         const text = event.payload;
         if (text && text.trim()) {
-          // Auto-attach
           setAttachedClipboardText(text);
-
-          // Clear previous timeout if exists
           if (clipboardTimeoutRef.current) {
             clearTimeout(clipboardTimeoutRef.current);
           }
-
-          // Set auto-clear timeout (10 seconds)
           clipboardTimeoutRef.current = setTimeout(() => {
             setAttachedClipboardText(null);
             clipboardTimeoutRef.current = null;
@@ -1649,12 +2219,210 @@ function MainApp() {
         }
       });
     };
-    setupListener();
+
+    setup();
+
     return () => {
-      if (unlisten) unlisten();
+      if (unlistenClipboard) unlistenClipboard();
       if (clipboardTimeoutRef.current) clearTimeout(clipboardTimeoutRef.current);
     };
   }, []);
+
+  // Listen for kiosk overlay toggle events from backend/settings page
+  useEffect(() => {
+    let unlistenToggled;
+    const setup = async () => {
+      try {
+        if (window.__TAURI_INTERNALS__) {
+          const { invoke } = await import("@tauri-apps/api/core");
+          const initialMode = await invoke("get_kiosk_overlay_mode");
+          setKioskOverlay(initialMode);
+          
+          unlistenToggled = await listen("kiosk-overlay-toggled", (event) => {
+            console.log("[App] Kiosk overlay toggled event payload:", event.payload);
+            setKioskOverlay(event.payload);
+          });
+        }
+      } catch (err) {
+        console.error("Failed to set up kiosk overlay listeners:", err);
+      }
+    };
+    setup();
+    return () => {
+      if (unlistenToggled) unlistenToggled();
+    };
+  }, []);
+
+  // Listen for kiosk selection updates
+  useEffect(() => {
+    let unlistenSelection;
+
+    const setup = async () => {
+      try {
+        unlistenSelection = await listen("kiosk-selection-detected", (event) => {
+          const text = event.payload;
+          console.log("[App] Kiosk selection event payload:", text);
+          if (text && text.trim()) {
+            setKioskSelection(text);
+          }
+        });
+      } catch (err) {
+        console.error("Failed to register kiosk-selection-detected listener:", err);
+      }
+    };
+
+    setup();
+
+    return () => {
+      if (unlistenSelection) unlistenSelection();
+    };
+  }, []);
+
+  // Global keyboard hook listener for kiosk mode (stealth input piping)
+  // Uses a module-level singleton to guarantee exactly ONE listener exists,
+  // even across React StrictMode double-mounts and Vite HMR reloads.
+  useEffect(() => {
+    // Always clean up any previously leaked listener first
+    if (window.__rieKeypressUnlisten) {
+      window.__rieKeypressUnlisten();
+      window.__rieKeypressUnlisten = null;
+    }
+
+    let cancelled = false;
+
+    const setup = async () => {
+      const unlisten = await listen("rie-keypress", (event) => {
+        // If the document already has OS focus, the browser natively handles the keyboard input.
+        // Manually piping raw input in this state causes double-typing.
+        if (document.hasFocus()) {
+          return;
+        }
+
+        const { type, key } = event.payload;
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        // Nuclear dedup: reject duplicate calls for same key within 30ms.
+        // This catches ALL duplication — stacked listeners, HMR leaks, StrictMode, etc.
+        if (type === "char" || type === "special") {
+          if (!window.__rieLastKeyTime) window.__rieLastKeyTime = {};
+          const dedupKey = `${type}:${key}`;
+          const now = performance.now();
+          if (now - (window.__rieLastKeyTime[dedupKey] || 0) < 30) return;
+          window.__rieLastKeyTime[dedupKey] = now;
+        }
+
+        // Focus inside WebView's DOM (does not change OS active window)
+        textarea.focus();
+
+        if (type === "char") {
+          document.execCommand("insertText", false, key);
+        } else if (type === "special") {
+          if (key === "Backspace") {
+            document.execCommand("delete", false);
+          } else if (key === "Enter") {
+            const submitBtn = document.getElementById("send-btn");
+            if (submitBtn) {
+              submitBtn.click();
+            }
+          }
+        } else if (type === "shortcut") {
+          if (key === "a") {
+            textarea.select();
+          } else if (key === "v") {
+            navigator.clipboard.readText().then((clipText) => {
+              document.execCommand("insertText", false, clipText);
+              setInput(textarea.value);
+            }).catch(() => {});
+          } else if (key === "c") {
+            const selectedText = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+            if (selectedText) {
+              navigator.clipboard.writeText(selectedText).catch(() => {});
+            }
+          } else if (key === "x") {
+            const selectedText = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+            if (selectedText) {
+              navigator.clipboard.writeText(selectedText).then(() => {
+                document.execCommand("delete", false);
+                setInput(textarea.value);
+              }).catch(() => {});
+            }
+          }
+        }
+
+        // Sync local React state with the DOM textarea value modified by execCommand
+        setInput(textarea.value);
+      });
+
+      if (cancelled) {
+        // Effect was cleaned up before setup completed — dispose immediately
+        unlisten();
+      } else {
+        window.__rieKeypressUnlisten = unlisten;
+      }
+    };
+
+    setup();
+
+    return () => {
+      cancelled = true;
+      if (window.__rieKeypressUnlisten) {
+        window.__rieKeypressUnlisten();
+        window.__rieKeypressUnlisten = null;
+      }
+    };
+  }, []);
+
+  // Raw Input custom shortcut listeners on Windows (toggle, PTT, cancel)
+  useEffect(() => {
+    if (!navigator.userAgent.includes("Windows")) return;
+
+    let isCancelled = false;
+    let unlistenToggle;
+    let unlistenPtt;
+    let unlistenCancel;
+
+    const setup = async () => {
+      unlistenToggle = await listen("rie-shortcut-toggle", () => {
+        if (isOpenRef.current) {
+          handleMinimize();
+        } else {
+          handleOpen();
+        }
+      });
+      if (isCancelled) { unlistenToggle(); return; }
+
+      unlistenPtt = await listen("rie-shortcut-ptt", (event) => {
+        const state = event.payload;
+        if (state === "Pressed") {
+          if (!isGlobalPTTPressedRef.current) {
+            isGlobalPTTPressedRef.current = true;
+            startRecording();
+          }
+        } else if (state === "Released") {
+          isGlobalPTTPressedRef.current = false;
+          stopRecording();
+        }
+      });
+      if (isCancelled) { unlistenPtt(); if (unlistenToggle) unlistenToggle(); return; }
+
+      unlistenCancel = await listen("rie-shortcut-cancel", () => {
+        if (isLoadingRef.current && threadIdRef.current) {
+          handleCancelRequest();
+        }
+      });
+      if (isCancelled) { unlistenCancel(); if (unlistenToggle) unlistenToggle(); if (unlistenPtt) unlistenPtt(); return; }
+    };
+
+    setup();
+
+    return () => {
+      isCancelled = true;
+      if (unlistenToggle) unlistenToggle();
+      if (unlistenPtt) unlistenPtt();
+      if (unlistenCancel) unlistenCancel();
+    };
+  }, [startRecording, stopRecording, handleCancelRequest]);
   //#endregion
 
   return (
@@ -1668,13 +2436,17 @@ function MainApp() {
         )}
       </AnimatePresence>
 
-      <div className={`fixed inset-0 flex pointer-events-none rounded-2xl overflow-hidden ${side === "right" ? "justify-end" : "justify-start"}`}>
+      <div className={`fixed inset-0 flex pointer-events-none rounded-2xl overflow-hidden ${side === "right" ? "justify-end" : "justify-start"} ${(settings.exclude_from_capture !== false) ? "screen-privacy-active" : ""}`}>
         <AnimatePresence
           mode="wait"
           onExitComplete={async () => {
             if (!isOpen) {
               try {
                 const win = getWindow();
+                if (settings.show_bubble === false) {
+                  await win.hide();
+                  return;
+                }
                 const pos = await getWindowPosition();
                 if (side === "right") {
                   const shiftX = WINDOW_SIZES.CHAT.width - WINDOW_SIZES.BUBBLE.width;
@@ -1708,7 +2480,7 @@ function MainApp() {
             >
               {showWelcome ? (
                 <WelcomeScreen
-                  onGetStarted={handleOpenSettingsWindow}
+                  onGetStarted={handleCompleteOnboarding}
                   onMouseDown={handleDragStart}
                   onClose={handleCloseApp}
                   onMinimize={() => getWindow().minimize()}
@@ -1716,63 +2488,77 @@ function MainApp() {
               ) : isSettingsOpen ? (
                 <SettingsPage onClose={() => setIsSettingsOpen(false)} />
               ) : (
-              <NormalModeLayout
-                  messages={sessions[activeThreadId] || initialMessages}
-                  input={input}
-                  setInput={setInput}
-                  isLoading={isLoading}
-                  streamingThreads={streamingThreads}
-                  onSend={handleSend}
-                  onCancel={handleCancelRequest}
-                  onSelectThread={handleSelectThread}
-                  onNewChat={handleNewChat}
-                  currentThreadId={activeThreadId}
-                  onOpenSettings={handleOpenSettingsWindow}
-                  onToggleFloating={handleToggleWindowMode}
-                  onCloseApp={handleCloseApp}
-                  onMinimize={() => getWindow().minimize()}
-                  isTerminalOpen={isTerminalOpen}
-                  onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
-                  terminalLogs={terminalLogs}
-                  apiStatus={apiStatus}
-                  messagesEndRef={messagesEndRef}
-                  textareaRef={textareaRef}
-                  streamingBotMessageId={isLoading ? lastTurnIdsRef.current[activeThreadId]?.botMessageId : null}
-                  attachedImage={attachedImage}
-                  setAttachedImage={setAttachedImage}
-                  isScreenAttached={isScreenAttached}
-                  setIsScreenAttached={setIsScreenAttached}
-                  projectRoot={projectRoot}
-                  projectRootChip={projectRootChip}
-                  setProjectRoot={setProjectRoot}
-                  setProjectRootChip={setProjectRootChip}
-                  onFileUpload={handleFileUpload}
-                  onCaptureScreen={handleCaptureScreen}
-                  onPickProjectPath={handlePickProjectPath}
-                  isCapturing={isCapturing}
-                  isRecording={isRecording}
-                  isAttachmentPopoverOpen={isAttachmentPopoverOpen}
-                  setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
-                  attachedClipboardText={attachedClipboardText}
-                  setAttachedClipboardText={setAttachedClipboardText}
-                  onAttachClipboard={handleAttachClipboard}
-                  onDeleteMessage={handleDeleteMessage}
-                  typesWrite={typesWrite}
-                  setTypesWrite={setTypesWrite}
-                  isWindowDraggingFile={isWindowDraggingFile}
-                  pendingAction={pendingActions[activeThreadId] || null}
-                  onActionDecision={handleActionDecision}
-                  chatMode={chatMode}
-                  setChatMode={setChatMode}
-                  speedMode={speedMode}
-                  setSpeedMode={setSpeedMode}
-                  onClearTerminal={handleClearTerminal}
-                  scheduleNotifications={scheduleNotificationLog}
-                  scheduleUnreadCount={scheduleNotifications.length}
-                  onScheduleMarkRead={handleScheduleMarkRead}
-                  onScheduleMarkAllRead={handleScheduleMarkAllRead}
-                  onScheduleOpenChat={handleScheduleOpenChat}
-                />
+                <>
+                  <NormalModeLayout
+                    messages={sessions[activeThreadId] || initialMessages}
+                    sessionsByThread={sessions}
+                    input={input}
+                    setInput={setInput}
+                    isLoading={isLoading}
+                    streamingThreads={streamingThreads}
+                    onSend={handleSend}
+                    onCancel={handleCancelRequest}
+                    onSelectThread={handleSelectThread}
+                    onDeleteThread={handleDeleteThread}
+                    onNewChat={handleNewChat}
+                    currentThreadId={activeThreadId}
+                    onOpenSettings={handleOpenSettingsWindow}
+                    onToggleFloating={handleToggleWindowMode}
+                    onCloseApp={handleCloseApp}
+                    onMinimize={() => getWindow().minimize()}
+                    isTerminalOpen={isTerminalOpen}
+                    onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)}
+                    terminalLogs={terminalLogs}
+                    apiStatus={apiStatus}
+                    messagesEndRef={messagesEndRef}
+                    textareaRef={textareaRef}
+                    streamingBotMessageId={isLoading ? lastTurnIdsRef.current[activeThreadId]?.botMessageId : null}
+                    attachedImage={attachedImage}
+                    setAttachedImage={setAttachedImage}
+                    isScreenAttached={isScreenAttached}
+                    setIsScreenAttached={setIsScreenAttached}
+                    projectRoot={projectRoot}
+                    projectRootChip={projectRootChip}
+                    setProjectRoot={setProjectRoot}
+                    setProjectRootChip={setProjectRootChip}
+                    onFileUpload={handleFileUpload}
+                    onCaptureScreen={handleCaptureScreen}
+                    onPickProjectPath={handlePickProjectPath}
+                    isCapturing={isCapturing}
+                    isRecording={isRecording}
+                    isAttachmentPopoverOpen={isAttachmentPopoverOpen}
+                    setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
+                    attachedClipboardText={attachedClipboardText}
+                    setAttachedClipboardText={setAttachedClipboardText}
+                    onAttachClipboard={handleAttachClipboard}
+                    onDeleteMessage={handleDeleteMessage}
+                    onOpenMessageInNewChat={handleOpenMessageInNewChat}
+                    typesWrite={typesWrite}
+                    setTypesWrite={setTypesWrite}
+                    isWindowDraggingFile={isWindowDraggingFile}
+                    pendingAction={pendingActions[activeThreadId] || null}
+                    onActionDecision={handleActionDecision}
+                    chatMode={chatMode}
+                    setChatMode={setChatMode}
+                    speedMode={speedMode}
+                    setSpeedMode={setSpeedMode}
+                    provider={settings?.llm_provider || 'rie'}
+                    onClearTerminal={handleClearTerminal}
+                    scheduleNotifications={scheduleNotificationLog}
+                    scheduleUnreadCount={scheduleNotifications.length}
+                    onScheduleMarkRead={handleScheduleMarkRead}
+                    onScheduleMarkAllRead={handleScheduleMarkAllRead}
+                    onScheduleOpenChat={handleScheduleOpenChat}
+                    friends={friends}
+                    friendThreadMeta={friendThreadMeta}
+                    activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+                    onSelectFriendChat={handleSelectFriendChat}
+                    onStartFriendChat={handleStartFriendChat}
+                    attachedKnowledge={attachedKnowledge}
+                    onAttachKnowledge={attachKnowledge}
+                    onDetachKnowledge={detachKnowledge}
+                  />
+                </>
               )}
             </motion.div>
           ) : !isOpen ? (
@@ -1790,6 +2576,7 @@ function MainApp() {
           ) : (
             <FloatingChatWindow
               key="chat"
+              settings={settings}
               showWelcome={showWelcome}
               setShowWelcome={setShowWelcome}
               isSettingsOpen={isSettingsOpen}
@@ -1811,9 +2598,11 @@ function MainApp() {
               isHistoryOpen={isHistoryOpen}
               onCloseHistory={() => setIsHistoryOpen(false)}
               onSelectThread={handleSelectThread}
+              onDeleteThread={handleDeleteThread}
               activeThreadId={activeThreadId}
               streamingThreads={streamingThreads}
               messages={messages}
+              sessionsByThread={sessions}
               isLoading={isLoading}
               streamingBotMessageId={isLoading ? lastTurnIdsRef.current[activeThreadId]?.botMessageId : null}
               typesWrite={typesWrite}
@@ -1850,7 +2639,9 @@ function MainApp() {
               setChatMode={setChatMode}
               speedMode={speedMode}
               setSpeedMode={setSpeedMode}
+              provider={settings?.llm_provider || 'rie'}
               onDeleteMessage={handleDeleteMessage}
+              onOpenMessageInNewChat={handleOpenMessageInNewChat}
               onClearTerminal={handleClearTerminal}
               scheduleNotifications={scheduleNotificationLog}
               scheduleUnreadCount={scheduleNotifications.length}
@@ -1860,6 +2651,26 @@ function MainApp() {
               isScheduleSheetOpen={isFloatingScheduleOpen}
               onCloseScheduleSheet={() => setIsFloatingScheduleOpen(false)}
               onOpenScheduleSheet={() => setIsFloatingScheduleOpen(true)}
+              isFriendsQuickOpen={isFloatingFriendsOpen}
+              onToggleFriendsQuick={() => setIsFloatingFriendsOpen((prev) => !prev)}
+              friends={friends}
+              friendThreadMeta={friendThreadMeta}
+              activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+              onSelectFriendChat={handleSelectFriendChat}
+              onStartFriendChat={handleStartFriendChat}
+              attachedKnowledge={attachedKnowledge}
+              onAttachKnowledge={attachKnowledge}
+              onDetachKnowledge={detachKnowledge}
+              kioskOverlay={kioskOverlay}
+              kioskSelection={kioskSelection}
+              onAddKioskSelection={() => {
+                if (kioskSelection) {
+                  const separator = input.trim() ? " " : "";
+                  setInput(input + separator + kioskSelection);
+                  setKioskSelection(null);
+                }
+              }}
+              onClearKioskSelection={() => setKioskSelection(null)}
             />
           )}
         </AnimatePresence>
@@ -1905,7 +2716,14 @@ function SettingsWindowApp() {
     return <LoadingScreen onMouseDown={() => {}} onClose={handleCloseSettingsWindow} onMinimize={() => getCurrentWindow().minimize()} />;
   }
 
-  return <SettingsPage onClose={handleCloseSettingsWindow} />;
+  const settingsParams = new URLSearchParams(window.location.search);
+  return (
+    <SettingsPage
+      onClose={handleCloseSettingsWindow}
+      initialTab={settingsParams.get('tab') || undefined}
+      initialSubTab={settingsParams.get('subtab') || undefined}
+    />
+  );
 }
 
 function PlannerWindowApp() {

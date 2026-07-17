@@ -1,3 +1,7 @@
+mod audio;
+mod kiosk_overlay;
+mod location;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn exit_app(app_handle: tauri::AppHandle) {
@@ -8,6 +12,53 @@ fn exit_app(app_handle: tauri::AppHandle) {
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
+
+#[tauri::command]
+fn set_foreground_lock(app: tauri::AppHandle, lock: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Manager;
+        use windows::Win32::UI::WindowsAndMessaging::{LockSetForegroundWindow, LSFW_LOCK, LSFW_UNLOCK};
+        
+        if let Some(window) = app.get_webview_window("main") {
+            let _hwnd = window.hwnd().map_err(|e| e.to_string())?;
+            let lock_code = if lock { LSFW_LOCK } else { LSFW_UNLOCK };
+            unsafe {
+                LockSetForegroundWindow(lock_code).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    let _ = app;
+    let _ = lock;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_capture_excluded(app: tauri::AppHandle, exclude: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Manager;
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE};
+        
+        if let Some(window) = app.get_webview_window("main") {
+            let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+            let affinity = if exclude { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
+            println!("set_window_capture_excluded called with exclude = {}. Target affinity: {:?}", exclude, affinity);
+            unsafe {
+                if let Err(e) = SetWindowDisplayAffinity(hwnd, affinity) {
+                    println!("Failed to set window display affinity: {:?}", e);
+                    return Err(e.to_string());
+                } else {
+                    println!("Successfully set window display affinity to exclude = {}", exclude);
+                }
+            }
+        }
+    }
+    let _ = app;
+    let _ = exclude;
+    Ok(())
+}
+
 
 struct BackendState(std::sync::Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
@@ -98,6 +149,40 @@ pub fn run() {
             use tauri_plugin_shell::ShellExt;
             use tauri_plugin_deep_link::DeepLinkExt;
 
+            // Store the global app handle for the keyboard hook
+            let handle = app.handle().clone();
+            let _ = kiosk_overlay::APP_HANDLE.set(handle);
+
+            // Create main window programmatically
+            let _window = tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("Rie-AI")
+            .inner_size(360.0, 520.0)
+            .resizable(false)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .shadow(false)
+            .skip_taskbar(true)
+            .focused(false)
+            .build()?;
+
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE};
+                if let Ok(hwnd) = _window.hwnd() {
+                    unsafe {
+                        let _ = SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+                    }
+                    let hwnd_raw = hwnd.0 as isize;
+                    let _ = kiosk_overlay::register_raw_input(hwnd_raw);
+                    kiosk_overlay::subclass_window(hwnd_raw);
+                }
+            }
+
             #[cfg(desktop)]
             {
                 let handle = app.handle().clone();
@@ -118,6 +203,8 @@ pub fn run() {
             // Manage backend state
             app.manage(BackendState(std::sync::Mutex::new(None)));
             app.manage(AppToken(app_token.clone()));
+            app.manage(audio::NativeAudioRecorder::default());
+            app.manage(kiosk_overlay::KioskOverlayState::default());
 
 
             // Create tray menu
@@ -135,7 +222,18 @@ pub fn run() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.set_always_on_top(true);
                             let _ = window.set_focus();
+                            let _ = window.emit("tray-show", true);
+                            #[cfg(target_os = "windows")]
+                            {
+                                use windows::Win32::UI::WindowsAndMessaging::{LockSetForegroundWindow, LSFW_LOCK};
+                                if window.hwnd().is_ok() {
+                                    unsafe {
+                                        let _ = LockSetForegroundWindow(LSFW_LOCK);
+                                    }
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -186,7 +284,19 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet, exit_app, get_app_token])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            exit_app,
+            get_app_token,
+            audio::start_native_recording,
+            audio::stop_native_recording,
+            location::get_native_location,
+            set_foreground_lock,
+            set_window_capture_excluded,
+            kiosk_overlay::set_kiosk_overlay_mode,
+            kiosk_overlay::get_kiosk_overlay_mode,
+            kiosk_overlay::force_topmost,
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

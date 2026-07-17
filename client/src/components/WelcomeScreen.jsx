@@ -16,6 +16,7 @@ import {
     AlertTriangle,
 } from "lucide-react";
 import logo from "../assets/logo.png";
+import { BetaLabel } from "./BetaLabel";
 
 export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }) {
     const [step, setStep] = useState(0);
@@ -39,8 +40,11 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
                     </motion.div>
 
                     <div className="space-y-3">
-                        <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-blue-500">
-                            Welcome to Rie-AI
+                        <h1 className="flex items-center justify-center gap-2 text-4xl font-bold">
+                            <span className="bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-blue-500">
+                                Welcome to Rie-AI
+                            </span>
+                            <BetaLabel className="shrink-0 text-lg font-normal" />
                         </h1>
                         <p className="text-neutral-300 max-w-md mx-auto leading-relaxed">
                             A desktop AI copilot for chat, coding, and system tasks.
@@ -104,7 +108,7 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
                     <div className="space-y-2">
                         <h2 className="text-2xl font-bold text-emerald-400">You are ready</h2>
                         <p className="text-neutral-400 text-sm max-w-sm mx-auto">
-                            Continue to Settings to finish configuration and start chatting.
+                            Open chat and start your first conversation. You can configure providers anytime from Settings.
                         </p>
                     </div>
                 </div>

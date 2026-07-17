@@ -106,6 +106,23 @@ export function MarkdownMessage({ content, className = "", isStreaming = false, 
           pre: ({ node, ...props }) => (
             <pre className="mb-2 max-w-full overflow-x-auto" {...props} />
           ),
+          img: ({ node, src, alt, ...props }) => (
+            <span className="my-2 block max-w-full">
+              <img
+                src={src}
+                alt={alt || ""}
+                className="max-h-80 w-auto max-w-full rounded-lg border border-neutral-700/50 object-contain bg-neutral-900/80"
+                loading="lazy"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+                {...props}
+              />
+              {alt && (
+                <span className="mt-1 block text-[10px] text-neutral-500">{alt}</span>
+              )}
+            </span>
+          ),
           // Style links
           a: ({ node, href, ...props }) => (
             <a

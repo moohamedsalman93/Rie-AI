@@ -50,8 +50,9 @@ from app.routes import router
 from app.database import init_db
 from app.mcp_client import mcp_manager
 from app.scheduler import scheduler_manager
+from app.connectivity.ngrok_autostart import try_start_ngrok_tunnel_on_startup
 
-# Initialize database
+# Initialize database and populate default configurations including PDF skills
 init_db()
 
 # Create FastAPI application instance
@@ -67,13 +68,24 @@ async def startup_event():
     """Start scheduler on app startup"""
     scheduler_manager.start()
     scheduler_manager.reschedule_pending_from_db()
+    await asyncio.to_thread(try_start_ngrok_tunnel_on_startup)
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up MCP sessions and scheduler on app shutdown"""
     logger.info("Shutting down, cleaning up...")
-    await mcp_manager.cleanup()
-    scheduler_manager.shutdown()
+    # Avoid hanging uvicorn reload if a cleanup routine blocks.
+    try:
+        await asyncio.wait_for(mcp_manager.cleanup(), timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("Timed out while cleaning up MCP sessions during shutdown.")
+    except Exception:
+        logger.exception("Unexpected error while cleaning up MCP sessions.")
+
+    try:
+        scheduler_manager.shutdown()
+    except Exception:
+        logger.exception("Unexpected error while shutting down scheduler.")
 
 # Configure CORS middleware
 app.add_middleware(
@@ -86,7 +98,7 @@ app.add_middleware(
         "http://tauri.localhost",  # Tauri production HTTP
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
