@@ -53,6 +53,7 @@ import {
   Link,
   ExternalLink,
   Users,
+  User,
   Fingerprint,
   Wifi,
   ChevronDown,
@@ -1408,12 +1409,15 @@ key2,
                                           <button
                                             onClick={async () => {
                                               try {
+                                                const baseUrl = import.meta.env.DEV ? 'http://localhost:5173' : 'https://rie-ai.in';
+                                                const loginUrl = `${baseUrl}?login=true&redirect_app=true`;
                                                 const { openUrl } = await import('@tauri-apps/plugin-opener');
-                                                await openUrl('http://localhost:5173/login?redirect_to_app=true');
+                                                await openUrl(loginUrl);
                                               } catch (e) {
                                                 console.error("Failed to open login URL:", e);
-                                                // Fallback for dev if plugin naming is different or not found
-                                                window.open('http://localhost:14200/login?redirect_to_app=true', '_blank');
+                                                const baseUrl = import.meta.env.DEV ? 'http://localhost:5173' : 'https://rie-ai.in';
+                                                const loginUrl = `${baseUrl}?login=true&redirect_app=true`;
+                                                window.open(loginUrl, '_blank');
                                               }
                                             }}
                                             className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95"
@@ -1422,23 +1426,23 @@ key2,
                                           </button>
                                         </div>
                                       ) : (
-                                        <div className=" rounded-2xl  overflow-hidden">
+                                        <div className="rounded-2xl overflow-hidden bg-neutral-900/20 border border-neutral-800/60">
                                           {/* Account Header */}
-                                          <div className="px-6 py-4 flex items-center justify-between bg-neutral-800/20 border-b border-neutral-700/50">
+                                          <div className="px-6 py-4 flex items-center justify-between bg-neutral-900/30 border-b border-neutral-800/60 rounded-t-2xl">
                                             <div className="flex items-center gap-3">
-                                              <div className="p-2 bg-emerald-500/10 rounded-xl">
-                                                <Shield className="w-5 h-5 text-emerald-400" />
+                                              <div className="w-10 h-10 rounded-full bg-neutral-850 border border-neutral-700/50 flex items-center justify-center text-neutral-200 font-semibold text-sm select-none uppercase shrink-0">
+                                                {rieUsage?.email ? rieUsage.email[0] : <User className="w-4 h-4 text-neutral-400" />}
                                               </div>
                                               {rieUsage && (
-                                                <div>
-                                                  <div className="text-xs text-neutral-500 font-medium lowercase">Account</div>
+                                                <div className="space-y-0.5">
+                                                  <div className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider">Account</div>
                                                   <div className="text-sm font-semibold text-neutral-100">{rieUsage.email || 'Authenticated'}</div>
                                                 </div>
                                               )}
                                             </div>
                                             <button
                                               onClick={handleRieSignOut}
-                                              className="text-xs font-medium text-neutral-500 hover:text-red-400 transition-colors px-3 py-1.5 hover:bg-red-500/10 rounded-lg"
+                                              className="text-xs font-semibold text-neutral-400 hover:text-red-400 transition-colors duration-200 px-3 py-1.5 hover:bg-red-500/10 rounded-lg"
                                             >
                                               Sign Out
                                             </button>
@@ -1454,47 +1458,49 @@ key2,
                                                     <p className="text-[11px] text-neutral-500">Reset daily at 00:00 UTC</p>
                                                   </div>
                                                   <div className="text-right">
-                                                    <span className="text-lg font-bold text-emerald-400">{rieUsage.current_usage}</span>
+                                                    <span className="text-lg font-bold text-neutral-100">{rieUsage.current_usage}</span>
                                                     <span className="text-sm text-neutral-500 font-medium"> / {rieUsage.limit}</span>
                                                   </div>
                                                 </div>
 
                                                 {/* Progress Bar */}
-                                                <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden border border-neutral-700/30">
+                                                <div className="h-2 w-full bg-neutral-950 rounded-full overflow-hidden border border-neutral-800/40">
                                                   <motion.div
                                                     initial={{ width: 0 }}
                                                     animate={{ width: `${(rieUsage.current_usage / rieUsage.limit) * 100}%` }}
                                                     transition={{ duration: 1, ease: "easeOut" }}
                                                     className={`h-full rounded-full ${(rieUsage.current_usage / rieUsage.limit) > 0.9
-                                                      ? 'bg-red-500'
+                                                      ? 'bg-red-500/80'
                                                       : (rieUsage.current_usage / rieUsage.limit) > 0.7
-                                                        ? 'bg-amber-500'
-                                                        : 'bg-emerald-500'
-                                                      } shadow-[0_0_10px_rgba(16,185,129,0.3)]`}
+                                                        ? 'bg-amber-500/80'
+                                                        : 'bg-emerald-500/80'
+                                                      }`}
                                                   />
                                                 </div>
 
-                                                <div className="grid grid-cols-2 gap-4 pt-2">
-                                                  <div className="p-3 bg-neutral-900/40 rounded-xl border border-neutral-700/50">
-                                                    <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">Status</div>
-                                                    <div className="flex items-center gap-1.5">
-                                                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                  <div className="p-3.5 bg-neutral-900/40 rounded-xl border border-neutral-800/60">
+                                                    <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-wider mb-1">Status</div>
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                                       <span className="text-xs font-medium text-neutral-200">Active</span>
                                                     </div>
                                                   </div>
-                                                  <div className="p-3 bg-neutral-900/40 rounded-xl border border-neutral-700/50">
-                                                    <div className="text-[10px] text-neutral-500 uppercase tracking-wider mb-1">Remaining</div>
-                                                    <div className="text-xs font-semibold text-emerald-400">{rieUsage.remaining} requests</div>
+                                                  <div className="p-3.5 bg-neutral-900/40 rounded-xl border border-neutral-800/60">
+                                                    <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-wider mb-1">Remaining</div>
+                                                    <div className="text-xs font-semibold text-neutral-200">
+                                                      <span className="text-emerald-400 font-bold">{rieUsage.remaining}</span> requests
+                                                    </div>
                                                   </div>
                                                 </div>
                                               </div>
                                             )}
 
                                             {/* Footer Info */}
-                                            <div className="flex items-center gap-3 px-4 py-3 bg-emerald-500/5 rounded-xl border border-emerald-500/10">
-                                              <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                                              <p className="text-[11px] text-emerald-300/80 leading-normal">
-                                                Your requests are optimized by Rie's backend using <span className="font-semibold text-emerald-400">glm-4.5-flash</span>.
+                                            <div className="flex items-center gap-3 px-4 py-3 bg-neutral-900/30 rounded-xl border border-neutral-800/50">
+                                              <Sparkles className="w-4 h-4 text-neutral-500 shrink-0" />
+                                              <p className="text-[11px] text-neutral-400 leading-normal">
+                                                Your requests are dynamically optimized by Rie's backend.
                                               </p>
                                             </div>
                                           </div>

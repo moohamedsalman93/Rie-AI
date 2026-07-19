@@ -169,7 +169,7 @@ class Settings:
     # Rie configuration - hardcoded, no API key needed
     @property
     def RIE_API_URL(self) -> str:
-        return "http://localhost:8001/v1"
+        return "https://rie-api-399060682924.asia-south1.run.app/v1"
 
     @property
     def RIE_MODEL(self) -> str:
