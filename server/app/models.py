@@ -55,6 +55,10 @@ class ChatMessage(BaseModel):
         default=None,
         description="Active skill IDs whose instructions should be injected this turn",
     )
+    attached_files: Optional[List[Dict[str, str]]] = Field(
+        default=None,
+        description="Files attached by the user, each with 'name' (filename) and 'content' (text content)",
+    )
 
 
 class KnowledgePackCreate(BaseModel):

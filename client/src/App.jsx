@@ -186,6 +186,9 @@ function MainApp() {
     setIsCapturing,
     isAttachmentPopoverOpen,
     setIsAttachmentPopoverOpen,
+    attachedFiles,
+    setAttachedFiles,
+    removeAttachedFile,
     handlePickProjectPath,
     handleAttachClipboard,
     handleFileUpload,
@@ -724,7 +727,7 @@ function MainApp() {
   const handleSend = useCallback(async (overrideText = null, isVoice = false, overrideImage = null) => {
     const textToSend = (typeof overrideText === 'string') ? overrideText : input;
     const trimmed = textToSend.trim();
-    const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage || attachedKnowledge.length > 0;
+    const hasAttachments = attachedImage || isScreenAttached || attachedClipboardText || projectRoot || overrideImage || attachedKnowledge.length > 0 || attachedFiles.length > 0;
     if (!trimmed && !hasAttachments || isLoading) return;
 
     // Stop and clear audio
@@ -748,6 +751,7 @@ function MainApp() {
     const clipboardToUse = attachedClipboardText;
     const isScreenToUse = isScreenAttached;
     const imageToUseFromState = overrideImage || attachedImage;
+    const filesToUse = [...attachedFiles];
 
     const performSend = async (imageToUse = imageToUseFromState, desktopText = null) => {
       const threadId = threadIdRef.current;
@@ -784,6 +788,7 @@ function MainApp() {
       setAttachedImage(null);
       setIsScreenAttached(false);
       setAttachedClipboardText(null);
+      setAttachedFiles([]);
 
       const userMessageId = userMessage.id;
       const botMessageId = Date.now() + 1;
@@ -928,7 +933,8 @@ function MainApp() {
           speedMode,
           friendTarget || undefined,
           newKnowledgeIds.length ? newKnowledgeIds : null,
-          null
+          null,
+          filesToUse.length ? filesToUse : null
         );
       } catch (err) {
         console.error("Chat error:", err);
@@ -2522,6 +2528,8 @@ function MainApp() {
                     setProjectRoot={setProjectRoot}
                     setProjectRootChip={setProjectRootChip}
                     onFileUpload={handleFileUpload}
+                    attachedFiles={attachedFiles}
+                    onRemoveAttachedFile={removeAttachedFile}
                     onCaptureScreen={handleCaptureScreen}
                     onPickProjectPath={handlePickProjectPath}
                     isCapturing={isCapturing}
@@ -2625,6 +2633,8 @@ function MainApp() {
               attachedClipboardText={attachedClipboardText}
               setAttachedClipboardText={setAttachedClipboardText}
               onFileUpload={handleFileUpload}
+              attachedFiles={attachedFiles}
+              onRemoveAttachedFile={removeAttachedFile}
               onCaptureScreen={handleCaptureScreen}
               onPickProjectPath={handlePickProjectPath}
               onAttachClipboard={handleAttachClipboard}

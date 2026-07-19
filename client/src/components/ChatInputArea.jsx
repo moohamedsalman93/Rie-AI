@@ -21,6 +21,8 @@ export function ChatInputArea({
   setProjectRootChip,
   attachedClipboardText,
   setAttachedClipboardText,
+  attachedFiles = [],
+  onRemoveAttachedFile,
   onFileUpload,
   onCaptureScreen,
   onPickProjectPath,
@@ -41,15 +43,18 @@ export function ChatInputArea({
   const [dragCounter, setDragCounter] = useState(0);
   const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
   const isDragging = dragCounter > 0;
-  const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0;
+  const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
 
-  const attachImageFile = (file) => {
-    if (!file || !file.type?.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = (re) => {
-      setAttachedImage(re.target?.result || null);
-    };
-    reader.readAsDataURL(file);
+  const attachFile = (file) => {
+    if (!file) return;
+    if (file.type?.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (re) => {
+        setAttachedImage(re.target?.result || null);
+      };
+      reader.readAsDataURL(file);
+    }
+    // Non-image files are handled by the parent via processFile
   };
 
   return (
@@ -73,11 +78,10 @@ export function ChatInputArea({
         e.stopPropagation();
         setDragCounter(0);
         if (isLoading) return;
-        const files = e.dataTransfer.files;
-        if (files && files.length > 0) {
-          const file = files[0];
-          if (file.type.startsWith("image/")) {
-            attachImageFile(file);
+        const droppedFiles = e.dataTransfer.files;
+        if (droppedFiles && droppedFiles.length > 0) {
+          for (const file of droppedFiles) {
+            attachFile(file);
           }
         }
       }}
@@ -97,7 +101,7 @@ export function ChatInputArea({
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
-              <span className="text-xs font-bold  tracking-wider">Drop image to attach</span>
+              <span className="text-xs font-bold  tracking-wider">Drop files to attach</span>
             </div>
           </motion.div>
         )}
@@ -241,6 +245,35 @@ export function ChatInputArea({
               </button>
             </motion.div>
           )}
+          {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
+            <motion.div
+              key={`file-${file.name}-${idx}`}
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              className="relative self-start"
+            >
+              <div className="flex items-center gap-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30 px-2.5 py-1.5 backdrop-blur-md">
+                <div className="flex h-5 w-5 items-center justify-center rounded bg-cyan-500/20 text-cyan-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </div>
+                <span className="text-xs font-semibold text-cyan-400 max-w-[120px] truncate" title={file.name}>@{file.name}</span>
+                <span className="text-[10px] text-cyan-500/50">{file.size > 1024 ? `${(file.size / 1024).toFixed(0)}KB` : `${file.size}B`}</span>
+                <button
+                  onClick={() => onRemoveAttachedFile?.(idx)}
+                  className="ml-0.5 rounded-full p-0.5 text-cyan-400/60 hover:bg-cyan-500/20 hover:text-cyan-400 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            </motion.div>
+          ))}
           <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} />
         </AnimatePresence>
 
@@ -281,7 +314,7 @@ export function ChatInputArea({
                       </svg>
                     </div>
                     <div className="flex flex-col items-start translate-y-[1px]">
-                      <span className="font-medium text-[13px]">Upload Image</span>
+                      <span className="font-medium text-[13px]">Upload File</span>
                     </div>
                   </button>
 
@@ -383,7 +416,7 @@ export function ChatInputArea({
                     const file = item.getAsFile();
                     if (file) {
                       e.preventDefault();
-                      attachImageFile(file);
+                      attachFile(file);
                     }
                     break;
                   }

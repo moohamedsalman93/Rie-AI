@@ -251,7 +251,8 @@ export async function streamChat(
   speedMode = "thinking",
   friendTarget = null,
   knowledgeIds = null,
-  skillIds = null
+  skillIds = null,
+  attachedFiles = null
 ) {
   const payload = {
     message,
@@ -267,6 +268,7 @@ export async function streamChat(
     friend_target_name: friendTarget?.name || null,
     ...(knowledgeIds?.length ? { knowledge_ids: knowledgeIds } : {}),
     ...(skillIds?.length ? { skill_ids: skillIds } : {}),
+    ...(attachedFiles?.length ? { attached_files: attachedFiles.map(f => ({ name: f.name, content: f.content })) } : {}),
     ...(await getClientContextPayload()),
   };
   try {

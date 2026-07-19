@@ -48,6 +48,8 @@ export function NormalModeLayout({
     setProjectRoot,
     setProjectRootChip,
     onFileUpload,
+    attachedFiles = [],
+    onRemoveAttachedFile,
     onCaptureScreen,
     onPickProjectPath,
     isCapturing,
@@ -97,7 +99,7 @@ export function NormalModeLayout({
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
     const [activeSkillsList, setActiveSkillsList] = useState([]);
     const isDragging = dragCounter > 0;
-    const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0;
+    const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
     const isNewChat = !messages || messages.length === 0;
 
     useEffect(() => {
@@ -718,7 +720,7 @@ export function NormalModeLayout({
                         </AnimatePresence>
                         <div className="flex flex-col gap-2">
                             {/* Attachment previews (Moved Above) */}
-                            {(attachedImage || isScreenAttached || projectRoot || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0)) && (
+                            {(attachedImage || isScreenAttached || projectRoot || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
                                 <div className={`flex flex-wrap gap-2 ${isNewChat ? 'w-[80%]' : 'w-[70%]'} mx-auto overflow-x-auto justify-center mb-2`}>
                                     <AnimatePresence>
                                         {attachedImage && (
@@ -802,6 +804,27 @@ export function NormalModeLayout({
                                                 </button>
                                             </motion.div>
                                         )}
+                                        {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
+                                            <motion.div
+                                                key={`file-${file.name}-${idx}`}
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-cyan-400">
+                                                    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                                                    <polyline points="14 2 14 8 20 8" />
+                                                </svg>
+                                                <span className="text-xs text-cyan-400 max-w-[100px] truncate" title={file.name}>@{file.name}</span>
+                                                <button onClick={() => onRemoveAttachedFile?.(idx)} className="text-cyan-400/60 hover:text-cyan-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        ))}
                                         <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
                                     </AnimatePresence>
                                 </div>
@@ -838,7 +861,7 @@ export function NormalModeLayout({
                                                             <circle cx="9" cy="9" r="2" />
                                                             <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
                                                         </svg>
-                                                        Upload Image
+                                                        Upload File
                                                     </button>
                                                     <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
                                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
@@ -954,7 +977,7 @@ export function NormalModeLayout({
                                             <circle cx="9" cy="9" r="2" />
                                             <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
                                         </svg>
-                                        <span>Upload Image</span>
+                                        <span>Upload File</span>
                                     </button>
                                     <button onClick={onCaptureScreen} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400 shrink-0">

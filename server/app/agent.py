@@ -1549,6 +1549,11 @@ class AgentManager:
         llm = self._llm
         if llm is None:
             return None
+            
+        # Unpack FallbackChatModel if wrapped
+        while hasattr(llm, "_primary_model"):
+            llm = llm._primary_model
+            
         rotator: Optional[KeyRotator] = getattr(llm, "_rotator", None)
         if rotator is None:
             # Single-key provider or non-rotating LLM

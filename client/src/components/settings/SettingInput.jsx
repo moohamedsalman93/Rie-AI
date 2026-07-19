@@ -81,10 +81,10 @@ export function SettingInput({ label, dbKey, value, onSave, isSaving, placeholde
             </div>
           </div>
         ) : (
-          <div className="flex gap-2 group justify-end items-center">
+          <div className="flex gap-2 group justify-end items-center min-w-0 w-full">
             <div
               onClick={handleEditClick}
-              className={`flex-1 text-end cursor-pointer bg-neutral-900/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-neutral-300 font-mono hover:border-neutral-600 transition-colors ${type === 'textarea' ? 'whitespace-pre-wrap' : 'truncate'} max-w-full`}
+              className={`flex-1 min-w-0 text-end cursor-pointer bg-neutral-900/50 border border-neutral-700/50 rounded-lg px-3 py-2 text-sm text-neutral-300 font-mono hover:border-neutral-600 transition-colors ${type === 'textarea' ? 'whitespace-pre-wrap break-all' : 'truncate'} max-w-full`}
             >
               {value || <span className="text-neutral-600 italic">Not configured</span>}
             </div>

@@ -669,23 +669,7 @@ async def get_settings():
     settings.reload()
     
     def mask_key(key: Optional[str]) -> Optional[str]:
-        if not key:
-            return key
-        
-        # Support multiple keys (comma or newline separated)
-        if ',' in key or '\n' in key:
-            keys = [k.strip() for k in key.replace('\n', ',').split(',') if k.strip()]
-            masked_keys = []
-            for k in keys:
-                if len(k) <= 8:
-                    masked_keys.append("*" * len(k))
-                else:
-                    masked_keys.append(f"{k[:4]}{'*' * (len(k) - 8)}{k[-4:]}")
-            return ", ".join(masked_keys)
-
-        if len(key) <= 8:
-            return "*" * len(key)
-        return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
+        return key
 
     return SettingsResponse(
         groq_api_key=mask_key(settings.GROQ_API_KEY_STRING),
@@ -3198,6 +3182,21 @@ async def chat_stream_post(
         message = f"{message}\n\n[Clipboard Content]:\n{clipboard_text}"
     else:
         logging.info("No clipboard content attached")
+
+    # If files are attached, append their contents to the message
+    attached_files = chat_message.attached_files or []
+    if attached_files:
+        logging.info(f"Attaching {len(attached_files)} file(s) to message")
+        file_blocks = []
+        for f in attached_files:
+            fname = f.get("name", "unknown")
+            fcontent = f.get("content", "")
+            # Truncate very large files to avoid exceeding context limits
+            max_chars = 100_000
+            if len(fcontent) > max_chars:
+                fcontent = fcontent[:max_chars] + f"\n\n... (truncated, file was {len(f.get('content', ''))} chars)"
+            file_blocks.append(f"[Attached File: {fname}]:\n```\n{fcontent}\n```")
+        message = f"{message}\n\n" + "\n\n".join(file_blocks)
 
     # 1. Ensure thread exists (title stays generic until 2nd user message)
     real_thread_id = await run_in_threadpool(create_thread, DEFAULT_THREAD_TITLE, thread_id)

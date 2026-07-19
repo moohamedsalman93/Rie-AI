@@ -1390,7 +1390,7 @@ key2,
                                             onClick={async () => {
                                               try {
                                                 const { openUrl } = await import('@tauri-apps/plugin-opener');
-                                                await openUrl('http://localhost:14200/login?redirect_to_app=true');
+                                                await openUrl('http://localhost:5173/login?redirect_to_app=true');
                                               } catch (e) {
                                                 console.error("Failed to open login URL:", e);
                                                 // Fallback for dev if plugin naming is different or not found

@@ -56,6 +56,8 @@ export function FloatingChatWindow({
   attachedClipboardText,
   setAttachedClipboardText,
   onFileUpload,
+  attachedFiles = [],
+  onRemoveAttachedFile,
   onCaptureScreen,
   onPickProjectPath,
   onAttachClipboard,
@@ -233,6 +235,8 @@ export function FloatingChatWindow({
             attachedClipboardText={attachedClipboardText}
             setAttachedClipboardText={setAttachedClipboardText}
             onFileUpload={onFileUpload}
+            attachedFiles={attachedFiles}
+            onRemoveAttachedFile={onRemoveAttachedFile}
             onCaptureScreen={onCaptureScreen}
             onPickProjectPath={onPickProjectPath}
             onAttachClipboard={onAttachClipboard}
