@@ -56,4 +56,8 @@ windows = { version = "0.61", features = [
 ] }
 uiautomation = { version = "0.25.0", features = ["all"] }
 
-
+[profile.release]
+opt-level = 3       # Optimizes for execution speed, compiles faster than size-optimized 's' or 'z'
+lto = "thin"        # 'thin' LTO compiles much faster than standard 'fat' LTO
+codegen-units = 16  # Runs code generation in parallel using all runner cores
+incremental = true  # Speeds up compiles by rebuilding only modified files when caching is enabled
