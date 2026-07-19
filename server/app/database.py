@@ -2008,5 +2008,400 @@ def clear_all_history():
         conn.close()
 
 
+def export_backup_data(sections: List[str]) -> Dict[str, Any]:
+    """Gather and serialize configuration, history, and knowledge into a backup dict"""
+    import base64
+    backup = {"version": 1, "exported_at": datetime.utcnow().isoformat()}
+    db_path = get_db_path()
+    
+    # 1. Settings (excluding EXTERNAL_APIS and MCP_SERVERS which have their own sections)
+    if "settings" in sections:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT key, value FROM settings WHERE key NOT IN ('EXTERNAL_APIS', 'MCP_SERVERS')")
+            rows = cursor.fetchall()
+            backup["settings"] = {r["key"]: r["value"] for r in rows}
+        except Exception as e:
+            logging.error(f"Error exporting settings: {e}")
+        finally:
+            conn.close()
+            
+    # 2. External APIs
+    if "apis" in sections:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT value FROM settings WHERE key = 'EXTERNAL_APIS'")
+            row = cursor.fetchone()
+            backup["external_apis"] = json.loads(row[0]) if row and row[0] else []
+        except Exception as e:
+            logging.error(f"Error exporting external APIs: {e}")
+        finally:
+            conn.close()
+            
+    # 3. Tools (MCP Servers & Skills)
+    if "tools" in sections:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        try:
+            # MCP Servers
+            cursor.execute("SELECT value FROM settings WHERE key = 'MCP_SERVERS'")
+            row = cursor.fetchone()
+            backup["mcp_servers"] = json.loads(row[0]) if row and row[0] else []
+            
+            # Skills table
+            cursor.execute("SELECT * FROM skills")
+            skill_rows = cursor.fetchall()
+            backup["skills"] = []
+            for r in skill_rows:
+                sd = dict(r)
+                # Parse tool_ids if stored as JSON string
+                if isinstance(sd.get("tool_ids"), str):
+                    try:
+                        sd["tool_ids"] = json.loads(sd["tool_ids"])
+                    except Exception:
+                        pass
+                backup["skills"].append(sd)
+        except Exception as e:
+            logging.error(f"Error exporting tools: {e}")
+        finally:
+            conn.close()
+            
+    # 4. Conversations (threads, messages, thread_skills, thread_knowledge, friend_threads)
+    if "conversations" in sections:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM threads")
+            threads = [dict(r) for r in cursor.fetchall()]
+            
+            cursor.execute("SELECT * FROM messages")
+            messages = [dict(r) for r in cursor.fetchall()]
+            
+            cursor.execute("SELECT * FROM thread_skills")
+            thread_skills = [dict(r) for r in cursor.fetchall()]
+            
+            cursor.execute("SELECT * FROM thread_knowledge")
+            thread_knowledge = [dict(r) for r in cursor.fetchall()]
+            
+            cursor.execute("SELECT * FROM friend_threads")
+            friend_threads = [dict(r) for r in cursor.fetchall()]
+            
+            backup["conversations"] = {
+                "threads": threads,
+                "messages": messages,
+                "thread_skills": thread_skills,
+                "thread_knowledge": thread_knowledge,
+                "friend_threads": friend_threads
+            }
+        except Exception as e:
+            logging.error(f"Error exporting conversations: {e}")
+        finally:
+            conn.close()
+            
+    # 5. Knowledge (packs, assets, files)
+    if "knowledge" in sections:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM knowledge_packs")
+            packs = [dict(r) for r in cursor.fetchall()]
+            
+            cursor.execute("SELECT * FROM knowledge_assets")
+            assets = [dict(r) for r in cursor.fetchall()]
+            
+            # Read all files for assets
+            knowledge_dir = get_knowledge_storage_dir()
+            backup["knowledge_packs"] = packs
+            backup["knowledge_assets"] = []
+            
+            for asset in assets:
+                asset_dict = dict(asset)
+                rel_path = asset_dict.get("storage_path")
+                if rel_path:
+                    abs_path = knowledge_dir / rel_path
+                    if abs_path.exists() and abs_path.is_file():
+                        try:
+                            file_bytes = abs_path.read_bytes()
+                            asset_dict["file_bytes_b64"] = base64.b64encode(file_bytes).decode("ascii")
+                        except Exception as file_err:
+                            logging.error(f"Failed to read knowledge file {abs_path}: {file_err}")
+                backup["knowledge_assets"].append(asset_dict)
+        except Exception as e:
+            logging.error(f"Error exporting knowledge: {e}")
+        finally:
+            conn.close()
+            
+    return backup
+
+
+def import_backup_data(import_sections: List[str], data: Dict[str, Any]) -> Dict[str, Any]:
+    """De-serialize and merge backed-up configuration, history, and files into SQLite and disk"""
+    import base64
+    db_path = get_db_path()
+    result = {"success": True, "messages": []}
+    
+    # 1. Settings
+    if "settings" in import_sections and "settings" in data:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            settings_dict = data["settings"]
+            for key, val in settings_dict.items():
+                cursor.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+                    (key, val, val)
+                )
+            conn.commit()
+            result["messages"].append(f"Imported {len(settings_dict)} settings.")
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Error importing settings: {e}")
+            result["messages"].append(f"Failed to import settings: {str(e)}")
+        finally:
+            conn.close()
+            
+    # 2. External APIs
+    if "apis" in import_sections and "external_apis" in data:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            apis_list = data["external_apis"]
+            apis_json = json.dumps(apis_list)
+            cursor.execute(
+                "INSERT INTO settings (key, value) VALUES ('EXTERNAL_APIS', ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+                (apis_json, apis_json)
+            )
+            conn.commit()
+            result["messages"].append(f"Imported {len(apis_list)} external APIs.")
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Error importing external APIs: {e}")
+            result["messages"].append(f"Failed to import external APIs: {str(e)}")
+        finally:
+            conn.close()
+            
+    # 3. Tools (MCP Servers & Skills)
+    if "tools" in import_sections:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            # MCP Servers
+            mcp_servers = data.get("mcp_servers", [])
+            mcp_json = json.dumps(mcp_servers)
+            cursor.execute(
+                "INSERT INTO settings (key, value) VALUES ('MCP_SERVERS', ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+                (mcp_json, mcp_json)
+            )
+            
+            # Skills
+            skills = data.get("skills", [])
+            for skill in skills:
+                tool_ids_val = skill.get("tool_ids", "[]")
+                if not isinstance(tool_ids_val, str):
+                    tool_ids_val = json.dumps(tool_ids_val)
+                cursor.execute(
+                    """
+                    INSERT INTO skills (id, name, description, content, icon, tool_ids, enabled, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        description = excluded.description,
+                        content = excluded.content,
+                        icon = excluded.icon,
+                        tool_ids = excluded.tool_ids,
+                        enabled = excluded.enabled,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        skill.get("id"),
+                        skill.get("name"),
+                        skill.get("description", ""),
+                        skill.get("content", ""),
+                        skill.get("icon", "🧠"),
+                        tool_ids_val,
+                        skill.get("enabled", 1),
+                        skill.get("created_at"),
+                        skill.get("updated_at")
+                    )
+                )
+            conn.commit()
+            result["messages"].append(f"Imported {len(mcp_servers)} MCP servers and {len(skills)} skills.")
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Error importing tools: {e}")
+            result["messages"].append(f"Failed to import tools: {str(e)}")
+        finally:
+            conn.close()
+            
+    # 4. Conversations
+    if "conversations" in import_sections and "conversations" in data:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            conv_data = data["conversations"]
+            
+            threads = conv_data.get("threads", [])
+            messages = conv_data.get("messages", [])
+            thread_skills = conv_data.get("thread_skills", [])
+            thread_knowledge = conv_data.get("thread_knowledge", [])
+            friend_threads = conv_data.get("friend_threads", [])
+            
+            # Import threads
+            for thread in threads:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO threads (id, title, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (thread.get("id"), thread.get("title"), thread.get("created_at"), thread.get("updated_at"))
+                )
+                
+            # Import messages
+            for msg in messages:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO messages (id, thread_id, role, content, image_url, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (msg.get("id"), msg.get("thread_id"), msg.get("role"), msg.get("content"), msg.get("image_url"), msg.get("created_at"))
+                )
+                
+            # Import thread_skills
+            for ts in thread_skills:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO thread_skills (id, thread_id, skill_id, attached_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (ts.get("id"), ts.get("thread_id"), ts.get("skill_id"), ts.get("attached_at"))
+                )
+                
+            # Import thread_knowledge
+            for tk in thread_knowledge:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO thread_knowledge (thread_id, knowledge_id, knowledge_name, context_snapshot, is_locked, attached_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tk.get("thread_id"),
+                        tk.get("knowledge_id"),
+                        tk.get("knowledge_name"),
+                        tk.get("context_snapshot"),
+                        tk.get("is_locked", 0),
+                        tk.get("attached_at")
+                    )
+                )
+                
+            # Import friend_threads
+            for ft in friend_threads:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO friend_threads (thread_id, friend_id, friend_name, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (ft.get("thread_id"), ft.get("friend_id"), ft.get("friend_name"), ft.get("created_at"), ft.get("updated_at"))
+                )
+                
+            conn.commit()
+            result["messages"].append(f"Imported {len(threads)} threads and {len(messages)} messages.")
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Error importing conversations: {e}")
+            result["messages"].append(f"Failed to import conversations: {str(e)}")
+        finally:
+            conn.close()
+            
+    # 5. Knowledge packs
+    if "knowledge" in import_sections:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        try:
+            packs = data.get("knowledge_packs", [])
+            assets = data.get("knowledge_assets", [])
+            
+            # Import packs
+            for pack in packs:
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO knowledge_packs (id, name, instructions, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (pack.get("id"), pack.get("name"), pack.get("instructions"), pack.get("created_at"), pack.get("updated_at"))
+                )
+                
+            # Import assets & write files
+            knowledge_dir = get_knowledge_storage_dir()
+            success_count = 0
+            for asset in assets:
+                pack_id = asset.get("pack_id")
+                asset_id = asset.get("id")
+                filename = asset.get("filename")
+                rel_path = asset.get("storage_path")
+                
+                # Check for file data
+                b64_content = asset.get("file_bytes_b64")
+                if b64_content and rel_path:
+                    abs_path = knowledge_dir / rel_path
+                    try:
+                        abs_path.parent.mkdir(parents=True, exist_ok=True)
+                        file_bytes = base64.b64decode(b64_content)
+                        abs_path.write_bytes(file_bytes)
+                        
+                        cursor.execute(
+                            """
+                            INSERT OR REPLACE INTO knowledge_assets (id, pack_id, filename, asset_type, storage_path, summary, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                asset_id,
+                                pack_id,
+                                filename,
+                                asset.get("asset_type"),
+                                rel_path,
+                                asset.get("summary"),
+                                asset.get("created_at")
+                            )
+                        )
+                        success_count += 1
+                    except Exception as file_err:
+                        logging.error(f"Failed to write knowledge file {abs_path} on import: {file_err}")
+                else:
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO knowledge_assets (id, pack_id, filename, asset_type, storage_path, summary, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            asset_id,
+                            pack_id,
+                            filename,
+                            asset.get("asset_type"),
+                            rel_path,
+                            asset.get("summary"),
+                            asset.get("created_at")
+                        )
+                    )
+                    success_count += 1
+                    
+            conn.commit()
+            result["messages"].append(f"Imported {len(packs)} knowledge packs and {success_count} assets.")
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Error importing knowledge: {e}")
+            result["messages"].append(f"Failed to import knowledge: {str(e)}")
+        finally:
+            conn.close()
+            
+    return result
+
+
+
 
 

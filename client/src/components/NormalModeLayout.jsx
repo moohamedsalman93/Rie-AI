@@ -212,6 +212,57 @@ export function NormalModeLayout({
     const filteredThreads = mergedThreads.filter(t =>
         (t.title || 'Untitled Chat').toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    const groupedThreads = useMemo(() => {
+        const groups = {
+            today: { title: "Today", threads: [] },
+            yesterday: { title: "Yesterday", threads: [] },
+            twoDaysAgo: { title: "2 days ago", threads: [] },
+            threeDaysAgo: { title: "3 days ago", threads: [] },
+            fourDaysAgo: { title: "4 days ago", threads: [] },
+            fiveDaysAgo: { title: "5 days ago", threads: [] },
+            sixDaysAgo: { title: "6 days ago", threads: [] },
+            lastWeek: { title: "Previous 7 Days", threads: [] },
+            older: { title: "Older", threads: [] }
+        };
+
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        filteredThreads.forEach(thread => {
+            const dateStr = thread.updated_at || thread.created_at;
+            if (!dateStr) {
+                groups.today.threads.push(thread);
+                return;
+            }
+
+            const date = new Date(dateStr);
+            const threadStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            const diffDays = Math.round((todayStart - threadStart) / (1000 * 60 * 60 * 24));
+
+            if (diffDays <= 0) {
+                groups.today.threads.push(thread);
+            } else if (diffDays === 1) {
+                groups.yesterday.threads.push(thread);
+            } else if (diffDays === 2) {
+                groups.twoDaysAgo.threads.push(thread);
+            } else if (diffDays === 3) {
+                groups.threeDaysAgo.threads.push(thread);
+            } else if (diffDays === 4) {
+                groups.fourDaysAgo.threads.push(thread);
+            } else if (diffDays === 5) {
+                groups.fiveDaysAgo.threads.push(thread);
+            } else if (diffDays === 6) {
+                groups.sixDaysAgo.threads.push(thread);
+            } else if (diffDays >= 7 && diffDays < 14) {
+                groups.lastWeek.threads.push(thread);
+            } else {
+                groups.older.threads.push(thread);
+            }
+        });
+
+        return Object.values(groups).filter(g => g.threads.length > 0);
+    }, [filteredThreads]);
     const botReplyCount = messages.filter(
         (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
     ).length;
@@ -448,41 +499,50 @@ export function NormalModeLayout({
                                         {searchTerm ? 'No chats match.' : null}
                                     </div>
                                 ) : (
-                                    filteredThreads.map(thread => (
-                                        <button
-                                            key={thread.id}
-                                            onClick={() => onSelectThread(thread.id)}
-                                            className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative ${thread.id === currentThreadId
-                                                ? 'bg-neutral-800 text-neutral-100'
-                                                : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'
-                                                }`}
-                                        >
-                                            <div className="pr-5">
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="text-xs font-medium truncate">{thread.title || 'Untitled Chat'}</div>
-                                                    {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && (
-                                                        <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>
-                                                    )}
-                                                    <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
-                                                    {streamingThreads.has(thread.id) && (
-                                                        <div className="flex items-center gap-1 shrink-0">
-                                                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                                                        </div>
-                                                    )}
+                                    <div className="space-y-4">
+                                        {groupedThreads.map(group => (
+                                            <div key={group.title} className="space-y-1">
+                                                <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                                                    {group.title}
                                                 </div>
-                                                <div className="text-[10px] opacity-50 mt-0.5">{formatDate(thread.updated_at || thread.created_at)}</div>
+                                                {group.threads.map(thread => (
+                                                    <button
+                                                        key={thread.id}
+                                                        onClick={() => onSelectThread(thread.id)}
+                                                        className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative ${thread.id === currentThreadId
+                                                            ? 'bg-neutral-800 text-neutral-100'
+                                                            : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'
+                                                            }`}
+                                                    >
+                                                        <div className="pr-5">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <div className="text-xs font-medium truncate">{thread.title || 'Untitled Chat'}</div>
+                                                                {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && (
+                                                                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>
+                                                                )}
+                                                                <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
+                                                                {streamingThreads.has(thread.id) && (
+                                                                    <div className="flex items-center gap-1 shrink-0">
+                                                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-[10px] opacity-50 mt-0.5">{formatDate(thread.updated_at || thread.created_at)}</div>
+                                                        </div>
+                                                        <div
+                                                            onClick={(e) => handleDeleteClick(e, thread.id)}
+                                                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all"
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                <polyline points="3 6 5 6 21 6"></polyline>
+                                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                            </svg>
+                                                        </div>
+                                                    </button>
+                                                ))}
                                             </div>
-                                            <div
-                                                onClick={(e) => handleDeleteClick(e, thread.id)}
-                                                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <polyline points="3 6 5 6 21 6"></polyline>
-                                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                                </svg>
-                                            </div>
-                                        </button>
-                                    ))
+                                        ))}
+                                    </div>
                                 )}
                             </div>
                             <ScheduledTasksPanel apiStatus={apiStatus} />
@@ -565,7 +625,7 @@ export function NormalModeLayout({
                                                     </div>
                                                 )}
 
-                                                <div className={`min-w-0 max-w-full break-all overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
+                                                <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
                                                     ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
                                                     : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
                                                     }`}>

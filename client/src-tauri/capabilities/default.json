@@ -34,6 +34,7 @@
     "process:allow-restart",
     "dialog:default",
     "fs:default",
+    "fs:allow-write-text-file",
     "notification:default",
     "autostart:allow-enable",
     "autostart:allow-disable",

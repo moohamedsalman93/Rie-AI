@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory } from '../../services/chatApi';
+import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory, exportBackup, importBackup } from '../../services/chatApi';
 import { setShareLocationEnabled, prefetchClientLocation } from '../../utils/locationUtils';
 import { SettingInput } from './SettingInput';
 import { McpServersManager } from './McpServersManager';
@@ -84,6 +84,133 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   const [copied, setCopied] = useState(false);
   const logsEndRef = useRef(null);
   const [isClearAllConfirmOpen, setIsClearAllConfirmOpen] = useState(false);
+
+  // Backup & Restore state
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportOptions, setExportOptions] = useState({
+    settings: true,
+    apis: true,
+    tools: true,
+    conversations: true,
+    knowledge: true,
+  });
+  const [isExporting, setIsExporting] = useState(false);
+
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importData, setImportData] = useState(null);
+  const [importOptions, setImportOptions] = useState({
+    settings: false,
+    apis: false,
+    tools: false,
+    conversations: false,
+    knowledge: false,
+  });
+  const [isImporting, setIsImporting] = useState(false);
+  const [importFileName, setImportFileName] = useState('');
+  const [importStatusMsg, setImportStatusMsg] = useState('');
+  const fileInputRef = useRef(null);
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const data = await exportBackup(exportOptions);
+      const jsonContent = JSON.stringify(data, null, 2);
+
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+      const { revealItemInDir } = await import('@tauri-apps/plugin-opener');
+
+      const dateStr = new Date().toISOString().replace(/T/, '_').replace(/\..+/, '').replace(/:/g, '-');
+      const filePath = await save({
+        defaultPath: `rie_backup_${dateStr}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+
+      if (!filePath) {
+        // User cancelled the dialog
+        setIsExporting(false);
+        return;
+      }
+
+      await writeTextFile(filePath, jsonContent);
+      setIsExportModalOpen(false);
+
+      // Open the saved location in the file explorer
+      await revealItemInDir(filePath);
+    } catch (err) {
+      console.error(err);
+      alert(`Export failed: ${err?.message || err || 'Unknown error'}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    setImportStatusMsg('');
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        if (parsed.version === undefined) {
+          throw new Error('Invalid backup file format');
+        }
+        setImportData(parsed);
+        setImportOptions({
+          settings: !!parsed.settings,
+          apis: !!parsed.external_apis,
+          tools: !!parsed.skills || !!parsed.mcp_servers,
+          conversations: !!parsed.conversations,
+          knowledge: !!parsed.knowledge_packs,
+        });
+      } catch (err) {
+        alert(`Failed to parse file: ${err.message}`);
+        setImportFileName('');
+        setImportData(null);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImport = async () => {
+    if (!importData) return;
+    setIsImporting(true);
+    setImportStatusMsg('Importing data...');
+    try {
+      const selectedSections = Object.keys(importOptions).filter(
+        (key) => importOptions[key]
+      );
+      if (selectedSections.length === 0) {
+        alert('Please select at least one item to import.');
+        setIsImporting(false);
+        return;
+      }
+      const response = await importBackup(selectedSections, importData);
+      setImportStatusMsg(response.messages?.join('\n') || 'Import completed successfully!');
+      
+      const freshSettings = await getSettings();
+      setSettings(freshSettings);
+      
+      if (importOptions.conversations) {
+        const { emit } = await import("@tauri-apps/api/event");
+        await emit("history-cleared");
+      }
+      
+      setTimeout(() => {
+        setIsImportModalOpen(false);
+        setImportData(null);
+        setImportFileName('');
+        setImportStatusMsg('');
+      }, 3000);
+    } catch (err) {
+      console.error(err);
+      setImportStatusMsg(`Import failed: ${err.message}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const handleClearAllConfirm = async () => {
     setIsClearAllConfirmOpen(false);
@@ -2416,19 +2543,44 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </div>
                       <h3 className={SL.sectionTitle}>Data Management</h3>
                     </div>
-                    <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center justify-between gap-4 pb-4 border-b border-white/5">
                       <div>
                         <h4 className="text-sm font-bold text-neutral-200">Clear All Chat History</h4>
-                        <p className="text-[10px] text-neutral-500 max-w-md">
+                        <p className="text-[10px] text-neutral-500 max-w-md font-medium text-neutral-400">
                           Permanently delete all chat threads, messages, scheduled tasks, notifications, and checkpoints. This cannot be undone.
                         </p>
                       </div>
                       <button
+                        type="button"
                         onClick={() => setIsClearAllConfirmOpen(true)}
                         className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-semibold rounded-lg transition-colors shrink-0"
                       >
                         Clear All
                       </button>
+                    </div>
+                    <div className="space-y-3 pt-2">
+                      <div>
+                        <h4 className="text-sm font-bold text-neutral-200">Backup & Restore</h4>
+                        <p className="text-[10px] text-neutral-500 max-w-md font-medium text-neutral-400">
+                          Export your settings, skills, custom tools, and conversations to a file, or restore them from a previous backup.
+                        </p>
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setIsExportModalOpen(true)}
+                          className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                        >
+                          Export Data...
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsImportModalOpen(true)}
+                          className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                        >
+                          Import Data...
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -3392,6 +3544,325 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   className="rounded-lg border border-emerald-500/35 bg-emerald-950/45 px-3 py-2 text-xs font-medium text-emerald-100/95 transition-colors hover:border-emerald-500/50 hover:bg-emerald-950/70 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
                 >
                   {peerAccessSaving ? 'Savingâ€¦' : 'Save'}
+                </motion.button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EXPORT MODAL */}
+      <AnimatePresence>
+        {isExportModalOpen && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="flex max-h-[min(90vh,600px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl"
+            >
+              <div className="shrink-0 border-b border-neutral-800 px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-white font-sans">Export Backup</h4>
+                    <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 font-sans">
+                      Select what configuration and history you would like to export.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsExportModalOpen(false)}
+                    className="shrink-0 text-neutral-400 hover:text-white text-xs cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              
+              <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+                <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3 mb-2">
+                  <div className="flex gap-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-300 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-amber-200/90 leading-normal font-sans">
+                      <strong>Security Warning:</strong> Exported backups contain raw API keys and credentials. Store this backup file in a secure location.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-semibold text-neutral-200 font-sans">General Settings</span>
+                      <span className="block text-[10px] text-neutral-500 font-sans">API keys, LLM providers, model preferences</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.settings}
+                      onChange={(e) => setExportOptions(prev => ({ ...prev, settings: e.target.checked }))}
+                      className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                    />
+                  </label>
+
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-semibold text-neutral-200 font-sans">External APIs</span>
+                      <span className="block text-[10px] text-neutral-500 font-sans">Custom web tools and endpoint integrations</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.apis}
+                      onChange={(e) => setExportOptions(prev => ({ ...prev, apis: e.target.checked }))}
+                      className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                    />
+                  </label>
+
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-semibold text-neutral-200 font-sans">Skills & MCP Tools</span>
+                      <span className="block text-[10px] text-neutral-500 font-sans">Custom skill library guidelines & MCP configurations</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.tools}
+                      onChange={(e) => setExportOptions(prev => ({ ...prev, tools: e.target.checked }))}
+                      className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                    />
+                  </label>
+
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-semibold text-neutral-200 font-sans">Conversations & History</span>
+                      <span className="block text-[10px] text-neutral-500 font-sans">Chat threads, messages, and snapshots</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.conversations}
+                      onChange={(e) => setExportOptions(prev => ({ ...prev, conversations: e.target.checked }))}
+                      className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                    />
+                  </label>
+
+                  <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-semibold text-neutral-200 font-sans">Knowledge Packs</span>
+                      <span className="block text-[10px] text-neutral-500 font-sans">Custom knowledge documents and uploaded assets</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.knowledge}
+                      onChange={(e) => setExportOptions(prev => ({ ...prev, knowledge: e.target.checked }))}
+                      className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-neutral-800 px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => setIsExportModalOpen(false)}
+                  className="rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-300 cursor-pointer hover:bg-neutral-900"
+                >
+                  Cancel
+                </button>
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  type="button"
+                  onClick={handleExport}
+                  disabled={isExporting}
+                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-medium text-white transition-colors disabled:opacity-60 cursor-pointer"
+                >
+                  {isExporting ? 'Exporting...' : 'Export'}
+                </motion.button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* IMPORT MODAL */}
+      <AnimatePresence>
+        {isImportModalOpen && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 sm:p-6">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="flex max-h-[min(90vh,600px)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-neutral-700 bg-neutral-950 shadow-2xl"
+            >
+              <div className="shrink-0 border-b border-neutral-800 px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-white font-sans">Import Backup</h4>
+                    <p className="mt-1 text-[11px] leading-relaxed text-neutral-500 font-sans">
+                      Upload a previous backup file and choose what to restore.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsImportModalOpen(false);
+                      setImportData(null);
+                      setImportFileName('');
+                      setImportStatusMsg('');
+                    }}
+                    className="shrink-0 text-neutral-400 hover:text-white text-xs cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              
+              <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+                {!importData ? (
+                  <div 
+                    className="flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 hover:border-neutral-500 rounded-xl p-8 cursor-pointer transition-colors bg-neutral-900/10" 
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <FileText className="w-8 h-8 text-neutral-500 mb-2" />
+                    <span className="text-xs font-semibold text-neutral-300 font-sans">Click to select backup JSON</span>
+                    <span className="text-[10px] text-neutral-500 mt-1 font-sans">Files format: rie_backup_*.json</span>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept=".json"
+                      className="hidden"
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-3 rounded-xl border border-neutral-800 bg-neutral-900/40">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-emerald-400" />
+                        <span className="text-xs font-semibold text-neutral-200 truncate max-w-[200px] font-sans">
+                          {importFileName}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImportData(null);
+                          setImportFileName('');
+                          setImportStatusMsg('');
+                        }}
+                        className="text-[10px] text-red-400 hover:text-red-300 font-medium font-sans"
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="text-[10px] text-neutral-400 font-sans">
+                      Detected components in file:
+                    </div>
+
+                    <div className="space-y-3">
+                      {importData.settings && (
+                        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-semibold text-neutral-200 font-sans">General Settings</span>
+                            <span className="block text-[10px] text-neutral-500 font-sans">Override API keys and preferences</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={importOptions.settings}
+                            onChange={(e) => setImportOptions(prev => ({ ...prev, settings: e.target.checked }))}
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                          />
+                        </label>
+                      )}
+
+                      {importData.external_apis && (
+                        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-semibold text-neutral-200 font-sans">External APIs</span>
+                            <span className="block text-[10px] text-neutral-500 font-sans">Custom web tools</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={importOptions.apis}
+                            onChange={(e) => setImportOptions(prev => ({ ...prev, apis: e.target.checked }))}
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                          />
+                        </label>
+                      )}
+
+                      {(importData.skills || importData.mcp_servers) && (
+                        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-semibold text-neutral-200 font-sans">Skills & MCP Tools</span>
+                            <span className="block text-[10px] text-neutral-500 font-sans">Restore skills and MCP configurations</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={importOptions.tools}
+                            onChange={(e) => setImportOptions(prev => ({ ...prev, tools: e.target.checked }))}
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                          />
+                        </label>
+                      )}
+
+                      {importData.conversations && (
+                        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-semibold text-neutral-200 font-sans">Conversations & History</span>
+                            <span className="block text-[10px] text-neutral-500 font-sans">Import chat threads & messages</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={importOptions.conversations}
+                            onChange={(e) => setImportOptions(prev => ({ ...prev, conversations: e.target.checked }))}
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                          />
+                        </label>
+                      )}
+
+                      {importData.knowledge_packs && (
+                        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-700 bg-neutral-900/40 px-4 py-3">
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-semibold text-neutral-200 font-sans">Knowledge Packs</span>
+                            <span className="block text-[10px] text-neutral-500 font-sans">Restore folders and documents</span>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={importOptions.knowledge}
+                            onChange={(e) => setImportOptions(prev => ({ ...prev, knowledge: e.target.checked }))}
+                            className="h-4 w-4 rounded border-neutral-600 bg-neutral-800 text-emerald-500 cursor-pointer"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {importStatusMsg && (
+                  <div className="rounded-xl border border-neutral-850 bg-neutral-900/50 p-3 mt-2 whitespace-pre-line text-[11px] text-neutral-300 leading-normal font-sans">
+                    {importStatusMsg}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-neutral-800 px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsImportModalOpen(false);
+                    setImportData(null);
+                    setImportFileName('');
+                    setImportStatusMsg('');
+                  }}
+                  className="rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-300 cursor-pointer hover:bg-neutral-900"
+                >
+                  Cancel
+                </button>
+                <motion.button
+                  whileTap={{ scale: 0.97 }}
+                  type="button"
+                  onClick={handleImport}
+                  disabled={isImporting || !importData}
+                  className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-medium text-white transition-colors disabled:opacity-60 cursor-pointer"
+                >
+                  {isImporting ? 'Importing...' : 'Import'}
                 </motion.button>
               </div>
             </motion.div>

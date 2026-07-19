@@ -119,7 +119,7 @@ export function ChatMessages({
                     )}
                   </div>
                 )}
-                <div className={`min-w-0 max-w-full break-all overflow-x-hidden rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>
+                <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>
                 {m.image_url && (
                   <div className="mb-2 overflow-hidden rounded-lg">
                     <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />

@@ -543,3 +543,11 @@ class SkillResponse(BaseModel):
     updated_at: str
 
 
+class ImportBackupRequest(BaseModel):
+    """Request model for importing backup data."""
+    import_sections: List[str]
+    data: Dict[str, Any]
+
+
+
+

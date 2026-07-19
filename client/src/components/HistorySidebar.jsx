@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, ChevronRight, Users, Trash2 } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
@@ -89,6 +89,64 @@ export function HistorySidebar({
         return [...localOnly, ...(threads || [])];
     })();
 
+    const filteredThreads = useMemo(() => {
+        return mergedThreads.filter((t) =>
+            (t.title || "Untitled Chat").toLowerCase().includes(searchTerm.toLowerCase())
+        );
+    }, [mergedThreads, searchTerm]);
+
+    const groupedThreads = useMemo(() => {
+        const groups = {
+            today: { title: "Today", threads: [] },
+            yesterday: { title: "Yesterday", threads: [] },
+            twoDaysAgo: { title: "2 days ago", threads: [] },
+            threeDaysAgo: { title: "3 days ago", threads: [] },
+            fourDaysAgo: { title: "4 days ago", threads: [] },
+            fiveDaysAgo: { title: "5 days ago", threads: [] },
+            sixDaysAgo: { title: "6 days ago", threads: [] },
+            lastWeek: { title: "Previous 7 Days", threads: [] },
+            older: { title: "Older", threads: [] }
+        };
+
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        filteredThreads.forEach(thread => {
+            const dateStr = thread.updated_at || thread.created_at;
+            if (!dateStr) {
+                groups.today.threads.push(thread);
+                return;
+            }
+
+            const date = new Date(dateStr);
+            const threadStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            const diffDays = Math.round((todayStart - threadStart) / (1000 * 60 * 60 * 24));
+
+            if (diffDays <= 0) {
+                groups.today.threads.push(thread);
+            } else if (diffDays === 1) {
+                groups.yesterday.threads.push(thread);
+            } else if (diffDays === 2) {
+                groups.twoDaysAgo.threads.push(thread);
+            } else if (diffDays === 3) {
+                groups.threeDaysAgo.threads.push(thread);
+            } else if (diffDays === 4) {
+                groups.fourDaysAgo.threads.push(thread);
+            } else if (diffDays === 5) {
+                groups.fiveDaysAgo.threads.push(thread);
+            } else if (diffDays === 6) {
+                groups.sixDaysAgo.threads.push(thread);
+            } else if (diffDays >= 7 && diffDays < 14) {
+                groups.lastWeek.threads.push(thread);
+            } else {
+                groups.older.threads.push(thread);
+            }
+        });
+
+        return Object.values(groups).filter(g => g.threads.length > 0);
+    }, [filteredThreads]);
+
+
     const renderBody = (closeOnSelect = false) => (
         <>
             <div className="p-3">
@@ -128,29 +186,36 @@ export function HistorySidebar({
                 ) : error ? (
                     <div className="py-6 text-center text-xs text-red-300">{error}</div>
                 ) : (
-                    mergedThreads
-                        .filter((t) => (t.title || "Untitled Chat").toLowerCase().includes(searchTerm.toLowerCase()))
-                        .map((thread) => (
-                            <button
-                                key={thread.id}
-                                onClick={() => {
-                                    onSelectThread(thread.id);
-                                    if (closeOnSelect) onClose();
-                                }}
-                                className={`w-full text-left p-2.5 rounded-lg transition-all group relative border ${thread.id === currentThreadId ? "bg-neutral-800/80 border-neutral-700/50 text-neutral-100" : "border-transparent text-neutral-400 hover:bg-neutral-800/40 hover:text-neutral-200"}`}
-                            >
-                                <div className="pr-6">
-                                    <div className="flex items-center gap-1.5 mb-0.5">
-                                        <div className="font-medium text-xs truncate">{thread.title || "Untitled Chat"}</div>
-                                        {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>}
-                                        <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
-                                        {streamingThreads.has(thread.id) && <span className="h-1 w-1 rounded-full bg-emerald-500 animate-pulse" />}
-                                    </div>
-                                    <div className="text-[9px] opacity-40">{formatDate(thread.updated_at || thread.created_at)}</div>
+                    <div className="space-y-4">
+                        {groupedThreads.map((group) => (
+                            <div key={group.title} className="space-y-1">
+                                <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                                    {group.title}
                                 </div>
-                                <div onClick={(e) => { e.stopPropagation(); setThreadToDelete(thread.id); setIsConfirmOpen(true); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all">x</div>
-                            </button>
-                        ))
+                                {group.threads.map((thread) => (
+                                    <button
+                                        key={thread.id}
+                                        onClick={() => {
+                                            onSelectThread(thread.id);
+                                            if (closeOnSelect) onClose();
+                                        }}
+                                        className={`w-full text-left p-2.5 rounded-lg transition-all group relative border ${thread.id === currentThreadId ? "bg-neutral-800/80 border-neutral-700/50 text-neutral-100" : "border-transparent text-neutral-400 hover:bg-neutral-800/40 hover:text-neutral-200"}`}
+                                    >
+                                        <div className="pr-6">
+                                            <div className="flex items-center gap-1.5 mb-0.5">
+                                                <div className="font-medium text-xs truncate">{thread.title || "Untitled Chat"}</div>
+                                                {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>}
+                                                <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
+                                                {streamingThreads.has(thread.id) && <span className="h-1 w-1 rounded-full bg-emerald-500 animate-pulse" />}
+                                            </div>
+                                            <div className="text-[9px] opacity-40">{formatDate(thread.updated_at || thread.created_at)}</div>
+                                        </div>
+                                        <div onClick={(e) => { e.stopPropagation(); setThreadToDelete(thread.id); setIsConfirmOpen(true); }} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all">x</div>
+                                    </button>
+                                ))}
+                            </div>
+                        ))}
+                    </div>
                 )}
             </div>
         </>

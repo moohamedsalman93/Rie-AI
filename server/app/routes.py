@@ -29,6 +29,7 @@ from app.models import (
     PeerStreamCancelRequest,
     KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, ThreadKnowledgeItem,
     SkillCreate, SkillUpdate, SkillResponse,
+    ImportBackupRequest,
 )
 from app.agent import agent_manager
 from app.url_preview import (
@@ -87,6 +88,8 @@ from app.database import (
     get_skill,
     list_skills,
     delete_skill,
+    export_backup_data,
+    import_backup_data,
 )
 from app.knowledge import (
     list_packs_summary,
@@ -914,6 +917,62 @@ async def update_settings(data: SettingsUpdate):
             "message": f"Updated {data.key}: {ngrok_toggle_message}",
         }
     return {"status": "success", "message": f"Updated {data.key}"}
+
+
+@router.get("/settings/export-backup")
+async def export_backup(
+    settings: bool = Query(False),
+    apis: bool = Query(False),
+    tools: bool = Query(False),
+    conversations: bool = Query(False),
+    knowledge: bool = Query(False)
+):
+    """
+    Export database configuration and history selectively
+    """
+    sections = []
+    if settings:
+        sections.append("settings")
+    if apis:
+        sections.append("apis")
+    if tools:
+        sections.append("tools")
+    if conversations:
+        sections.append("conversations")
+    if knowledge:
+        sections.append("knowledge")
+        
+    try:
+        backup_data = await run_in_threadpool(export_backup_data, sections)
+        return backup_data
+    except Exception as e:
+        logging.error(f"Failed to export backup data: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@router.post("/settings/import-backup")
+async def import_backup(req: ImportBackupRequest):
+    """
+    Import database configuration and history selectively
+    """
+    try:
+        result = await run_in_threadpool(import_backup_data, req.import_sections, req.data)
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail="\n".join(result.get("messages", [])))
+        
+        # Reload settings in memory
+        settings.reload()
+        
+        # Re-initialize the agent since API keys or settings might have changed!
+        try:
+            agent_manager._agent = None # Force re-init on next request
+        except Exception as agent_err:
+            logging.error(f"Failed to reset agent after import: {agent_err}")
+            
+        return result
+    except Exception as e:
+        logging.error(f"Failed to import backup data: {e}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
 
 def _identity_payload() -> Dict[str, Any]:

@@ -1064,3 +1064,53 @@ export async function markAllScheduleNotificationsRead() {
   }
   return response.json();
 }
+
+/**
+ * Export backup JSON for selected sections
+ * @param {Object} options
+ * @param {boolean} options.settings
+ * @param {boolean} options.apis
+ * @param {boolean} options.tools
+ * @param {boolean} options.conversations
+ * @param {boolean} options.knowledge
+ * @returns {Promise<Object>} The backup JSON
+ */
+export async function exportBackup({ settings = false, apis = false, tools = false, conversations = false, knowledge = false }) {
+  const params = new URLSearchParams({
+    settings: String(settings),
+    apis: String(apis),
+    tools: String(tools),
+    conversations: String(conversations),
+    knowledge: String(knowledge),
+  });
+  const response = await fetch(`${API_BASE_URL}/settings/export-backup?${params}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to export backup");
+  }
+  return response.json();
+}
+
+/**
+ * Import backup JSON for selected sections
+ * @param {Array<string>} importSections
+ * @param {Object} data
+ * @returns {Promise<Object>} The import result
+ */
+export async function importBackup(importSections, data) {
+  const response = await fetch(`${API_BASE_URL}/settings/import-backup`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      import_sections: importSections,
+      data: data,
+    }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to import backup");
+  }
+  return response.json();
+}
+
