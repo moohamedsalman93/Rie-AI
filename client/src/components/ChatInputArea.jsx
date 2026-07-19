@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
-import { ModeToggle } from './ModeToggle';
+import { KnowledgeAttachmentChips } from "./KnowledgeAttachmentChips";
+import { KnowledgePickerModal } from "./KnowledgePickerModal";
 
 export function ChatInputArea({
   input,
@@ -20,6 +21,8 @@ export function ChatInputArea({
   setProjectRootChip,
   attachedClipboardText,
   setAttachedClipboardText,
+  attachedFiles = [],
+  onRemoveAttachedFile,
   onFileUpload,
   onCaptureScreen,
   onPickProjectPath,
@@ -29,17 +32,29 @@ export function ChatInputArea({
   textareaRef,
   isWindowDraggingFile,
   chatMode,
+  attachedKnowledge = [],
+  onAttachKnowledge,
+  onDetachKnowledge,
+  kioskOverlay = false,
+  kioskSelection = null,
+  onAddKioskSelection = null,
+  onClearKioskSelection = null,
 }) {
   const [dragCounter, setDragCounter] = useState(0);
+  const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
   const isDragging = dragCounter > 0;
-  const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot;
-  const attachImageFile = (file) => {
-    if (!file || !file.type?.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = (re) => {
-      setAttachedImage(re.target?.result || null);
-    };
-    reader.readAsDataURL(file);
+  const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
+
+  const attachFile = (file) => {
+    if (!file) return;
+    if (file.type?.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (re) => {
+        setAttachedImage(re.target?.result || null);
+      };
+      reader.readAsDataURL(file);
+    }
+    // Non-image files are handled by the parent via processFile
   };
 
   return (
@@ -63,11 +78,10 @@ export function ChatInputArea({
         e.stopPropagation();
         setDragCounter(0);
         if (isLoading) return;
-        const files = e.dataTransfer.files;
-        if (files && files.length > 0) {
-          const file = files[0];
-          if (file.type.startsWith("image/")) {
-            attachImageFile(file);
+        const droppedFiles = e.dataTransfer.files;
+        if (droppedFiles && droppedFiles.length > 0) {
+          for (const file of droppedFiles) {
+            attachFile(file);
           }
         }
       }}
@@ -87,7 +101,7 @@ export function ChatInputArea({
                 <polyline points="17 8 12 3 7 8" />
                 <line x1="12" y1="3" x2="12" y2="15" />
               </svg>
-              <span className="text-xs font-bold  tracking-wider">Drop image to attach</span>
+              <span className="text-xs font-bold  tracking-wider">Drop files to attach</span>
             </div>
           </motion.div>
         )}
@@ -196,6 +210,71 @@ export function ChatInputArea({
               </div>
             </motion.div>
           )}
+          {kioskOverlay && kioskSelection && (
+            <motion.div
+              key="kiosk-selection-chip"
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              className="relative self-start"
+            >
+              <button
+                onClick={onAddKioskSelection}
+                className="flex items-center gap-2 rounded-lg bg-pink-600/20 hover:bg-pink-600/40 border border-pink-500/30 px-2.5 py-1.5 backdrop-blur-md transition-colors text-left"
+                title="Click to insert selected text into input field"
+              >
+                <div className="flex h-5 w-5 items-center justify-center rounded bg-pink-500/20 text-pink-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </div>
+                <span className="text-xs font-semibold text-pink-300 max-w-[200px] truncate">
+                  Add Selection: "{kioskSelection}"
+                </span>
+              </button>
+              <button
+                onClick={onClearKioskSelection}
+                className="absolute -right-1.5 -top-1.5 rounded-full bg-neutral-800 border border-white/10 p-0.5 text-neutral-400 hover:text-white"
+                title="Dismiss"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </motion.div>
+          )}
+          {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
+            <motion.div
+              key={`file-${file.name}-${idx}`}
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              className="relative self-start"
+            >
+              <div className="flex items-center gap-2 rounded-lg bg-cyan-500/20 border border-cyan-500/30 px-2.5 py-1.5 backdrop-blur-md">
+                <div className="flex h-5 w-5 items-center justify-center rounded bg-cyan-500/20 text-cyan-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </div>
+                <span className="text-xs font-semibold text-cyan-400 max-w-[120px] truncate" title={file.name}>@{file.name}</span>
+                <span className="text-[10px] text-cyan-500/50">{file.size > 1024 ? `${(file.size / 1024).toFixed(0)}KB` : `${file.size}B`}</span>
+                <button
+                  onClick={() => onRemoveAttachedFile?.(idx)}
+                  className="ml-0.5 rounded-full p-0.5 text-cyan-400/60 hover:bg-cyan-500/20 hover:text-cyan-400 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            </motion.div>
+          ))}
+          <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} />
         </AnimatePresence>
 
         <div className="flex items-end gap-2">
@@ -235,7 +314,7 @@ export function ChatInputArea({
                       </svg>
                     </div>
                     <div className="flex flex-col items-start translate-y-[1px]">
-                      <span className="font-medium text-[13px]">Upload Image</span>
+                      <span className="font-medium text-[13px]">Upload File</span>
                     </div>
                   </button>
 
@@ -283,9 +362,35 @@ export function ChatInputArea({
                       <span className="font-medium text-[13px]">Read Clipboard</span>
                     </div>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAttachmentPopoverOpen(false);
+                      setIsKnowledgePickerOpen(true);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
+                  >
+                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                      </svg>
+                    </div>
+                    <div className="flex flex-col items-start translate-y-[1px]">
+                      <span className="font-medium text-[13px]">Custom Knowledge</span>
+                    </div>
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
+
+            <KnowledgePickerModal
+              isOpen={isKnowledgePickerOpen}
+              onClose={() => setIsKnowledgePickerOpen(false)}
+              onSelect={(pack) => onAttachKnowledge?.(pack)}
+              attachedIds={attachedKnowledge.map((k) => k.id)}
+              variant="popover"
+            />
           </div>
 
           {/* Text input container */}
@@ -294,7 +399,9 @@ export function ChatInputArea({
               ref={textareaRef}
               rows={1}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -309,7 +416,7 @@ export function ChatInputArea({
                     const file = item.getAsFile();
                     if (file) {
                       e.preventDefault();
-                      attachImageFile(file);
+                      attachFile(file);
                     }
                     break;
                   }
@@ -334,6 +441,7 @@ export function ChatInputArea({
             </AnimatePresence>
           </div>
           <button
+            id="send-btn"
             onClick={isLoading ? () => onCancelRequest() : onSend}
             disabled={!isLoading && !hasContent}
             className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 text-neutral-100 shadow-sm transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 ${isLoading ? "bg-red-500/20 hover:bg-red-500/40 text-red-400" : "bg-neutral-700 hover:bg-neutral-600"}`}

@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Users } from "lucide-react";
 import { ModeToggle } from "./ModeToggle";
 import { ScheduleNotificationsBell } from "./ScheduleNotificationsBell";
 import logo from "../assets/logo.png";
@@ -29,11 +29,13 @@ export function ChatHeader({
   onScheduleOpenChat = () => {},
   /** Floating mode: opens full schedule sheet from ⋮ menu */
   onOpenSchedule = null,
+  onToggleFriends = null,
+  provider,
 }) {
   return (
     <header
       data-tauri-drag-region
-      className="flex rounded-xl absolute w-[95%] left-1/2 -translate-x-1/2 top-1 border-b border-neutral-700/40 bg-neutral-800 cursor-move h-10 items-center justify-between gap-3 px-2 py-2.5 z-10"
+      className="flex rounded-xl absolute w-[95%] left-1/2 -translate-x-1/2 top-1 border-b border-neutral-700/40 bg-neutral-800 cursor-move h-10 items-center justify-between gap-3 px-2 py-2.5 z-40"
       onMouseDown={onDragStart}
     >
       <div className="flex items-center gap-2">
@@ -97,6 +99,7 @@ export function ChatHeader({
                   <span>System Terminal</span>
                 </button>
 
+
                 {windowMode === "floating" && typeof onOpenSchedule === "function" && (
                   <button
                     onClick={(e) => {
@@ -109,6 +112,20 @@ export function ChatHeader({
                   >
                     <CalendarClock className="h-3.5 w-3.5 shrink-0 text-neutral-300" />
                     <span>Schedule</span>
+                  </button>
+                )}
+                {windowMode === "floating" && typeof onToggleFriends === "function" && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleFriends();
+                      setIsMenuOpen(false);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-neutral-300 transition-colors hover:bg-neutral-700/50 hover:text-white"
+                  >
+                    <Users className="h-3.5 w-3.5 shrink-0 text-neutral-300" />
+                    <span>Friends</span>
                   </button>
                 )}
 
@@ -188,6 +205,7 @@ export function ChatHeader({
                     setChatMode={setChatMode} 
                     speedMode={speedMode} 
                     setSpeedMode={setSpeedMode} 
+                    provider={provider}
                   />
                 </div>
               </motion.div>

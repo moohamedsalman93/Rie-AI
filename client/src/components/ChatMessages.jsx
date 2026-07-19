@@ -1,8 +1,10 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Info, RotateCw } from 'lucide-react';
+import { GitBranch, Info, RotateCw } from 'lucide-react';
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ToolChip } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
+import { LinkPreview } from "./LinkPreview";
+import { KnowledgeChatBanner } from "./KnowledgeAttachmentChips";
 
 export function ChatMessages({
   messages,
@@ -15,9 +17,52 @@ export function ChatMessages({
   onActionDecision,
   onDeleteMessage,
   onSend,
+  onOpenInNewChat,
+  activeFriendMeta = null,
+  attachedKnowledge = [],
 }) {
+  const botReplyCount = messages.filter(
+    (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
+  ).length;
+  const toolTooltipPlacement = botReplyCount <= 2 ? "bottom" : "top";
+  const hasStreamingContent = messages.some((msg) => {
+    if (msg.from !== "bot" || msg.id !== streamingBotMessageId) return false;
+    const hasTextBlocks = (msg.blocks || []).some(
+      (block) => block.type === "text" && block.text && block.text.trim()
+    );
+    return hasTextBlocks || (msg.text && msg.text.trim());
+  });
+  const shouldShowThinkingShimmer = isLoading && !hasStreamingContent;
+
   return (
-    <main className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden bg-neutral-900/70 py-4 min-h-0">
+    <main
+      className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden py-4 min-h-0"
+      style={{
+        backgroundColor: `rgba(0, 0, 0, var(--floating-chat-opacity, 0.7))`
+      }}
+    >
+      {activeFriendMeta?.isFriendChat && (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+          <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
+          <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
+        </div>
+      )}
+      <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
+      {(!messages || messages.length === 0) && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.3 }}
+          className="flex-1 flex flex-col items-center justify-center text-center p-6 select-none pointer-events-none my-auto"
+        >
+          <h2 className="text-base font-bold text-white/90 mb-1.5 tracking-wide">
+            How can I help you today?
+          </h2>
+          <p className="text-xs text-neutral-400 max-w-[240px] leading-relaxed">
+            Ask questions, run terminal commands, or attach project context to get started.
+          </p>
+        </motion.div>
+      )}
       <AnimatePresence>
         {messages.map((m) => {
           // Skip empty bot messages that haven't started streaming blocks yet,
@@ -37,8 +82,20 @@ export function ChatMessages({
               className={`flex flex-col ${m.from === "user" ? "items-end" : "items-start"} w-full group`}
             >
               <div className={`flex items-end gap-2 min-w-0 max-w-[95%] ${m.from === 'user' ? 'justify-end' : ''}`}>
-                {m.from === 'user' && m.error && (
+                {m.from === 'user' && (
                   <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenInNewChat?.(m);
+                      }}
+                      className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors"
+                      title="Branch to new chat with history"
+                    >
+                      <GitBranch size={14} />
+                    </button>
+                    {m.error && (
+                      <>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -54,17 +111,22 @@ export function ChatMessages({
                       <div className="p-1.5 text-red-500 cursor-help">
                         <Info size={14} />
                       </div>
-                      <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm">
+                      <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
                         {m.errorMessage}
                       </div>
                     </div>
+                      </>
+                    )}
                   </div>
                 )}
-                <div className={`min-w-0 max-w-full break-words overflow-x-auto rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>
+                <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>
                 {m.image_url && (
                   <div className="mb-2 overflow-hidden rounded-lg">
                     <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
                   </div>
+                )}
+                {m.url_previews?.length > 0 && (
+                  <LinkPreview previews={m.url_previews} />
                 )}
                 {m.clipboard && (
                   <div className="mb-2 rounded-lg bg-blue-500/10 border border-blue-500/20 p-2.5">
@@ -92,7 +154,11 @@ export function ChatMessages({
                             setTypesWrite={setTypesWrite}
                           />
                         ) : (
-                          <ToolChip name={block.name} content={block.text} />
+                          <ToolChip
+                            name={block.name}
+                            content={block.text}
+                            tooltipPlacement={toolTooltipPlacement}
+                          />
                         )}
                       </div>
                     ))}
@@ -115,6 +181,22 @@ export function ChatMessages({
           );
         })}
       </AnimatePresence>
+      {shouldShowThinkingShimmer && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex flex-col items-start w-full"
+        >
+          <div className="w-full max-w-[95%] rounded-xl border border-neutral-700/60 bg-neutral-800 px-3.5 py-2.5">
+            <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
+            <div className="space-y-1.5">
+              <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+              <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+            </div>
+          </div>
+          <span className="mt-1 text-[10px] font-medium text-neutral-500">Assistant is thinking...</span>
+        </motion.div>
+      )}
       <div ref={messagesEndRef} />
     </main>
   );

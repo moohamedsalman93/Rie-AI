@@ -5,10 +5,14 @@ import asyncio
 import logging
 import os
 import re
-from itertools import cycle
+import threading
+from collections import OrderedDict
+from datetime import datetime, timezone
 from typing import Any, List, Optional, Iterator, AsyncIterator
 from collections.abc import Generator
 
+import httpx
+from openai import APIConnectionError
 
 from langchain.agents import create_agent
 from langchain_groq import ChatGroq
@@ -20,7 +24,16 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.outputs import ChatResult, ChatGenerationChunk
-from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware, HumanInTheLoopMiddleware
+from langchain.agents.middleware import (
+    TodoListMiddleware,
+    SummarizationMiddleware,
+    HumanInTheLoopMiddleware,
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
+from langchain.tools import tool, ToolRuntime
+from typing import Callable, Awaitable
 from deepagents.middleware.subagents import SubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
@@ -39,27 +52,121 @@ from app.ltm_tools import LTM_TOOLS, Context
 from app.custom_tools import get_external_tools
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 from app.scheduler_tools import schedule_chat_task_tool
+from app.remote_friend_tools import remote_friend_ask_tool
 from app.runtime_context import set_agent_context, reset_agent_context
 
 
-def _client_clock_system_content(
+# ---------------------------------------------------------------------------
+# Thread-safe API key rotator with usage tracking
+# ---------------------------------------------------------------------------
+
+_logger = logging.getLogger(__name__)
+
+
+class KeyRotator:
+    """Thread-safe round-robin API key rotator with per-key usage tracking."""
+
+    def __init__(self, keys: List[str], provider: str) -> None:
+        if not keys:
+            raise ValueError(f"KeyRotator({provider}): at least one key is required")
+        self._keys = list(keys)
+        self._provider = provider
+        self._index = 0
+        self._lock = threading.Lock()
+        # Per-key stats: {index: {count, errors, last_used}}
+        self._usage: dict[int, dict] = {
+            i: {"count": 0, "last_used": None, "errors": 0}
+            for i in range(len(keys))
+        }
+
+    @staticmethod
+    def _mask_key(key: str) -> str:
+        """Mask an API key for safe logging, e.g. 'gsk_abc...xyzQ'."""
+        if len(key) <= 8:
+            return key[:2] + "..." + key[-2:]
+        return key[:4] + "..." + key[-4:]
+
+    @property
+    def total_keys(self) -> int:
+        return len(self._keys)
+
+    def next_key(self) -> tuple[str, int]:
+        """Return (key, key_index) in a thread-safe round-robin."""
+        with self._lock:
+            idx = self._index
+            key = self._keys[idx]
+            self._index = (idx + 1) % len(self._keys)
+            self._usage[idx]["count"] += 1
+            self._usage[idx]["last_used"] = datetime.now(timezone.utc).isoformat()
+        _logger.debug(
+            "[KeyRotator/%s] Using key #%d/%d (%s) — total calls: %d",
+            self._provider,
+            idx + 1,
+            len(self._keys),
+            self._mask_key(key),
+            self._usage[idx]["count"],
+        )
+        return key, idx
+
+    def record_error(self, key_index: int) -> None:
+        """Increment the error count for a specific key index."""
+        with self._lock:
+            if key_index in self._usage:
+                self._usage[key_index]["errors"] += 1
+
+    def stats(self) -> list[dict]:
+        """Return per-key stats with masked key identifiers."""
+        with self._lock:
+            result = []
+            for i, key in enumerate(self._keys):
+                entry = self._usage[i]
+                result.append({
+                    "index": i,
+                    "masked": self._mask_key(key),
+                    "calls": entry["count"],
+                    "errors": entry["errors"],
+                    "last_used": entry["last_used"],
+                })
+            return result
+
+    def __repr__(self) -> str:
+        return f"KeyRotator(provider={self._provider!r}, keys={self.total_keys})"
+
+
+def _client_device_system_content(
     client_timezone: Optional[str],
     client_local_datetime_iso: Optional[str],
+    client_latitude: Optional[float] = None,
+    client_longitude: Optional[float] = None,
+    client_location_accuracy_m: Optional[float] = None,
 ) -> Optional[str]:
-    """Ephemeral system text so the model uses the user's real local clock (scheduling, relative dates)."""
-    if not client_timezone and not client_local_datetime_iso:
-        return None
-    parts = []
+    """Ephemeral system text: local clock and/or GPS for scheduling and location-aware answers."""
+    parts: list[str] = []
     if client_local_datetime_iso:
         parts.append(
             f"User device local date and time (authoritative 'now'): {client_local_datetime_iso}"
         )
     if client_timezone:
         parts.append(f"User device IANA timezone: {client_timezone}")
-    parts.append(
-        "Use this when interpreting relative dates (tomorrow, next Monday, etc.) and when calling "
-        "schedule_chat_task; pass run_at_iso in ISO 8601 consistent with this timezone."
-    )
+    if client_timezone or client_local_datetime_iso:
+        parts.append(
+            "Use this when interpreting relative dates (tomorrow, next Monday, etc.) and when calling "
+            "schedule_chat_task; pass run_at_iso in ISO 8601 consistent with this timezone."
+        )
+    if client_latitude is not None and client_longitude is not None:
+        loc = (
+            f"User approximate geographic position (WGS84): "
+            f"latitude {client_latitude:.6f}, longitude {client_longitude:.6f}"
+        )
+        if client_location_accuracy_m is not None:
+            loc += f" (accuracy ~{int(client_location_accuracy_m)} m)"
+        parts.append(loc)
+        parts.append(
+            "Use for nearby places, local weather, travel context, and 'where am I' questions. "
+            "Do not share exact coordinates with other people unless the user explicitly asks."
+        )
+    if not parts:
+        return None
     return "\n".join(parts)
 
 
@@ -67,17 +174,21 @@ def _client_clock_system_content(
 SYSTEM_PROMPT = """
 You are Rie, an autonomous AI assistant specialized in technical tasks.
 
-Priorities: accuracy first, efficiency second.
+Priorities: check and use available skills first, accuracy second, efficiency third.
 
 Rules:
+- Prioritize using specialized skills/instructions. Before starting any task, check the "Available Skills" section. If any available skill matches or relates to the task, you MUST first call the `load_skill` tool to retrieve and follow its instructions.
 - Prefer verified information and reasoning over assumptions.
-- Use tools when needed.
-- If unsure or information is unavailable, say so clearly.
+- Select and invoke the single most specific and efficient tool for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
+- When executing terminal commands on Windows, you MUST write correct and native Windows/PowerShell commands. Never use Linux commands (e.g. do not use `cat`, `touch`, `rm`, `cp`, `mv`, or `/` slash path separators; instead use `Get-Content`/`type`, `New-Item`/`echo`, `Remove-Item`, `Copy-Item`, `Move-Item`, and use backslashes `\\` for file paths).
+- NEVER wrap PowerShell commands inside `powershell -Command "..."` or `powershell -NoProfile -Command "..."`. You are already inside a PowerShell terminal. Wrapping creates nested-quote parser errors (`TerminatorExpectedAtEndOfString`) because backslash (`\\`) is NOT a valid PowerShell escape character. Always run commands directly as bare statements. If a command is complex (hashtables, nested quotes, loops), write it to a temp .ps1 script file first, then execute it with `& "$env:TEMP\\script.ps1"` — this completely avoids quoting issues.
 - Use the coding_specialist sub agent for any code-related tasks and do not use the your tool for coding tasks, like codebase analysis, code review, etc.
 - Reminders and timed tasks inside Rie (anything that should appear in the app's "Scheduled" sidebar or notify through Rie): you MUST call the tool schedule_chat_task with run_at_iso in ISO 8601 and the correct intent. Do not use run_terminal_command, schtasks, PowerShell, or Windows Task Scheduler for user reminders — those will NOT register in Rie and the user will see "Nothing scheduled".
 - Only tell the user you scheduled or set a reminder after schedule_chat_task returns successfully (or the tool output confirms it). Never invent a fake task name or claim a PowerShell popup was created for this.
 - When a system message states the user's device local date and time, treat it as the true current moment for that conversation (do not assume a different year or day).
-- Only use `use_vision=True` when standard textual state info is insufficient, for complex UI interactions, or when troubleshooting problems. 
+- Only use `use_vision=True` when standard textual state info is insufficient, for complex UI interactions, or when troubleshooting problems.
+- When the user asks for an image, photo, picture, or wallpaper: call internet_search with include_images=True (or rely on image intent in the query), then show results inline using markdown images `![short description](direct_image_url)` from the search `images` field. Do not reply with only a table of website links.
+- When running a script file (.py, .sh, .bash), use run_terminal_command with the appropriate interpreter: Python via `python "path\\to\\script.py"` (or `py -3 "..."` if python is unavailable); shell scripts via `bash "path/to/script.sh"` (Git Bash or WSL on Windows). Prefer Python or Bash for scripts; use raw PowerShell only for one-off Windows tasks (registry, services, Get-*, etc.).
 
 Style:
 - Be friendly in general interactions; use emojis when appropriate 🙂
@@ -92,18 +203,17 @@ class RotatingChatGroq(BaseChatModel):
     api_keys: List[str]
     model_name: str
     temperature: float
-    _key_cycle: Any = None
+    _rotator: Any = None
 
     def __init__(self, api_keys: List[str], model: str, temperature: float = 0, **kwargs: Any):
-        # We need to call the Pydantic init properly
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, **kwargs)
-        # Store cycle in a private attribute using object.__setattr__ to bypass Pydantic validation if needed
-        object.__setattr__(self, '_key_cycle', cycle(api_keys))
+        object.__setattr__(self, '_rotator', KeyRotator(api_keys, "groq"))
 
     def _get_model(self) -> ChatGroq:
-        """Get a ChatGroq instance with the next API key in the cycle"""
+        """Get a ChatGroq instance with the next API key in the rotation"""
+        key, _idx = self._rotator.next_key()
         return ChatGroq(
-            api_key=next(self._key_cycle),
+            api_key=key,
             model=self.model_name,
             temperature=self.temperature
         )
@@ -119,15 +229,12 @@ class RotatingChatGroq(BaseChatModel):
         bound = dummy.bind_tools(tools, **kwargs)
         
         # Extract formatted tools and tool_choice from the RunnableBinding
-        # We use getattr to safely access bound.kwargs if available
         new_kwargs = getattr(bound, "kwargs", {})
         
         # Groq API is picky about tool_choice: it only allows "none", "auto", or "required"
         # LangChain often converts specific tool names to a dict like {"type": "function", ...}
         # which Groq currently rejects with a 400 Bad Request error.
         if "tool_choice" in new_kwargs and isinstance(new_kwargs["tool_choice"], dict):
-            # If a specific tool was requested (the dict case), we fallback to "required"
-            # which is the closest allowed string value for Groq.
             new_kwargs["tool_choice"] = "required"
 
         return self.bind(**new_kwargs)
@@ -180,16 +287,17 @@ class RotatingChatOpenAI(BaseChatModel):
     model_name: str
     base_url: str
     temperature: float
-    _key_cycle: Any = None
+    _rotator: Any = None
 
     def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: float = 0.7, **kwargs: Any):
         super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, **kwargs)
-        object.__setattr__(self, '_key_cycle', cycle(api_keys))
+        object.__setattr__(self, '_rotator', KeyRotator(api_keys, "openai"))
 
     def _get_model(self) -> ChatOpenAI:
-        """Get a ChatOpenAI instance with the next API key in the cycle"""
+        """Get a ChatOpenAI instance with the next API key in the rotation"""
+        key, _idx = self._rotator.next_key()
         return ChatOpenAI(
-            openai_api_key=next(self._key_cycle),
+            openai_api_key=key,
             model_name=self.model_name,
             base_url=self.base_url,
             temperature=self.temperature
@@ -197,7 +305,6 @@ class RotatingChatOpenAI(BaseChatModel):
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
-        # Create a dummy ChatOpenAI to handle tool formatting correctly
         dummy = ChatOpenAI(
             openai_api_key=self.api_keys[0],
             model_name=self.model_name,
@@ -205,10 +312,7 @@ class RotatingChatOpenAI(BaseChatModel):
             temperature=self.temperature
         )
         bound = dummy.bind_tools(tools, **kwargs)
-        
-        # Extract formatted tools and tool_choice from the RunnableBinding
         new_kwargs = getattr(bound, "kwargs", {})
-        
         return self.bind(**new_kwargs)
 
     def _generate(
@@ -253,6 +357,282 @@ class RotatingChatOpenAI(BaseChatModel):
         return "rotating-openai"
 
 
+class RotatingChatGoogleGenerativeAI(BaseChatModel):
+    """A wrapper for ChatGoogleGenerativeAI that rotates through multiple API keys to bypass rate limits."""
+    api_keys: List[str]
+    model_name: str
+    temperature: float
+    _rotator: Any = None
+
+    def __init__(self, api_keys: List[str], model: str, temperature: float = 0, **kwargs: Any):
+        super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, **kwargs)
+        object.__setattr__(self, '_rotator', KeyRotator(api_keys, "gemini"))
+
+    def _get_model(self) -> ChatGoogleGenerativeAI:
+        """Get a ChatGoogleGenerativeAI instance with the next API key in the rotation"""
+        key, _idx = self._rotator.next_key()
+        return ChatGoogleGenerativeAI(
+            google_api_key=key,
+            model=self.model_name,
+            temperature=self.temperature
+        )
+
+    def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
+        """Required for agents that use tools"""
+        dummy = ChatGoogleGenerativeAI(
+            google_api_key=self.api_keys[0],
+            model=self.model_name,
+            temperature=self.temperature
+        )
+        bound = dummy.bind_tools(tools, **kwargs)
+        new_kwargs = getattr(bound, "kwargs", {})
+        return self.bind(**new_kwargs)
+
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._get_model()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    async def _agenerate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return await self._get_model()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    def _stream(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        yield from self._get_model()._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    async def _astream(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        async for chunk in self._get_model()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
+            yield chunk
+
+    @property
+    def _llm_type(self) -> str:
+        return "rotating-google-generative-ai"
+
+
+class FallbackChatModel(BaseChatModel):
+    """A wrapper chat model that falls back to a secondary model if the primary model fails."""
+    _primary_model: Any = None
+    _fallback_model: Any = None
+
+    def __init__(self, primary_model: Any, fallback_model: Any, **kwargs: Any):
+        super().__init__(**kwargs)
+        object.__setattr__(self, '_primary_model', primary_model)
+        object.__setattr__(self, '_fallback_model', fallback_model)
+
+    def _generate(self, *args: Any, **kwargs: Any) -> Any:
+        if hasattr(self._primary_model, "_generate"):
+            return self._primary_model._generate(*args, **kwargs)
+        return self._primary_model.invoke(*args, **kwargs)
+
+    @property
+    def _llm_type(self) -> str:
+        return "fallback-chat-model"
+
+    def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
+        """Bind tools to both primary and fallback models"""
+        bound_primary = self._primary_model.bind_tools(tools, **kwargs) if hasattr(self._primary_model, "bind_tools") else self._primary_model
+        bound_fallback = self._fallback_model.bind_tools(tools, **kwargs) if hasattr(self._fallback_model, "bind_tools") else self._fallback_model
+        return FallbackChatModel(
+            primary_model=bound_primary,
+            fallback_model=bound_fallback
+        )
+
+    def invoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
+        try:
+            return self._primary_model.invoke(input, config=config, **kwargs)
+        except Exception as e:
+            _logger.warning(f"Primary model failed: {e}. Falling back to fallback model.")
+            return self._fallback_model.invoke(input, config=config, **kwargs)
+
+    async def ainvoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
+        try:
+            return await self._primary_model.ainvoke(input, config=config, **kwargs)
+        except Exception as e:
+            _logger.warning(f"Primary model failed: {e}. Falling back to fallback model.")
+            return await self._fallback_model.ainvoke(input, config=config, **kwargs)
+
+    def stream(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Iterator[Any]:
+        try:
+            iterator = self._primary_model.stream(input, config=config, **kwargs)
+            first_chunk = next(iterator)
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed to start: {e}. Falling back to fallback model.")
+            yield from self._fallback_model.stream(input, config=config, **kwargs)
+            return
+
+        yield first_chunk
+        try:
+            for chunk in iterator:
+                yield chunk
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed mid-stream: {e}. Cannot fall back mid-stream.")
+            raise e
+
+    async def astream(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> AsyncIterator[Any]:
+        try:
+            iterator = self._primary_model.astream(input, config=config, **kwargs)
+            first_chunk = await iterator.__anext__()
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed to start: {e}. Falling back to fallback model.")
+            async for chunk in self._fallback_model.astream(input, config=config, **kwargs):
+                yield chunk
+            return
+
+        yield first_chunk
+        try:
+            async for chunk in iterator:
+                yield chunk
+        except Exception as e:
+            _logger.warning(f"Primary model stream failed mid-stream: {e}. Cannot fall back mid-stream.")
+            raise e
+
+
+@tool
+def load_skill(skill_name: str, runtime: ToolRuntime = None) -> str:
+    """Load the full content of a skill into the agent's context.
+    Use this when you need detailed instructions or guidelines for a specific domain/task.
+    
+    Args:
+        skill_name: The exact name of the skill to load.
+    """
+    try:
+        from app.database import list_skills
+        normalized_name = skill_name.strip().lower()
+        db_skills = list_skills()
+        for row in db_skills:
+            if row.get("name", "").strip().lower() == normalized_name or row.get("id", "").strip().lower() == normalized_name:
+                content = (row.get("content") or "").strip()
+                return f"Loaded Skill: {row.get('name')}\n\n{content}"
+    except Exception as exc:
+        return f"Error loading skill '{skill_name}': {exc}"
+        
+    return f"Skill '{skill_name}' not found."
+
+
+class SkillMiddleware(AgentMiddleware):
+    """Middleware that injects available database skill descriptions into the system prompt."""
+    tools = [load_skill]
+
+    def _build_skills_prompt(self) -> str:
+        skills_list = []
+        try:
+            from app.database import list_skills
+            from langgraph.config import get_config
+            
+            config = None
+            try:
+                config = get_config()
+            except Exception:
+                pass
+                
+            thread_id = None
+            skill_ids_from_config = []
+            if config and "configurable" in config:
+                thread_id = config["configurable"].get("thread_id")
+                skill_ids_from_config = config["configurable"].get("skill_ids", [])
+
+            # Collect active/available database skills:
+            db_skills = list_skills()
+            for row in db_skills:
+                # check if globally enabled or attached via skill_ids from config
+                is_active = row.get("enabled") or row.get("id") in skill_ids_from_config
+                # check if attached to this thread
+                if not is_active and thread_id:
+                    from app.database import get_db_path
+                    import sqlite3
+                    try:
+                        db_path = get_db_path()
+                        conn = sqlite3.connect(db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT COUNT(*) FROM thread_skills WHERE thread_id = ? AND skill_id = ?", (thread_id, row.get("id")))
+                        if cursor.fetchone()[0] > 0:
+                            is_active = True
+                        conn.close()
+                    except Exception:
+                        pass
+                
+                if is_active:
+                    name = row.get("name", "Skill")
+                    desc = row.get("description", "").strip() or "Database-defined skill instructions."
+                    skills_list.append(f"- **{name}**: {desc}")
+
+        except Exception as exc:
+            pass
+            
+        return "\n".join(skills_list)
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        skills_prompt = self._build_skills_prompt()
+        if skills_prompt:
+            skills_addendum = (
+                f"\n\n## Available Skills\n"
+                f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
+                f"PRIORITY: If a user task relates to any of these skills, you MUST prioritize loading and adhering to them. "
+                f"Call the load_skill tool with the exact skill name to load its full content into your context BEFORE proceeding with the task.\n\n"
+                f"{skills_prompt}\n\n"
+                f"Do not assume the content of a skill. Always load it first if you need it. Treating these skills as priority is required."
+            )
+
+            new_content = list(request.system_message.content_blocks) + [
+                {"type": "text", "text": skills_addendum}
+            ]
+            new_system_message = SystemMessage(content=new_content)
+            modified_request = request.override(system_message=new_system_message)
+            return handler(modified_request)
+
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        skills_prompt = self._build_skills_prompt()
+        if skills_prompt:
+            skills_addendum = (
+                f"\n\n## Available Skills\n"
+                f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
+                f"PRIORITY: If a user task relates to any of these skills, you MUST prioritize loading and adhering to them. "
+                f"Call the load_skill tool with the exact skill name to load its full content into your context BEFORE proceeding with the task.\n\n"
+                f"{skills_prompt}\n\n"
+                f"Do not assume the content of a skill. Always load it first if you need it. Treating these skills as priority is required."
+            )
+
+            new_content = list(request.system_message.content_blocks) + [
+                {"type": "text", "text": skills_addendum}
+            ]
+            new_system_message = SystemMessage(content=new_content)
+            modified_request = request.override(system_message=new_system_message)
+            return await handler(modified_request)
+
+        return await handler(request)
+
+
 class AgentManager:
     """Manages the Deep Agent instance"""
     
@@ -262,11 +642,352 @@ class AgentManager:
         self._current_stream: Optional[Generator] = None
         self._checkpointer: Optional[AsyncSqliteSaver] = None
         self._checkpointer_cm : Optional[Any] = None
+        self._init_lock = asyncio.Lock()
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._store: Optional[Any] = None
         self._current_chat_mode: Optional[str] = None
         self._current_speed_mode: Optional[str] = None
+        self._peer_inbound_cache: "OrderedDict[tuple[Any, ...], Any]" = OrderedDict()
+        self._peer_cache_max: int = 16
+
+    async def _ensure_checkpoint_and_store(self) -> None:
+        if not self._checkpointer:
+            import aiosqlite
+            if not hasattr(aiosqlite.Connection, "is_alive"):
+                def is_alive(self):
+                    return True
+                aiosqlite.Connection.is_alive = is_alive
+            self._checkpointer_cm = AsyncSqliteSaver.from_conn_string(get_checkpoint_db_path())
+            self._checkpointer = await self._checkpointer_cm.__aenter__()
+        if not self._store:
+            self._store = await memory_store.get_store()
+
+    async def _async_load_all_tools_map(self) -> dict[str, Any]:
+        """Runtime tool registry (baseline + MCP + external), for peer inbound policy."""
+        all_tools_map: dict[str, Any] = {
+            "internet_search": internet_search,
+            "schedule_chat_task": schedule_chat_task_tool,
+            "remote_friend_ask": remote_friend_ask_tool,
+            **WINDOWS_TOOLS,
+            **{t.name: t for t in LTM_TOOLS},
+            **{t.name: t for t in MCP_REGISTRY_TOOLS},
+        }
+        try:
+            loaded_mcp_tools = await mcp_manager.refresh_tools()
+            if loaded_mcp_tools:
+                print(f"DEBUG: Peer tool map integrated {len(loaded_mcp_tools)} MCP tools")
+        except Exception as e:
+            print(f"ERROR: Failed to load MCP tools for peer map: {e}")
+            loaded_mcp_tools = []
+        try:
+            loaded_external_tools = get_external_tools(settings.EXTERNAL_APIS) or []
+        except Exception as e:
+            print(f"ERROR: Failed to load external tools for peer map: {e}")
+            loaded_external_tools = []
+        for tool in loaded_mcp_tools + loaded_external_tools:
+            tool_name = getattr(tool, "name", None)
+            if tool_name:
+                all_tools_map[tool_name] = tool
+        return all_tools_map
+
+    def _resolve_provider(self) -> str:
+        """Resolve LLM provider from settings, defaulting to Rie."""
+        provider = settings.LLM_PROVIDER
+        if not provider:
+            provider = "rie"
+            if settings.GROQ_API_KEY:
+                provider = "groq"
+            elif settings.VERTEX_PROJECT:
+                provider = "vertex"
+            elif settings.GOOGLE_API_KEY:
+                provider = "gemini"
+            elif settings.OPENAI_API_KEY:
+                provider = "openai"
+        return provider
+
+    def _create_llm_for_peer(self) -> Optional[BaseChatModel]:
+        """Instantiate LLM for peer sessions (does not mutate self._llm)."""
+        provider = self._resolve_provider()
+
+        if provider == "vertex":
+            return self._create_vertex_llm()
+        if provider == "gemini":
+            return self._create_gemini_llm()
+        if provider == "groq":
+            return self._create_llm()
+        if provider == "openai":
+            return self._create_openai_llm()
+        if provider == "rie":
+            return self._create_rie_llm()
+        if provider == "ollama":
+            return self._create_ollama_llm()
+        print("ERROR: No valid LLM provider selected or configured for peer inbound.")
+        return None
+
+    def _peer_system_prompt(self, receive_profile: str) -> str:
+        eff = "chat" if receive_profile == "chat" else "agent"
+        mode_instructions = ""
+        if eff == "chat":
+            mode_instructions += (
+                "\n- CURRENT MODE: Chat Mode. You are acting as a conversational assistant. "
+                "Keep answers concise. Do not attempt complex multi-step technical workflows unless requested."
+            )
+        else:
+            mode_instructions += (
+                "\n- CURRENT MODE: Agent Mode. You are acting as an autonomous technical agent. "
+                "Use your tools extensively to accomplish the user's goal."
+            )
+        mode_instructions += "\n- SPEED: Flash. Provide immediate answers. Do not output internal thinking or plans."
+        planner_graph = settings.SUBAGENT_PLANNER_GRAPH or {}
+        planner_main_instruction = str(planner_graph.get("main_instruction", "")).strip()
+        planner_main_section = ""
+        if planner_main_instruction:
+            planner_main_section = (
+                "\n\n[Planner Main Instruction]\n"
+                f"{planner_main_instruction}\n"
+                "[End Planner Main Instruction]"
+            )
+        peer_note = (
+            "\n\n[Inbound linked device] You are replying to a request from another paired Rie install. "
+            "Use only the tools available in this session."
+        )
+        return SYSTEM_PROMPT + mode_instructions + planner_main_section + peer_note
+
+    def _lru_peer_put(self, key: tuple[Any, ...], agent: Any) -> None:
+        if key in self._peer_inbound_cache:
+            del self._peer_inbound_cache[key]
+        self._peer_inbound_cache[key] = agent
+        while len(self._peer_inbound_cache) > self._peer_cache_max:
+            self._peer_inbound_cache.popitem(last=False)
+
+    async def _get_or_create_peer_inbound_agent(
+        self,
+        receive_profile: str,
+        effective_tool_ids: List[str],
+        tools_to_use: List[Any],
+    ) -> Any:
+        cache_key = (receive_profile, tuple(effective_tool_ids))
+        if cache_key in self._peer_inbound_cache:
+            self._peer_inbound_cache.move_to_end(cache_key)
+            return self._peer_inbound_cache[cache_key]
+
+        llm = self._create_llm_for_peer()
+        if not llm:
+            raise RuntimeError("Agent not configured. Please check your API keys and try again.")
+
+        system_prompt = self._peer_system_prompt(receive_profile)
+        middleware_stack = [
+            SummarizationMiddleware(
+                model=llm,
+                trigger=("tokens", 8000),
+                keep=("messages", 20),
+                summary_prompt="""Summarize the conversation history. 
+                            1. EXPLICITLY preserve all file paths (e.g., /src/main.py).
+                            2. EXPLICITLY preserve class names and function names.
+                            3. Maintain a bulleted list of 'Tasks Completed' and 'Remaining Work'.
+                            4. Do not include actual code blocks in the summary, just describe what was modified.
+                            
+                            Messages to summarize:
+                            {messages}""",
+            )
+        ]
+        peer_agent = create_agent(
+            model=llm,
+            tools=tools_to_use,
+            system_prompt=system_prompt,
+            debug=True,
+            checkpointer=self._checkpointer,
+            store=self._store,
+            context_schema=Context,
+            middleware=middleware_stack,
+        )
+        self._lru_peer_put(cache_key, peer_agent)
+        return peer_agent
+
+    async def invoke_peer_inbound(
+        self,
+        *,
+        messages: Optional[list] = None,
+        thread_id: Optional[str] = None,
+        receive_profile: str = "chat",
+        effective_tool_ids: Optional[List[str]] = None,
+        memory_user_id: str = "default_user",
+        client_timezone: Optional[str] = None,
+        client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
+    ) -> dict:
+        """Run an inbound peer /connectivity/peer/receive turn with a cached per-policy agent."""
+        await self._ensure_checkpoint_and_store()
+        ids = effective_tool_ids or []
+        tools_map = await self._async_load_all_tools_map()
+        tools_to_use: List[Any] = []
+        for tid in ids:
+            t = tools_map.get(tid)
+            if t is not None:
+                tools_to_use.append(t)
+        if not tools_to_use:
+            raise RuntimeError(
+                "Peer policy allows no usable tools. Adjust Connectivity access for this friend."
+            )
+
+        peer_agent = await self._get_or_create_peer_inbound_agent(
+            receive_profile, ids, tools_to_use
+        )
+
+        config: dict = {"configurable": {}}
+        if thread_id:
+            config["configurable"]["thread_id"] = thread_id
+
+        context = Context(user_id=memory_user_id)
+
+        input_data: Any = None
+        if messages is not None:
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                input_data = {"messages": [{"role": "system", "content": device_ctx}, *messages]}
+            else:
+                input_data = {"messages": messages}
+
+        eff_chat = "chat" if receive_profile == "chat" else "agent"
+        tokens = set_agent_context(
+            thread_id,
+            eff_chat,
+            "flash",
+            friend_target_id=None,
+            friend_target_name=None,
+        )
+        try:
+            return await peer_agent.ainvoke(input_data, config=config, context=context)
+        finally:
+            reset_agent_context(tokens)
+
+    async def stream_peer_inbound(
+        self,
+        *,
+        messages: Optional[list] = None,
+        thread_id: Optional[str] = None,
+        receive_profile: str = "chat",
+        effective_tool_ids: Optional[List[str]] = None,
+        memory_user_id: str = "default_user",
+        client_timezone: Optional[str] = None,
+        client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
+    ) -> AsyncIterator[dict]:
+        """Stream an inbound peer turn with policy-scoped tools."""
+        await self._ensure_checkpoint_and_store()
+        ids = effective_tool_ids or []
+        tools_map = await self._async_load_all_tools_map()
+        tools_to_use: List[Any] = []
+        for tid in ids:
+            t = tools_map.get(tid)
+            if t is not None:
+                tools_to_use.append(t)
+        if not tools_to_use:
+            raise RuntimeError(
+                "Peer policy allows no usable tools. Adjust Connectivity access for this friend."
+            )
+
+        peer_agent = await self._get_or_create_peer_inbound_agent(
+            receive_profile, ids, tools_to_use
+        )
+
+        config = {"configurable": {}}
+        if thread_id:
+            config["configurable"]["thread_id"] = thread_id
+
+        input_data: Any = None
+        if messages is not None:
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                input_data = {"messages": [{"role": "system", "content": device_ctx}, *messages]}
+            else:
+                input_data = {"messages": messages}
+
+        context = Context(user_id=memory_user_id)
+        stream_modes = ["updates", "messages"]
+        stream_gen = peer_agent.astream(
+            input_data,
+            config=config,
+            context=context,
+            stream_mode=stream_modes,
+        )
+
+        logger = logging.getLogger(__name__)
+        current_task = asyncio.current_task()
+        if thread_id and current_task:
+            self._active_tasks[thread_id] = current_task
+
+        eff_chat = "chat" if receive_profile == "chat" else "agent"
+        tokens = set_agent_context(
+            thread_id,
+            eff_chat,
+            "flash",
+            friend_target_id=None,
+            friend_target_name=None,
+        )
+        try:
+            async for chunk in stream_gen:
+                if isinstance(chunk, tuple):
+                    if len(chunk) == 3:
+                        _stream_ns, mode, payload = chunk
+                    elif len(chunk) == 2:
+                        mode, payload = chunk
+                    else:
+                        continue
+
+                    if mode == "updates":
+                        if isinstance(payload, dict):
+                            yield payload
+                    elif mode == "messages":
+                        yield {"__lg_messages__": payload}
+                    continue
+
+                if isinstance(chunk, dict):
+                    yield chunk
+        except asyncio.CancelledError:
+            logger.info("Peer inbound stream cancelled for thread_id=%s", thread_id)
+            raise
+        except APIConnectionError as e:
+            raise RuntimeError("upstream_connection_error") from e
+        except httpx.ConnectError as e:
+            raise RuntimeError("upstream_connection_error") from e
+        finally:
+            if thread_id in self._active_tasks:
+                del self._active_tasks[thread_id]
+            reset_agent_context(tokens)
     
+    def _create_llm_by_provider(self, provider: str) -> Optional[BaseChatModel]:
+        """Create an LLM instance by provider name."""
+        if provider == "vertex":
+            return self._create_vertex_llm()
+        elif provider == "gemini":
+            return self._create_gemini_llm()
+        elif provider == "groq":
+            return self._create_llm()
+        elif provider == "openai":
+            return self._create_openai_llm()
+        elif provider == "rie":
+            return self._create_rie_llm()
+        elif provider == "ollama":
+            return self._create_ollama_llm()
+        return None
+
     def _create_llm(self) -> Optional[BaseChatModel]:
         """Create and return a Groq LLM instance (potentially rotating)"""
         keys = settings.GROQ_API_KEYS
@@ -297,27 +1018,33 @@ class AgentManager:
             traceback.print_exc()
             return None
 
-    def _create_gemini_llm(self) -> Optional[ChatGoogleGenerativeAI]:
+    def _create_gemini_llm(self) -> Optional[BaseChatModel]:
         """Create and return a direct Gemini LLM instance (Generative AI API)"""
-        if not settings.GOOGLE_API_KEY:
+        keys = settings.GOOGLE_API_KEYS
+        if not keys:
             print("ERROR: GOOGLE_API_KEY is not set")
             return None
 
-        # Ensure the API key is in the environment
-        import os
-
-        if "GOOGLE_API_KEY" not in os.environ:
-            os.environ["GOOGLE_API_KEY"] = settings.GOOGLE_API_KEY
-
         try:
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-1.5-pro",
-                temperature=0,
-            )
-            print("DEBUG: Gemini LLM (Generative AI API) created successfully")
+            if len(keys) > 1:
+                print(f"DEBUG: Creating RotatingChatGoogleGenerativeAI with {len(keys)} keys")
+                llm = RotatingChatGoogleGenerativeAI(
+                    api_keys=keys,
+                    model=settings.GEMINI_MODEL,
+                    temperature=0,
+                )
+            else:
+                llm = ChatGoogleGenerativeAI(
+                    google_api_key=keys[0],
+                    model=settings.GEMINI_MODEL,
+                    temperature=0,
+                )
+            print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL}")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Gemini LLM: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _create_vertex_llm(self) -> Optional[ChatVertexAI]:
@@ -438,7 +1165,7 @@ class AgentManager:
             {
                 "name": "coding_specialist",
                 "description": "Expert at modifying and understanding code in the local filesystem.",
-                "system_prompt": "You are a coding specialist. You have direct access to the files.",
+                "system_prompt": "You are a coding specialist. You have direct access to the files. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw terminal scripts. Since the host OS is Windows, when running terminal commands, you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and backslashes for all paths).",
                 "tool_ids": [],
                 "enabled": True,
             },
@@ -549,6 +1276,7 @@ class AgentManager:
         all_tools_map = {
             "internet_search": internet_search,
             "schedule_chat_task": schedule_chat_task_tool,
+            "remote_friend_ask": remote_friend_ask_tool,
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
@@ -556,32 +1284,19 @@ class AgentManager:
         loaded_mcp_tools: list[Any] = []
         loaded_external_tools: list[Any] = []
 
+        # Select LLM based on provider setting
+        provider = self._resolve_provider()
+        print(f"DEBUG: Selected LLM Provider: {provider}")
+
         # Resolve effective modes early (used by prompt construction and tool policy).
         effective_chat_mode = chat_mode or "agent"
+        if provider == "rie":
+            effective_chat_mode = "chat"
+            
         effective_speed_mode = speed_mode or "thinking"
         orchestration_mode = settings.AGENT_ORCHESTRATION_MODE
         self._current_chat_mode = effective_chat_mode
         self._current_speed_mode = effective_speed_mode
-
-
-        # Select LLM based on provider setting
-        provider = settings.LLM_PROVIDER
-        
-        # Auto-detect if not set (backward compatibility)
-        # Rie is always available and is the default
-        if not provider:
-            provider = "rie"  # Default to Rie (hardcoded, always available)
-            # Fallback to other providers if explicitly needed
-            if settings.GROQ_API_KEY:
-                provider = "groq"
-            elif settings.VERTEX_PROJECT:
-                provider = "vertex"
-            elif settings.GOOGLE_API_KEY:
-                provider = "gemini"
-            elif settings.OPENAI_API_KEY:
-                provider = "openai"
-        
-        print(f"DEBUG: Selected LLM Provider: {provider}")
 
         # Build context-aware system prompt
         mode_instructions = ""
@@ -607,31 +1322,25 @@ class AgentManager:
 
         final_system_prompt = SYSTEM_PROMPT + mode_instructions + planner_main_section
 
-        if provider == "vertex":
-            self._llm = self._create_vertex_llm()
-            system_prompt = final_system_prompt
-        elif provider == "gemini":
-            self._llm = self._create_gemini_llm()
-            system_prompt = final_system_prompt
-        elif provider == "groq":
-            self._llm = self._create_llm()
-            system_prompt = final_system_prompt
-        elif provider == "openai":
-            self._llm = self._create_openai_llm()
-            system_prompt = final_system_prompt
-        elif provider == "rie":
-            self._llm = self._create_rie_llm()
-            system_prompt = final_system_prompt
-        elif provider == "ollama":
-            self._llm = self._create_ollama_llm()
-            system_prompt = final_system_prompt
-        else:
-            print("ERROR: No valid LLM provider selected or configured.")
-            self._agent = None
-            return
+        system_prompt = final_system_prompt
 
-        if not self._llm:
-            print(f"ERROR: Failed to create LLM for provider {provider}")
+        primary_llm = self._create_llm_by_provider(provider)
+        
+        fallback_provider = settings.FALLBACK_LLM_PROVIDER
+        fallback_llm = None
+        if fallback_provider and fallback_provider != provider:
+            fallback_llm = self._create_llm_by_provider(fallback_provider)
+            
+        if primary_llm and fallback_llm:
+            print(f"DEBUG: Creating FallbackChatModel with primary: {provider}, fallback: {fallback_provider}")
+            self._llm = FallbackChatModel(primary_model=primary_llm, fallback_model=fallback_llm)
+        elif primary_llm:
+            self._llm = primary_llm
+        elif fallback_llm:
+            print(f"WARNING: Primary LLM provider ({provider}) failed to initialize. Falling back to {fallback_provider}.")
+            self._llm = fallback_llm
+        else:
+            print(f"ERROR: Failed to create LLM for provider {provider} (and no fallback succeeded).")
             self._agent = None
             return
 
@@ -679,6 +1388,8 @@ class AgentManager:
                 tools_to_use.append(all_tools_map["internet_search"])
             if "schedule_chat_task" in all_tools_map:
                 tools_to_use.append(all_tools_map["schedule_chat_task"])
+            if "remote_friend_ask" in all_tools_map:
+                tools_to_use.append(all_tools_map["remote_friend_ask"])
             tools_to_use.extend(LTM_TOOLS)
             print(f"DEBUG: Chat mode active - using limited tools: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
         elif orchestration_mode == "team":
@@ -707,7 +1418,7 @@ class AgentManager:
             print(f"DEBUG: Creating deep agent with {provider}...")
 
             # Core middleware stack
-            middleware_stack = []
+            middleware_stack = [SkillMiddleware()]
             
             # Only add TodoListMiddleware in thinking mode (skip for flash)
             if effective_speed_mode != "flash":
@@ -834,6 +1545,27 @@ class AgentManager:
         print(f"DEBUG: settings keys: {settings.GROQ_API_KEYS}")
         return configured
 
+    def get_key_rotation_stats(self) -> Optional[dict]:
+        """Return rotation stats for the currently active LLM, or None if not rotating."""
+        llm = self._llm
+        if llm is None:
+            return None
+            
+        # Unpack FallbackChatModel if wrapped
+        while hasattr(llm, "_primary_model"):
+            llm = llm._primary_model
+            
+        rotator: Optional[KeyRotator] = getattr(llm, "_rotator", None)
+        if rotator is None:
+            # Single-key provider or non-rotating LLM
+            return None
+        return {
+            "provider": self._resolve_provider(),
+            "total_keys": rotator.total_keys,
+            "keys": rotator.stats(),
+        }
+
+
     async def ensure_initialized(self) -> bool:
         """
         Ensure the underlying agent is initialized if configuration allows.
@@ -849,15 +1581,21 @@ class AgentManager:
         if self._agent is not None:
             return True
 
-        # If we don't even have the necessary configuration, do not attempt
-        # a full init here – callers can still inspect is_configured.
-        if not self.is_configured:
-            return False
+        # Serialize initialization to avoid concurrent heavy inits from
+        # parallel health checks right after reload/startup.
+        async with self._init_lock:
+            if self._agent is not None:
+                return True
 
-        # Attempt initialization; any internal failures are handled by the
-        # existing _initialize_agent_async logic.
-        await self._initialize_agent_async()
-        return self._agent is not None
+            # If we don't even have the necessary configuration, do not attempt
+            # a full init here – callers can still inspect is_configured.
+            if not self.is_configured:
+                return False
+
+            # Attempt initialization; any internal failures are handled by the
+            # existing _initialize_agent_async logic.
+            await self._initialize_agent_async()
+            return self._agent is not None
     
     async def get_pending_interrupt(self, thread_id: str) -> Optional[dict]:
         """Fetch pending interrupt for a thread if it exists"""
@@ -927,6 +1665,45 @@ class AgentManager:
             raise RuntimeError("Model returned empty instruction.")
         return instruction[:1400]
 
+    async def generate_chat_thread_title(self, user_messages: List[str]) -> str:
+        """Summarize the first two user turns into a short chat title."""
+        if not self._llm:
+            await self._initialize_agent_async(chat_mode="chat", speed_mode="flash")
+        if not self._llm:
+            raise RuntimeError("LLM is not initialized. Please verify provider settings.")
+
+        lines = []
+        for i, text in enumerate(user_messages[:2], start=1):
+            cleaned = (text or "").strip()
+            if "\n\n[Clipboard Content]:" in cleaned:
+                cleaned = cleaned.split("\n\n[Clipboard Content]:")[0].strip()
+            if cleaned:
+                lines.append(f"{i}. {cleaned[:500]}")
+
+        if len(lines) < 2:
+            raise ValueError("Need at least two user messages to generate a title.")
+
+        system_text = (
+            "Write a short chat title (3–8 words) that captures the conversation topic. "
+            "Return plain text only: no quotes, no markdown, no trailing punctuation."
+        )
+        user_text = "User messages:\n" + "\n".join(lines)
+
+        response = await self._llm.ainvoke(
+            [
+                SystemMessage(content=system_text),
+                HumanMessage(content=user_text),
+            ]
+        )
+        content = getattr(response, "content", "")
+        if isinstance(content, list):
+            text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+            content = "\n".join([p for p in text_parts if p])
+        title = (content or "").strip().strip('"\'')
+        if not title:
+            raise RuntimeError("Model returned empty title.")
+        return title[:60]
+
     async def invoke(
         self,
         messages: Optional[list] = None,
@@ -938,12 +1715,21 @@ class AgentManager:
         speed_mode: Optional[str] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
+        friend_target_id: Optional[str] = None,
+        friend_target_name: Optional[str] = None,
     ) -> dict:
         """
         Invoke the agent (Async)
         """
         # Check if modes changed and re-initialize if needed
+        provider = self._resolve_provider()
         effective_chat_mode = chat_mode or "agent"
+        if provider == "rie":
+            effective_chat_mode = "chat"
+            
         effective_speed_mode = speed_mode or "thinking"
         if (self._agent is None or 
             self._current_chat_mode != effective_chat_mode or 
@@ -968,17 +1754,67 @@ class AgentManager:
         if decisions is not None:
             input_data = Command(resume={"decisions": decisions})
         elif messages is not None:
-            clock = _client_clock_system_content(client_timezone, client_local_datetime_iso)
-            if clock:
-                input_data = {"messages": [{"role": "system", "content": clock}, *messages]}
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                input_data = {"messages": [{"role": "system", "content": device_ctx}, *messages]}
             else:
                 input_data = {"messages": messages}
 
-        tokens = set_agent_context(thread_id, effective_chat_mode, effective_speed_mode)
+        tokens = set_agent_context(
+            thread_id,
+            effective_chat_mode,
+            effective_speed_mode,
+            friend_target_id=friend_target_id,
+            friend_target_name=friend_target_name,
+        )
         try:
             return await self._agent.ainvoke(input_data, config=config, context=context)
         finally:
             reset_agent_context(tokens)
+
+    async def seed_thread_history(self, thread_id: str, messages: list[dict]) -> None:
+        """Seed LangGraph checkpoint state from forked history without running the LLM."""
+        if not messages or not thread_id:
+            return
+
+        if self._agent is None:
+            await self._initialize_agent_async(chat_mode="agent", speed_mode="thinking")
+        if not self._agent:
+            return
+
+        processed: list[dict] = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user" and msg.get("image_url"):
+                processed.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": content},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": msg["image_url"]},
+                            },
+                        ],
+                    }
+                )
+            else:
+                processed.append({"role": role, "content": content})
+
+        if not processed:
+            return
+
+        config = {"configurable": {"thread_id": thread_id}}
+        await self._agent.aupdate_state(config, {"messages": processed})
 
     async def stream(
         self,
@@ -992,6 +1828,13 @@ class AgentManager:
         speed_mode: Optional[str] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
+        client_latitude: Optional[float] = None,
+        client_longitude: Optional[float] = None,
+        client_location_accuracy_m: Optional[float] = None,
+        friend_target_id: Optional[str] = None,
+        friend_target_name: Optional[str] = None,
+        knowledge_context: Optional[str] = None,
+        skill_ids: Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
         """Stream the agent with messages or resume with decisions (Async/thread-aware)."""
         # Check if modes changed and re-initialize if needed
@@ -1007,7 +1850,7 @@ class AgentManager:
                     "Agent not configured. Please check your API keys and try again."
                 )
 
-        provider = settings.LLM_PROVIDER or "rie"
+        provider = self._resolve_provider()
         if provider == "rie":
              # Ensure key is present if provider is Rie
               if not settings.RIE_ACCESS_TOKEN:
@@ -1024,14 +1867,25 @@ class AgentManager:
         if decisions is not None:
              input_data = Command(resume={"decisions": decisions})
         elif messages is not None:
-            clock_content = _client_clock_system_content(client_timezone, client_local_datetime_iso)
-            if clock_content:
-                processed_messages.append({"role": "system", "content": clock_content})
+            device_ctx = _client_device_system_content(
+                client_timezone,
+                client_local_datetime_iso,
+                client_latitude,
+                client_longitude,
+                client_location_accuracy_m,
+            )
+            if device_ctx:
+                processed_messages.append({"role": "system", "content": device_ctx})
             if is_voice:
                 # Inject hidden instructions for human-like voice response
                 processed_messages.append({
                     "role": "system", 
                     "content": "You are responding via voice. Use natural human fillers like 'hmm', 'uh', 'well', and expressive punctuation like '!' and '?' to sound more conversational. Keep responses relatively concise and engaging. Do not use markdown like bold or code blocks unless requested."
+                })
+            if knowledge_context and knowledge_context.strip():
+                processed_messages.append({
+                    "role": "system",
+                    "content": f"[Custom Knowledge Context]\n{knowledge_context.strip()}",
                 })
 
             for msg in messages:
@@ -1058,6 +1912,8 @@ class AgentManager:
             config["configurable"]["thread_id"] = thread_id
         if project_root:
             config["configurable"]["project_root"] = project_root
+        if skill_ids:
+            config["configurable"]["skill_ids"] = skill_ids
 
         logger = logging.getLogger(__name__)
         
@@ -1075,18 +1931,22 @@ class AgentManager:
         user_id = "default_user"
         context = Context(user_id=user_id)
 
+        # "updates" yields graph-node completions (tools, interrupts).
+        # "messages" yields LLM tokens as AIMessageChunk tuples — required for token streaming UI.
+        stream_modes = ["updates", "messages"]
+
         if config:
             stream_gen = self._agent.astream(
                 input_data,
                 config=config,
                 context=context,
-                stream_mode="updates",
+                stream_mode=stream_modes,
             )
         else:
             stream_gen = self._agent.astream(
                 input_data,
                 context=context,
-                stream_mode="updates",
+                stream_mode=stream_modes,
             )
 
         # Track this stream if a thread_id is provided
@@ -1095,16 +1955,70 @@ class AgentManager:
             self._active_tasks[thread_id] = current_task
             logger.info(f"Registered task for thread_id={thread_id}")
 
-        tokens = set_agent_context(thread_id, effective_chat_mode, effective_speed_mode)
+        tokens = set_agent_context(
+            thread_id,
+            effective_chat_mode,
+            effective_speed_mode,
+            friend_target_id=friend_target_id,
+            friend_target_name=friend_target_name,
+        )
         try:
             async for chunk in stream_gen:
-                logger.debug(f"Agent stream chunk keys: {list(chunk.keys())}")
-                if "__interrupt__" in chunk:
+                # Multiple stream modes:
+                # - default: (mode, payload)
+                # - subgraph streaming: (namespace, mode, payload) — see LangGraph streaming docs
+                if isinstance(chunk, tuple):
+                    if len(chunk) == 3:
+                        _stream_ns, mode, payload = chunk
+                    elif len(chunk) == 2:
+                        mode, payload = chunk
+                    else:
+                        logger.warning(
+                            "Unexpected LangGraph stream tuple length %s; skipping",
+                            len(chunk),
+                        )
+                        continue
+
+                    if mode == "updates":
+                        if not isinstance(payload, dict):
+                            logger.warning(
+                                "updates stream payload is %s; expected dict",
+                                type(payload),
+                            )
+                            continue
+                        logger.debug(
+                            "Agent stream (updates) keys: %s",
+                            list(payload.keys()),
+                        )
+                        if "__interrupt__" in payload:
+                            logger.debug(
+                                "Chunk contains interrupt: %s",
+                                payload["__interrupt__"],
+                            )
+                        yield payload
+                    elif mode == "messages":
+                        # LangGraph: payload is normally (token_chunk, metadata)
+                        yield {"__lg_messages__": payload}
+                    else:
+                        logger.warning("Unknown LangGraph stream mode: %s", mode)
+                    continue
+
+                logger.debug(
+                    "Agent stream chunk keys: %s",
+                    list(chunk.keys()) if isinstance(chunk, dict) else type(chunk),
+                )
+                if isinstance(chunk, dict) and "__interrupt__" in chunk:
                     logger.debug(f"Chunk contains interrupt: {chunk['__interrupt__']}")
                 yield chunk
         except asyncio.CancelledError:
             logger.info(f"Stream for thread_id={thread_id} was cancelled")
             raise
+        except APIConnectionError as e:
+            logger.warning("Model provider connection failed for thread_id=%s: %s", thread_id, e)
+            raise RuntimeError("upstream_connection_error") from e
+        except httpx.ConnectError as e:
+            logger.warning("HTTP connection failed for thread_id=%s: %s", thread_id, e)
+            raise RuntimeError("upstream_connection_error") from e
         except Exception as e:
             logger.error(f"Error in agent stream: {e}", exc_info=True)
             raise
@@ -1122,5 +2036,12 @@ class AgentManager:
             logging.getLogger(__name__).info(f"Requested cancellation for thread_id={thread_id}")
             return True
         return False
+
+    async def cancel_all_runs(self) -> None:
+        """Cancel all active agent runs"""
+        for thread_id, task in list(self._active_tasks.items()):
+            if task and not task.done():
+                task.cancel()
+                logging.getLogger(__name__).info(f"Requested cancellation for thread_id={thread_id} during clear all")
 # Global agent manager instance
 agent_manager = AgentManager()

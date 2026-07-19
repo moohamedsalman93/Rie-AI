@@ -1,18 +1,23 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Info, RotateCw } from 'lucide-react';
-import { getHistory, deleteThread } from '../services/chatApi';
+import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users, Trash2 } from 'lucide-react';
+import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
+import { LinkPreview } from './LinkPreview';
 import { ToolChip } from './ToolChip';
 import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
+import { KnowledgeAttachmentChips, KnowledgeHistoryBadge, KnowledgeChatBanner } from './KnowledgeAttachmentChips';
+import { KnowledgePickerModal } from './KnowledgePickerModal';
+import { fetchActiveSkills } from '../services/skillsApi';
 import logo from '../assets/logo.png';
 
 export function NormalModeLayout({
     messages,
+    sessionsByThread = {},
     input,
     setInput,
     isLoading,
@@ -20,6 +25,7 @@ export function NormalModeLayout({
     onSend,
     onCancel,
     onSelectThread,
+    onDeleteThread = () => {},
     onNewChat,
     currentThreadId,
     onOpenSettings,
@@ -42,6 +48,8 @@ export function NormalModeLayout({
     setProjectRoot,
     setProjectRootChip,
     onFileUpload,
+    attachedFiles = [],
+    onRemoveAttachedFile,
     onCaptureScreen,
     onPickProjectPath,
     isCapturing,
@@ -52,6 +60,7 @@ export function NormalModeLayout({
     setAttachedClipboardText,
     onAttachClipboard,
     onDeleteMessage,
+    onOpenMessageInNewChat,
     typesWrite,
     setTypesWrite,
     isWindowDraggingFile,
@@ -67,6 +76,15 @@ export function NormalModeLayout({
     onScheduleMarkRead = () => {},
     onScheduleMarkAllRead = () => {},
     onScheduleOpenChat = () => {},
+    friends = [],
+    friendThreadMeta = {},
+    activeFriendMeta = null,
+    onSelectFriendChat = () => {},
+    onStartFriendChat = () => {},
+    attachedKnowledge = [],
+    onAttachKnowledge = () => {},
+    onDetachKnowledge = () => {},
+    provider,
 }) {
     // Sidebar state
     const [threads, setThreads] = useState([]);
@@ -77,8 +95,23 @@ export function NormalModeLayout({
     const [dragCounter, setDragCounter] = useState(0);
     const [isHistoryVisible, setIsHistoryVisible] = useState(true);
     const [showExitConfirm, setShowExitConfirm] = useState(false);
+    const [friendsOpen, setFriendsOpen] = useState(true);
+    const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
+    const [activeSkillsList, setActiveSkillsList] = useState([]);
     const isDragging = dragCounter > 0;
-    const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot;
+    const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
+    const isNewChat = !messages || messages.length === 0;
+
+    useEffect(() => {
+        if (!currentThreadId) {
+            setActiveSkillsList([]);
+            return;
+        }
+        fetchActiveSkills(currentThreadId, projectRoot)
+            .then((data) => setActiveSkillsList(data))
+            .catch(() => {});
+    }, [currentThreadId, projectRoot]);
+
     const attachImageFile = (file) => {
         if (!file || !file.type?.startsWith("image/")) return;
         const reader = new FileReader();
@@ -100,9 +133,24 @@ export function NormalModeLayout({
         }
     }, [terminalLogs, isTerminalOpen]);
 
+    const userMessageCount = useMemo(() => {
+        const list = sessionsByThread?.[currentThreadId] || [];
+        return list.filter((m) => m?.from === "user" && m?.text?.trim()).length;
+    }, [sessionsByThread, currentThreadId]);
+
+    const wasStreamingRef = useRef(false);
+
     useEffect(() => {
         loadThreads();
-    }, [currentThreadId]);
+    }, [currentThreadId, userMessageCount]);
+
+    useEffect(() => {
+        const isStreaming = streamingThreads?.has?.(currentThreadId);
+        if (wasStreamingRef.current && !isStreaming) {
+            loadThreads();
+        }
+        wasStreamingRef.current = Boolean(isStreaming);
+    }, [streamingThreads, currentThreadId]);
 
     const loadThreads = async () => {
         setLoading(true);
@@ -125,17 +173,15 @@ export function NormalModeLayout({
     const confirmDelete = async () => {
         if (!threadToDelete) return;
         try {
-            await deleteThread(threadToDelete);
+            await onDeleteThread(threadToDelete);
             setThreads(prev => prev.filter(t => t.id !== threadToDelete));
-            if (threadToDelete === currentThreadId) {
-                onNewChat();
-            }
         } catch (err) {
             console.error('Failed to delete thread:', err);
         } finally {
             setThreadToDelete(null);
         }
     };
+
 
     const formatDate = (isoString) => {
         const date = new Date(isoString);
@@ -147,9 +193,93 @@ export function NormalModeLayout({
         return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     };
 
-    const filteredThreads = threads.filter(t =>
+    const mergedThreads = useMemo(() => {
+        const known = new Set((threads || []).map((t) => String(t.id)));
+        const localOnly = Object.keys(sessionsByThread || {})
+            .filter((threadId) => !known.has(String(threadId)))
+            .map((threadId) => {
+                const list = sessionsByThread[threadId] || [];
+                return {
+                    id: threadId,
+                    title: "Untitled Chat",
+                    created_at: null,
+                    updated_at: null,
+                };
+            });
+        return [...localOnly, ...(threads || [])];
+    }, [threads, sessionsByThread]);
+
+    const filteredThreads = mergedThreads.filter(t =>
         (t.title || 'Untitled Chat').toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    const groupedThreads = useMemo(() => {
+        const groups = {
+            today: { title: "Today", threads: [] },
+            yesterday: { title: "Yesterday", threads: [] },
+            twoDaysAgo: { title: "2 days ago", threads: [] },
+            threeDaysAgo: { title: "3 days ago", threads: [] },
+            fourDaysAgo: { title: "4 days ago", threads: [] },
+            fiveDaysAgo: { title: "5 days ago", threads: [] },
+            sixDaysAgo: { title: "6 days ago", threads: [] },
+            lastWeek: { title: "Previous 7 Days", threads: [] },
+            older: { title: "Older", threads: [] }
+        };
+
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        filteredThreads.forEach(thread => {
+            const dateStr = thread.updated_at || thread.created_at;
+            if (!dateStr) {
+                groups.today.threads.push(thread);
+                return;
+            }
+
+            const date = new Date(dateStr);
+            const threadStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            const diffDays = Math.round((todayStart - threadStart) / (1000 * 60 * 60 * 24));
+
+            if (diffDays <= 0) {
+                groups.today.threads.push(thread);
+            } else if (diffDays === 1) {
+                groups.yesterday.threads.push(thread);
+            } else if (diffDays === 2) {
+                groups.twoDaysAgo.threads.push(thread);
+            } else if (diffDays === 3) {
+                groups.threeDaysAgo.threads.push(thread);
+            } else if (diffDays === 4) {
+                groups.fourDaysAgo.threads.push(thread);
+            } else if (diffDays === 5) {
+                groups.fiveDaysAgo.threads.push(thread);
+            } else if (diffDays === 6) {
+                groups.sixDaysAgo.threads.push(thread);
+            } else if (diffDays >= 7 && diffDays < 14) {
+                groups.lastWeek.threads.push(thread);
+            } else {
+                groups.older.threads.push(thread);
+            }
+        });
+
+        return Object.values(groups).filter(g => g.threads.length > 0);
+    }, [filteredThreads]);
+    const botReplyCount = messages.filter(
+        (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
+    ).length;
+    const toolTooltipPlacement = botReplyCount <= 2 ? "bottom" : "top";
+    const hasStreamingContent = messages.some((msg) => {
+        if (msg.from !== "bot" || msg.id !== streamingBotMessageId) return false;
+        const hasTextBlocks = (msg.blocks || []).some(
+            (block) => block.type === "text" && block.text && block.text.trim()
+        );
+        return hasTextBlocks || (msg.text && msg.text.trim());
+    });
+    const shouldShowThinkingShimmer = isLoading && !hasStreamingContent;
+
+    const getThreadFriendMeta = (threadId) => {
+        if (!friendThreadMeta) return null;
+        return friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
+    };
 
     return (
         <div className="w-full h-full flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
@@ -177,13 +307,28 @@ export function NormalModeLayout({
                             setChatMode={setChatMode}
                             speedMode={speedMode}
                             setSpeedMode={setSpeedMode}
+                            provider={provider}
                         />
                     </div>
                 </div>
 
                 {/* Right: Window Controls */}
                 <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-end">
-                    
+
+                    {!isHistoryVisible && (
+                        <button
+                            onClick={onNewChat}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                            title="New Chat"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                        </button>
+                    )}
+
                     <button
                         onClick={() => setIsHistoryVisible(!isHistoryVisible)}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -300,7 +445,7 @@ export function NormalModeLayout({
                                     </div>
                                     <button
                                         onClick={onNewChat}
-                                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors shrink-0"
                                         title="New Chat"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -313,46 +458,91 @@ export function NormalModeLayout({
 
                             {/* Thread List */}
                             <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-0.5">
+                                <div className="mb-2 rounded-lg border border-white/5 bg-neutral-900/50">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFriendsOpen((prev) => !prev)}
+                                        className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-semibold text-neutral-200"
+                                    >
+                                        <span className="inline-flex items-center gap-1.5"><Users size={13} /> Friends</span>
+                                        {friendsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                                    </button>
+                                    {friendsOpen && (
+                                        <div className="space-y-1 border-t border-white/5 p-1.5">
+                                            {friends.length === 0 ? (
+                                                <div className="px-2 py-1 text-[11px] text-neutral-500">No connections yet.</div>
+                                            ) : (
+                                                friends.map((friend) => {
+                                                    return (
+                                                        <div key={friend.id} className="rounded-md border border-white/5 bg-neutral-900/45">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => onStartFriendChat(friend)}
+                                                                className="flex w-full items-center justify-between px-2 py-1.5 text-left text-xs text-neutral-200"
+                                                            >
+                                                                <span className="truncate">{friend.name || "Friend"}</span>
+                                                                <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">Chat</span>
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                })
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                                 {loading ? (
                                     <div className="flex justify-center py-8">
                                         <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-emerald-500"></div>
                                     </div>
                                 ) : filteredThreads.length === 0 ? (
-                                    <div className="text-center py-8 text-neutral-500 text-xs">
-                                        {searchTerm ? 'No matches' : 'No history'}
+                                    <div className="py-6 text-center text-xs text-neutral-500">
+                                        {searchTerm ? 'No chats match.' : null}
                                     </div>
                                 ) : (
-                                    filteredThreads.map(thread => (
-                                        <button
-                                            key={thread.id}
-                                            onClick={() => onSelectThread(thread.id)}
-                                            className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative ${thread.id === currentThreadId
-                                                ? 'bg-neutral-800 text-neutral-100'
-                                                : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'
-                                                }`}
-                                        >
-                                            <div className="pr-5">
-                                                <div className="flex items-center gap-1.5">
-                                                    <div className="text-xs font-medium truncate">{thread.title || 'Untitled Chat'}</div>
-                                                    {streamingThreads.has(thread.id) && (
-                                                        <div className="flex items-center gap-1 shrink-0">
-                                                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                                                        </div>
-                                                    )}
+                                    <div className="space-y-4">
+                                        {groupedThreads.map(group => (
+                                            <div key={group.title} className="space-y-1">
+                                                <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                                                    {group.title}
                                                 </div>
-                                                <div className="text-[10px] opacity-50 mt-0.5">{formatDate(thread.updated_at || thread.created_at)}</div>
+                                                {group.threads.map(thread => (
+                                                    <button
+                                                        key={thread.id}
+                                                        onClick={() => onSelectThread(thread.id)}
+                                                        className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative ${thread.id === currentThreadId
+                                                            ? 'bg-neutral-800 text-neutral-100'
+                                                            : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'
+                                                            }`}
+                                                    >
+                                                        <div className="pr-5">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <div className="text-xs font-medium truncate">{thread.title || 'Untitled Chat'}</div>
+                                                                {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && (
+                                                                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>
+                                                                )}
+                                                                <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
+                                                                {streamingThreads.has(thread.id) && (
+                                                                    <div className="flex items-center gap-1 shrink-0">
+                                                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-[10px] opacity-50 mt-0.5">{formatDate(thread.updated_at || thread.created_at)}</div>
+                                                        </div>
+                                                        <div
+                                                            onClick={(e) => handleDeleteClick(e, thread.id)}
+                                                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all"
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                                <polyline points="3 6 5 6 21 6"></polyline>
+                                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                            </svg>
+                                                        </div>
+                                                    </button>
+                                                ))}
                                             </div>
-                                            <div
-                                                onClick={(e) => handleDeleteClick(e, thread.id)}
-                                                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <polyline points="3 6 5 6 21 6"></polyline>
-                                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                                </svg>
-                                            </div>
-                                        </button>
-                                    ))
+                                        ))}
+                                    </div>
                                 )}
                             </div>
                             <ScheduledTasksPanel apiStatus={apiStatus} />
@@ -361,107 +551,166 @@ export function NormalModeLayout({
                 </AnimatePresence>
 
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col min-w-0 bg-neutral-950">
+                <div className="flex-1 flex flex-col min-w-0 bg-neutral-950 relative">
                     {/* Messages */}
-                    <main className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar transition-transform duration-300  py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"}`}>
-                        <AnimatePresence>
-                            {messages.map((m) => {
-                                if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
-                                    return null;
-                                }
-                                return (
-                                    <motion.div
-                                        key={m.id}
-                                        initial={{ opacity: 0, y: 10 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
-                                    >
-                                        <div className={`flex items-end gap-2 min-w-0 max-w-[85%] ${m.from === 'user' ? 'justify-end' : ''}`}>
+                    {!isNewChat ? (
+                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+                            {activeFriendMeta?.isFriendChat && (
+                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                                    <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
+                                    <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
+                                </div>
+                            )}
+                            <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
+                            <SkillsChatBanner activeSkills={activeSkillsList} />
+                            <AnimatePresence>
+                                {messages.map((m) => {
+                                    if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
+                                        return null;
+                                    }
+                                    return (
+                                        <motion.div
+                                            key={m.id}
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
+                                        >
+                                            <div className={`flex items-end gap-2 min-w-0  ${m.from === 'user' ? 'justify-end' : ''}`}>
 
-                                            {m.from === 'user' && m.error && (
-                                                <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            onDeleteMessage(m.id);
-                                                            onSend(m.text, false, m.image_url);
-                                                        }}
-                                                        className="p-1.5 rounded-lg text-red-400 hover:bg-neutral-800 transition-colors"
-                                                        title="Retry"
-                                                    >
-                                                        <RotateCw size={14} />
-                                                    </button>
-                                                    <div className="relative group/info">
-                                                        <div className="p-1.5 text-red-500 cursor-help">
-                                                            <Info size={14} />
-                                                        </div>
-                                                        <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm">
-                                                            {m.errorMessage}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            <div className={`min-w-0 max-w-full break-words overflow-x-auto rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
-                                                ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
-                                                : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
-                                                }`}>
-                                                {m.image_url && (
-                                                    <div className="mb-2 overflow-hidden rounded-lg">
-                                                        <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
-                                                    </div>
-                                                )}
-                                                {m.clipboard && (
-                                                    <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
-                                                        <div className="flex items-center gap-2 mb-1.5 opacity-80">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
-                                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                            </svg>
-                                                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Clipboard Content</span>
-                                                        </div>
-                                                        <p className="text-[11px] text-neutral-300 line-clamp-4 leading-relaxed font-mono italic">
-                                                            {m.clipboard}
-                                                        </p>
-                                                    </div>
-                                                )}
-                                                {m.from === 'bot' ? (
-                                                    <div className="flex flex-col gap-2">
-                                                        {(m.blocks || [{ type: 'text', text: m.text }]).map((block, idx) => (
-                                                            <div key={idx}>
-                                                                {block.type === 'text' ? (
-                                                                    <MarkdownMessage
-                                                                        content={block.text}
-                                                                        isStreaming={m.id === streamingBotMessageId}
-                                                                        typesWrite={typesWrite}
-                                                                        setTypesWrite={setTypesWrite}
-                                                                    />
-                                                                ) : (
-                                                                    <ToolChip name={block.name} content={block.text} />
-                                                                )}
+                                                {m.from === 'user' && m.error && (
+                                                    <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onOpenMessageInNewChat?.(m);
+                                                            }}
+                                                            className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                            title="Branch to new chat with history"
+                                                        >
+                                                            <GitBranch size={14} />
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onDeleteMessage(m.id);
+                                                                onSend(m.text, false, m.image_url);
+                                                            }}
+                                                            className="p-1.5 rounded-lg text-red-400 hover:bg-neutral-800 transition-colors"
+                                                            title="Retry"
+                                                        >
+                                                            <RotateCw size={14} />
+                                                        </button>
+                                                        <div className="relative group/info">
+                                                            <div className="p-1.5 text-red-500 cursor-help">
+                                                                <Info size={14} />
                                                             </div>
-                                                        ))}
+                                                            <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
+                                                                {m.errorMessage}
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                ) : (
-                                                    m.text
                                                 )}
+                                                {m.from === 'user' && !m.error && (
+                                                    <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onOpenMessageInNewChat?.(m);
+                                                            }}
+                                                            className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                            title="Branch to new chat with history"
+                                                        >
+                                                            <GitBranch size={14} />
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
+                                                    ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
+                                                    : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
+                                                    }`}>
+                                                    {m.image_url && (
+                                                        <div className="mb-2 overflow-hidden rounded-lg">
+                                                            <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
+                                                        </div>
+                                                    )}
+                                                    {m.url_previews?.length > 0 && (
+                                                        <LinkPreview previews={m.url_previews} />
+                                                    )}
+                                                    {m.clipboard && (
+                                                        <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
+                                                            <div className="flex items-center gap-2 mb-1.5 opacity-80">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
+                                                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                                </svg>
+                                                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Clipboard Content</span>
+                                                            </div>
+                                                            <p className="text-[11px] text-neutral-300 line-clamp-4 leading-relaxed font-mono italic">
+                                                                {m.clipboard}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                    {m.from === 'bot' ? (
+                                                        <div className="flex flex-col gap-2">
+                                                            {(m.blocks || [{ type: 'text', text: m.text }]).map((block, idx) => (
+                                                                <div key={idx}>
+                                                                    {block.type === 'text' ? (
+                                                                        <MarkdownMessage
+                                                                            content={block.text}
+                                                                            isStreaming={m.id === streamingBotMessageId}
+                                                                            typesWrite={typesWrite}
+                                                                            setTypesWrite={setTypesWrite}
+                                                                        />
+                                                                    ) : (
+                                                                        <ToolChip
+                                                                            name={block.name}
+                                                                            content={block.text}
+                                                                            tooltipPlacement={toolTooltipPlacement}
+                                                                        />
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        m.text
+                                                    )}
+                                                </div>
                                             </div>
+                                            <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
+                                                {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
+                                            </span>
+                                        </motion.div>
+                                    );
+                                })}
+                            </AnimatePresence>
+                            {shouldShowThinkingShimmer && (
+                                <motion.div
+                                    initial={{ opacity: 0, y: 6 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="flex flex-col items-start w-full"
+                                >
+                                    <div className="w-full max-w-[85%] rounded-xl border border-neutral-700/60 bg-neutral-900 px-3.5 py-2.5">
+                                        <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
+                                        <div className="space-y-1.5">
+                                            <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+                                            <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
                                         </div>
-                                        <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
-                                            {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
-                                        </span>
-                                    </motion.div>
-                                );
-                            })}
-                        </AnimatePresence>
-                        {pendingAction && (
-                            <HITLApproval
-                                hitl={pendingAction}
-                                onDecision={onActionDecision}
-                            />
-                        )}
-                        <div ref={messagesEndRef} />
-                    </main>
+                                    </div>
+                                    <span className="mt-1 text-[10px] font-medium text-neutral-600">Assistant is thinking...</span>
+                                </motion.div>
+                            )}
+                            {pendingAction && (
+                                <HITLApproval
+                                    hitl={pendingAction}
+                                    onDecision={onActionDecision}
+                                />
+                            )}
+                            <div ref={messagesEndRef} />
+                        </main>
+                    ) : (
+                        <div className="flex-1" />
+                    )}
 
                     {/* Input Area */}
                     <footer
@@ -492,8 +741,25 @@ export function NormalModeLayout({
                                 }
                             }
                         }}
-                        className={`px-4 py-2 relative ${isHistoryVisible ? "px-6" : "px-24"}`}
+                        className={isNewChat
+                            ? "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[60%] w-full max-w-2xl px-6 z-10 flex flex-col justify-center"
+                            : `px-4 py-2 relative ${isHistoryVisible ? "px-6" : "px-24"}`
+                        }
                     >
+                        {isNewChat && (
+                            <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="flex flex-col items-center text-center mb-8 space-y-4 pointer-events-none select-none"
+                            >
+                                <h1 className="text-3xl font-bold text-white font-sans tracking-wide">
+                                    How can I help you today?
+                                </h1>
+                                <p className="text-sm text-neutral-400 max-w-md">
+                                    Ask questions, run terminal commands, or attach project context to get started.
+                                </p>
+                            </motion.div>
+                        )}
                         <AnimatePresence>
                             {(isDragging || isWindowDraggingFile) && (
                                 <motion.div
@@ -514,158 +780,199 @@ export function NormalModeLayout({
                             )}
                         </AnimatePresence>
                         <div className="flex flex-col gap-2">
-                            {/* Attachment previews */}
-                            <div className='flex flex-wrap gap-2 w-[70%] mx-auto overflow-x-auto'>
-                                <AnimatePresence>
-                                    {attachedImage && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="relative self-start"
-                                        >
-                                            <div className="h-16 w-16 overflow-hidden rounded-lg border border-neutral-700">
-                                                <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
-                                            </div>
-                                            <button
-                                                onClick={() => setAttachedImage(null)}
-                                                className="absolute -right-1.5 -top-1.5 rounded-full bg-red-500 p-0.5 text-white"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                    {isScreenAttached && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 self-start"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                <path d="M8 21h8" />
-                                                <path d="M12 17v4" />
-                                            </svg>
-                                            <span className="text-xs text-emerald-400">@current_screen</span>
-                                            <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                    {projectRoot && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 self-start"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                            </svg>
-                                            <span className="text-xs text-amber-400">@{projectRootChip}</span>
-                                            <button onClick={() => { setProjectRoot(null); setProjectRootChip(null); }} className="text-amber-400/60 hover:text-amber-400">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                    {attachedClipboardText && (
-                                        <motion.div
-                                            initial={{ opacity: 0, scale: 0.9 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            exit={{ opacity: 0, scale: 0.9 }}
-                                            className="flex items-center gap-2 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-1 self-start"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                            </svg>
-                                            <span className="text-xs text-pink-400">@clipboard</span>
-                                            <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                                </svg>
-                                            </button>
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </div>
-
-                            <div className="flex items-end justify-center gap-2">
-                                {/* Attachment button */}
-                                <div className="relative">
-                                    <button
-                                        onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-                                        disabled={isLoading || isCapturing}
-                                        className={`p-[10px] rounded-lg border transition-colors ${isAttachmentPopoverOpen ? 'bg-neutral-700 border-neutral-600' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'} disabled:opacity-50`}
-                                    >
-                                        {isCapturing ? (
-                                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
-                                        ) : (
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400">
-                                                <path d="m18 15-6-6-6 6" />
-                                            </svg>
-                                        )}
-                                    </button>
+                            {/* Attachment previews (Moved Above) */}
+                            {(attachedImage || isScreenAttached || projectRoot || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
+                                <div className={`flex flex-wrap gap-2 ${isNewChat ? 'w-[80%]' : 'w-[70%]'} mx-auto overflow-x-auto justify-center mb-2`}>
                                     <AnimatePresence>
-                                        {isAttachmentPopoverOpen && (
+                                        {attachedImage && (
                                             <motion.div
-                                                initial={{ opacity: 0, y: 10 }}
-                                                animate={{ opacity: 1, y: 0 }}
-                                                exit={{ opacity: 0, y: 10 }}
-                                                className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="relative self-start"
                                             >
-                                                <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-                                                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                                        <circle cx="9" cy="9" r="2" />
-                                                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                                <div className="h-16 w-16 overflow-hidden rounded-lg border border-neutral-700">
+                                                    <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
+                                                </div>
+                                                <button
+                                                    onClick={() => setAttachedImage(null)}
+                                                    className="absolute -right-1.5 -top-1.5 rounded-full bg-red-500 p-0.5 text-white"
+                                                >
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
                                                     </svg>
-                                                    Upload Image
-                                                </button>
-                                                <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                        <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                        <path d="M8 21h8" />
-                                                        <path d="M12 17v4" />
-                                                    </svg>
-                                                    Current Screen
-                                                </button>
-                                                <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                                    </svg>
-                                                    Project Path
-                                                </button>
-                                                <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                    </svg>
-                                                    Read Clipboard
                                                 </button>
                                             </motion.div>
                                         )}
+                                        {isScreenAttached && (
+                                            <motion.div
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                                                    <rect width="20" height="14" x="2" y="3" rx="2" />
+                                                    <path d="M8 21h8" />
+                                                    <path d="M12 17v4" />
+                                                </svg>
+                                                <span className="text-xs text-emerald-400">@current_screen</span>
+                                                <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                        {projectRoot && (
+                                            <motion.div
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+                                                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                                </svg>
+                                                <span className="text-xs text-amber-400">@{projectRootChip}</span>
+                                                <button onClick={() => { setProjectRoot(null); setProjectRootChip(null); }} className="text-amber-400/60 hover:text-amber-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                        {attachedClipboardText && (
+                                            <motion.div
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
+                                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                </svg>
+                                                <span className="text-xs text-pink-400">@clipboard</span>
+                                                <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                        {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
+                                            <motion.div
+                                                key={`file-${file.name}-${idx}`}
+                                                initial={{ opacity: 0, scale: 0.9 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.9 }}
+                                                className="flex items-center gap-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 self-start"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-cyan-400">
+                                                    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                                                    <polyline points="14 2 14 8 20 8" />
+                                                </svg>
+                                                <span className="text-xs text-cyan-400 max-w-[100px] truncate" title={file.name}>@{file.name}</span>
+                                                <button onClick={() => onRemoveAttachedFile?.(idx)} className="text-cyan-400/60 hover:text-cyan-400">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                                    </svg>
+                                                </button>
+                                            </motion.div>
+                                        ))}
+                                        <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
                                     </AnimatePresence>
                                 </div>
+                            )}
+
+                            <div className="flex items-end justify-center gap-2">
+                                {/* Attachment button (Restore for active chat) */}
+                                {!isNewChat && (
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
+                                            disabled={isLoading || isCapturing}
+                                            className={`p-[10px] rounded-lg border transition-colors ${isAttachmentPopoverOpen ? 'bg-neutral-700 border-neutral-600' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'} disabled:opacity-50`}
+                                        >
+                                            {isCapturing ? (
+                                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
+                                            ) : (
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400">
+                                                    <path d="m18 15-6-6-6 6" />
+                                                </svg>
+                                            )}
+                                        </button>
+                                        <AnimatePresence>
+                                            {isAttachmentPopoverOpen && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, y: 10 }}
+                                                    animate={{ opacity: 1, y: 0 }}
+                                                    exit={{ opacity: 0, y: 10 }}
+                                                    className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
+                                                >
+                                                    <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
+                                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                            <circle cx="9" cy="9" r="2" />
+                                                            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                                        </svg>
+                                                        Upload File
+                                                    </button>
+                                                    <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                                                            <rect width="20" height="14" x="2" y="3" rx="2" />
+                                                            <path d="M8 21h8" />
+                                                            <path d="M12 17v4" />
+                                                        </svg>
+                                                        Current Screen
+                                                    </button>
+                                                    <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+                                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                                        </svg>
+                                                        Project Path
+                                                    </button>
+                                                    <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
+                                                            <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                        </svg>
+                                                        Read Clipboard
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setIsAttachmentPopoverOpen(false);
+                                                            setIsKnowledgePickerOpen(true);
+                                                        }}
+                                                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                                                    >
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
+                                                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                                                        </svg>
+                                                        Custom Knowledge
+                                                    </button>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
+                                )}
 
                                 {/* Text input */}
-                                <div className="w-[70%] max-h-fit relative flex items-center justify-center">
+                                <div className={`${isNewChat ? 'w-[80%]' : 'w-[70%]'} max-h-fit relative flex items-center justify-center`}>
                                     <textarea
                                         ref={textareaRef}
                                         rows={1}
                                         value={input}
-                                        onChange={(e) => setInput(e.target.value)}
+                                        onChange={(e) => {
+                                            setInput(e.target.value);
+                                        }}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter' && !e.shiftKey) {
                                                 e.preventDefault();
@@ -697,7 +1004,6 @@ export function NormalModeLayout({
                                         </div>
                                     )}
                                 </div>
-
                                 {/* Send/Cancel button */}
                                 <button
                                     onClick={isLoading ? () => onCancel() : onSend}
@@ -722,6 +1028,47 @@ export function NormalModeLayout({
                                     )}
                                 </button>
                             </div>
+
+                            {/* Attachment options grid (Only shown in empty chat) */}
+                            {isNewChat && (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4 max-w-lg mx-auto w-full">
+                                    <button onClick={onFileUpload} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400 shrink-0">
+                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                            <circle cx="9" cy="9" r="2" />
+                                            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                        </svg>
+                                        <span>Upload File</span>
+                                    </button>
+                                    <button onClick={onCaptureScreen} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400 shrink-0">
+                                            <rect width="20" height="14" x="2" y="3" rx="2" />
+                                            <path d="M8 21h8" />
+                                            <path d="M12 17v4" />
+                                        </svg>
+                                        <span>Current Screen</span>
+                                    </button>
+                                    <button onClick={onPickProjectPath} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400 shrink-0">
+                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                        </svg>
+                                        <span>Project Path</span>
+                                    </button>
+                                    <button onClick={onAttachClipboard} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400 shrink-0">
+                                            <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                        </svg>
+                                        <span>Read Clipboard</span>
+                                    </button>
+                                    <button onClick={() => setIsKnowledgePickerOpen(true)} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left col-span-2 sm:col-span-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400 shrink-0">
+                                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                                        </svg>
+                                        <span>Custom Knowledge</span>
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </footer>
 
@@ -828,6 +1175,7 @@ export function NormalModeLayout({
                 confirmText="Delete"
             />
 
+
             <ConfirmationModal
                 isOpen={showExitConfirm}
                 onClose={() => setShowExitConfirm(false)}
@@ -837,6 +1185,29 @@ export function NormalModeLayout({
                 confirmText="Exit"
                 type="warning"
             />
+
+            <KnowledgePickerModal
+                isOpen={isKnowledgePickerOpen}
+                onClose={() => setIsKnowledgePickerOpen(false)}
+                onSelect={(pack) => onAttachKnowledge(pack)}
+                attachedIds={attachedKnowledge.map((k) => k.id)}
+            />
+        </div>
+    );
+}
+
+export function SkillsChatBanner({ activeSkills = [] }) {
+    if (!activeSkills?.length) return null;
+    const names = activeSkills.map((s) => `${s.icon || '🧠'} ${s.name}`).join(', ');
+    return (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 flex items-center justify-between gap-3 mb-3 animate-in fade-in duration-300">
+            <div>
+                <span className="font-semibold">Active Instructions: </span>
+                <span className="text-emerald-200/80">{names}</span>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-semibold shrink-0 bg-emerald-950/40 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                Injected
+            </span>
         </div>
     );
 }

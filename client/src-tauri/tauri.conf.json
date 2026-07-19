@@ -1,7 +1,8 @@
 {
     "$schema": "https://schema.tauri.app/config/2",
     "productName": "Rie-AI",
-    "version": "0.2.0",
+    "mainBinaryName": "Rie-AI",
+    "version": "0.3.3",
     "identifier": "com.ai.rie-ai",
     "build": {
         "beforeDevCommand": "npm run dev",
@@ -10,19 +11,7 @@
         "frontendDist": "../dist"
     },
     "app": {
-        "windows": [
-            {
-                "title": "Rie-AI",
-                "width": 360,
-                "height": 520,
-                "resizable": false,
-                "decorations": false,
-                "transparent": true,
-                "alwaysOnTop": true,
-                "shadow": false,
-                "skipTaskbar": true
-            }
-        ],
+        "windows": [],
         "security": {
             "csp": null
         }

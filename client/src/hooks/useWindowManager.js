@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import {
   WINDOW_SIZES,
   ANIMATION_DURATIONS,
@@ -186,7 +187,14 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode }) {
 
       await win.setSize(new LogicalSize(size.width, size.height));
       setIsOpen(true);
+      await win.show();
+      await win.setAlwaysOnTop(true);
       await win.setFocus();
+      try {
+        await invoke("set_foreground_lock", { lock: true });
+      } catch (e) {
+        console.error("Failed to lock foreground:", e);
+      }
     } catch (err) {
       console.error("Failed to handle open:", err);
       setIsOpen(true);
@@ -196,11 +204,21 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode }) {
   const handleMinimize = useCallback(async () => {
     if (windowMode === "normal") {
       try {
+        try {
+          await invoke("set_foreground_lock", { lock: false });
+        } catch (e) {
+          console.error("Failed to unlock foreground:", e);
+        }
         await getWindow().minimize();
       } catch (err) {
         console.error("Failed to minimize:", err);
       }
       return;
+    }
+    try {
+      await invoke("set_foreground_lock", { lock: false });
+    } catch (e) {
+      console.error("Failed to unlock foreground:", e);
     }
     shouldSnapOnMinimizeRef.current = true;
     pendingBubblePositionRef.current = null;

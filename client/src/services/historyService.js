@@ -1,57 +1,13 @@
 /**
- * History service for managing chat message persistence
+ * Persisted last active thread id (companion to server-side /history).
+ * Legacy key prefix Rie-tauri-history is kept for localStorage compatibility.
  */
-
 const HISTORY_KEY = 'Rie-tauri-history';
-const MAX_HISTORY_ITEMS = 1000; // Limit history size
-
-/**
- * Load chat history from localStorage
- * @returns {Array} Array of message objects
- */
-export function loadHistory() {
-  try {
-    const stored = localStorage.getItem(HISTORY_KEY);
-    if (!stored) return [];
-    
-    const history = JSON.parse(stored);
-    // Ensure it's an array and has valid structure
-    if (Array.isArray(history)) {
-      return history.filter(msg => msg && msg.id && msg.from && msg.text);
-    }
-    return [];
-  } catch (error) {
-    console.error('Failed to load history:', error);
-    return [];
-  }
-}
-
-/**
- * Save messages to localStorage
- * @param {Array} messages - Array of message objects to save
- */
-export function saveHistory(messages) {
-  try {
-    // Limit history size to prevent localStorage overflow
-    const messagesToSave = messages.slice(-MAX_HISTORY_ITEMS);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(messagesToSave));
-  } catch (error) {
-    console.error('Failed to save history:', error);
-    // If quota exceeded, try saving fewer messages
-    if (error.name === 'QuotaExceededError') {
-      try {
-        const reducedMessages = messages.slice(-Math.floor(MAX_HISTORY_ITEMS / 2));
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(reducedMessages));
-      } catch (retryError) {
-        console.error('Failed to save reduced history:', retryError);
-      }
-    }
-  }
-}
+const FRIEND_THREAD_META_KEY = `${HISTORY_KEY}-friend-thread-meta`;
 
 /**
  * Save thread ID to localStorage
- * @param {string} threadId 
+ * @param {string} threadId
  */
 export function saveThreadId(threadId) {
   try {
@@ -75,23 +31,30 @@ export function getStoredThreadId() {
 }
 
 /**
- * Clear all chat history
+ * Persist friend-chat metadata by thread id.
+ * Shape: { [threadId]: { friendId, friendName, isFriendChat } }
+ * @param {Record<string, {friendId: string, friendName: string, isFriendChat: boolean}>} mapping
  */
-export function clearHistory() {
+export function saveFriendThreadMeta(mapping) {
   try {
-    localStorage.removeItem(HISTORY_KEY);
-    localStorage.removeItem(`${HISTORY_KEY}-thread-id`);
+    localStorage.setItem(FRIEND_THREAD_META_KEY, JSON.stringify(mapping || {}));
   } catch (error) {
-    console.error('Failed to clear history:', error);
+    console.error('Failed to save friend thread metadata:', error);
   }
 }
 
 /**
- * Get history size (number of messages)
- * @returns {number} Number of messages in history
+ * Read persisted friend-chat metadata by thread id.
+ * @returns {Record<string, {friendId: string, friendName: string, isFriendChat: boolean}>}
  */
-export function getHistorySize() {
-  const history = loadHistory();
-  return history.length;
+export function getFriendThreadMeta() {
+  try {
+    const raw = localStorage.getItem(FRIEND_THREAD_META_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    console.error('Failed to retrieve friend thread metadata:', error);
+    return {};
+  }
 }
-

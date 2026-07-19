@@ -89,8 +89,33 @@ class Settings:
         return self._get("TAVILY_API_KEY")
 
     @property
-    def GOOGLE_API_KEY(self) -> Optional[str]:
+    def BRAVE_SEARCH_API_KEY(self) -> Optional[str]:
+        return self._get("BRAVE_SEARCH_API_KEY")
+
+    @property
+    def WEB_SEARCH_PROVIDER(self) -> str:
+        """Web search provider: tavily, brave, or duckduckgo."""
+        return (self._get("WEB_SEARCH_PROVIDER") or "tavily").strip().lower()
+
+    @property
+    def GOOGLE_API_KEY_STRING(self) -> Optional[str]:
+        """Raw string of Google/Gemini API keys as stored in DB"""
         return self._get("GOOGLE_API_KEY")
+
+    @property
+    def GOOGLE_API_KEYS(self) -> list[str]:
+        """List of Google/Gemini API keys for rotation"""
+        keys_str = self.GOOGLE_API_KEY_STRING
+        if not keys_str:
+            return []
+        # Support comma and newline separated
+        return [k.strip() for k in keys_str.replace('\n', ',').split(',') if k.strip()]
+
+    @property
+    def GOOGLE_API_KEY(self) -> Optional[str]:
+        # Keep this for backward compatibility and simple checks
+        keys = self.GOOGLE_API_KEYS
+        return keys[0] if keys else None
 
     # LangSmith settings
     @property
@@ -144,7 +169,7 @@ class Settings:
     # Rie configuration - hardcoded, no API key needed
     @property
     def RIE_API_URL(self) -> str:
-        return "http://localhost:8001/v1"
+        return "https://rie-api-399060682924.asia-south1.run.app/v1"
 
     @property
     def RIE_MODEL(self) -> str:
@@ -195,6 +220,16 @@ class Settings:
         Selected LLM provider: 'groq', 'gemini', 'vertex'
         """
         return self._get("LLM_PROVIDER")
+
+    @property
+    def FALLBACK_LLM_PROVIDER(self) -> Optional[str]:
+        """
+        Backup LLM provider: 'groq', 'gemini', 'vertex', 'openai', 'rie', 'ollama' or 'none'
+        """
+        provider = self._get("FALLBACK_LLM_PROVIDER")
+        if not provider or provider == "none":
+            return None
+        return provider
 
     @property
     def ENABLED_TOOLS(self) -> Optional[list[str]]:
@@ -251,6 +286,44 @@ class Settings:
         return mode if mode in {"solo", "team"} else "team"
 
     @property
+    def CONNECTIVITY_NGROK_ENABLED(self) -> bool:
+        return self._get("CONNECTIVITY_NGROK_ENABLED", "false").lower() == "true"
+
+    @property
+    def CONNECTIVITY_PUBLIC_URL(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_PUBLIC_URL") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_DEVICE_NAME(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_DEVICE_NAME") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_NGROK_INSTALL_PATH(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_NGROK_INSTALL_PATH") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_NGROK_TUNNEL_PID(self) -> Optional[int]:
+        raw = (self._get("CONNECTIVITY_NGROK_TUNNEL_PID") or "").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    @property
+    def CONNECTIVITY_NGROK_AUTH_TOKEN(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_NGROK_AUTH_TOKEN") or "").strip()
+        return value or None
+
+    @property
+    def CONNECTIVITY_NGROK_DOMAIN(self) -> Optional[str]:
+        value = (self._get("CONNECTIVITY_NGROK_DOMAIN") or "").strip()
+        return value or None
+    @property
     def HITL_MODE(self) -> str:
         """
         Human‑in‑the‑Loop (HITL) mode: 'disable', 'always', or 'let_decide'.
@@ -276,6 +349,37 @@ class Settings:
         Whether to automatically reply with voice for voice input
         """
         return self._get("VOICE_REPLY", "true").lower() == "true"
+
+    @property
+    def SHARE_LOCATION(self) -> bool:
+        """Whether the client may send GPS coordinates with chat requests."""
+        return self._get("SHARE_LOCATION", "true").lower() == "true"
+
+    @property
+    def EXCLUDE_FROM_CAPTURE(self) -> bool:
+        """Whether the application window is excluded from screen capture."""
+        return self._get("EXCLUDE_FROM_CAPTURE", "true").lower() == "true"
+
+    @property
+    def CAPTURE_SCREEN_AS_TEXT(self) -> bool:
+        """Whether to capture the screen context as text/UIA tree instead of a screenshot image."""
+        return self._get("CAPTURE_SCREEN_AS_TEXT", "false").lower() == "true"
+
+    @property
+    def FLOATING_CHAT_OPACITY(self) -> float:
+        """The opacity of the floating chat window (between 0.1 and 1.0)."""
+        try:
+            val = self._get("FLOATING_CHAT_OPACITY")
+            if val is not None:
+                return float(val)
+        except Exception:
+            pass
+        return 0.85
+
+    @property
+    def SHOW_BUBBLE(self) -> bool:
+        """Whether to show the floating bubble when minimized."""
+        return self._get("SHOW_BUBBLE", "true").lower() == "true"
 
     @property
     def TTS_PROVIDER(self) -> str:
@@ -310,7 +414,7 @@ class Settings:
         elif provider == "vertex":
             return bool(self.VERTEX_PROJECT) # Credentials might be implicit
         elif provider == "gemini":
-            return bool(self.GOOGLE_API_KEY)
+            return bool(self.GOOGLE_API_KEYS)
         elif provider == "openai":
             return bool(self.OPENAI_API_KEYS)
         elif provider == "rie":
@@ -363,7 +467,7 @@ class Settings:
             {
                 "name": "coding_specialist",
                 "description": "Expert at modifying and understanding code in the local filesystem.",
-                "system_prompt": "You are a coding specialist. You have direct access to the files.",
+                "system_prompt": "You are a coding specialist. You have direct access to the files. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw terminal scripts. Since the host OS is Windows, when running terminal commands, you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and backslashes for all paths).",
                 "tool_ids": [],
                 "enabled": True,
             },
@@ -439,6 +543,18 @@ class Settings:
     def has_tavily_key(self) -> bool:
         """Check if Tavily API key is configured"""
         return bool(self.TAVILY_API_KEY)
+
+    @property
+    def has_web_search_configured(self) -> bool:
+        """Whether the active web search provider is ready to use."""
+        provider = self.WEB_SEARCH_PROVIDER
+        if provider == "tavily":
+            return self.has_tavily_key
+        if provider == "brave":
+            return bool(self.BRAVE_SEARCH_API_KEY)
+        if provider == "duckduckgo":
+            return True
+        return self.has_tavily_key
 
 
     @property

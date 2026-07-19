@@ -1,23 +1,42 @@
-"""
+"""  """"""
 API routes/endpoints
 """
 import asyncio
 import json
 import queue
 import threading
-from typing import Any, Dict, Iterable, List, Optional, AsyncIterator
+import time
+import uuid
+from typing import Any, Dict, List, Optional, AsyncIterator
 import logging
+import httpx
 
 from fastapi import APIRouter, HTTPException, Query, File, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app.models import (
     ChatMessage, HealthResponse, SettingsUpdate, SettingsResponse, 
-    CancelRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
+    CancelRequest, ForkThreadRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
     ScheduleTaskRequest, ScheduledTaskResponse, ScheduleNotificationItem,
     SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
+    DeviceIdentity, FriendRecord, PairingRequest, PairingInitResponse, PairingConfirmRequest, PairingConfirmResponse, PeerAskRequest, PeerReceiveRequest, PeerAskResponse,
+    PairingFinalizeRequest,
+    FriendStatusResponse,
+    NgrokInstallRequest, NgrokInstallResponse, NgrokStatusResponse,
+    FriendApprovalRequest, FriendEndpointUpdateRequest,
+    FriendPeerAccessPatch, PeerAccessCatalogResponse,
+    PeerQueryEventItem,
+    PeerStreamCancelRequest,
+    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, ThreadKnowledgeItem,
+    SkillCreate, SkillUpdate, SkillResponse,
+    ImportBackupRequest,
 )
 from app.agent import agent_manager
+from app.url_preview import (
+    extract_urls,
+    fetch_url_previews,
+    format_previews_for_agent,
+)
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
 from app.config import settings
 from app.windows_tools import WINDOWS_TOOLS
@@ -28,21 +47,98 @@ from app.database import (
     update_setting,
     get_setting,
     create_thread,
+    update_thread_title,
+    count_user_messages,
     save_message,
     get_threads,
     get_thread_messages,
+    fork_thread_messages,
     delete_thread,
+    clear_all_history,
     delete_last_message,
     vacuum_checkpoint_db,
     get_unread_schedule_notifications,
     mark_schedule_notification_read,
     mark_all_schedule_notifications_read,
+    get_or_create_device_identity,
+    update_device_identity_name,
+    create_pairing_token,
+    consume_pairing_token,
+    upsert_friend,
+    list_friends,
+    get_friend_by_id,
+    get_friend_by_device_id,
+    delete_friend,
+    has_friend_thread_approval,
+    approve_friend_for_thread,
+    upsert_friend_thread,
+    update_friend_public_url,
+    update_friend_peer_access,
+    append_peer_query_event,
+    list_peer_query_events,
+    clear_peer_query_events,
+    create_knowledge_pack,
+    update_knowledge_pack,
+    get_knowledge_pack,
+    delete_knowledge_pack,
+    delete_knowledge_asset,
+    get_thread_knowledge,
+    create_skill,
+    update_skill,
+    get_skill,
+    list_skills,
+    delete_skill,
+    export_backup_data,
+    import_backup_data,
 )
+from app.knowledge import (
+    list_packs_summary,
+    get_pack_detail,
+    save_and_summarize_asset,
+    remove_asset_file,
+    prepare_thread_knowledge_for_stream,
+    lock_thread_knowledge_after_stream,
+)
+from app.peer_access import (
+    compute_effective_tool_ids,
+    friend_row_peer_policy,
+    patch_to_policy_dict,
+    split_catalog_for_profiles,
+    validate_patch_tool_ids,
+)
+from app.connectivity.manager import connectivity_manager
+from app.connectivity.constants import PEER_HTTP_ASK_TIMEOUT
+from app.connectivity.ngrok_installer import (
+    detect_existing_ngrok,
+    install_ngrok_windows,
+    start_tunnel,
+    stop_tunnel,
+    get_tunnel_runtime_status,
+)
+from app.connectivity.ngrok_setup import persist_ngrok_setup
 from fastapi.concurrency import run_in_threadpool
 import io
 import base64
 
 router = APIRouter()
+
+_friend_stream_lock = asyncio.Lock()
+_friend_stream_registry: Dict[str, Dict[str, Any]] = {}
+
+
+def _friend_record_from_row(row: Dict[str, Any]) -> FriendRecord:
+    pa = friend_row_peer_policy(row)
+    return FriendRecord(
+        id=str(row["id"]),
+        name=str(row["name"]),
+        device_id=str(row["device_id"]),
+        fingerprint=str(row["fingerprint"]),
+        public_key=str(row["public_key"]),
+        public_url=row.get("public_url"),
+        created_at=str(row["created_at"]),
+        updated_at=str(row["updated_at"]),
+        peer_access=pa,
+    )
 
 
 def _get_runtime_tool_catalog_ids() -> set[str]:
@@ -50,13 +146,18 @@ def _get_runtime_tool_catalog_ids() -> set[str]:
     tool_ids: set[str] = {
         "internet_search",
         "schedule_chat_task",
+        "remote_friend_ask",
         *WINDOWS_TOOLS.keys(),
         *[t.name for t in LTM_TOOLS],
         *[t.name for t in MCP_REGISTRY_TOOLS],
     }
     # External APIs configured by the user.
     for api in settings.EXTERNAL_APIS or []:
-        name = str(api.get("name", "")).strip() if isinstance(api, dict) else ""
+        if not isinstance(api, dict):
+            continue
+        if api.get("enabled", True) is False:
+            continue
+        name = str(api.get("name", "")).strip()
         if name:
             tool_ids.add(name)
     # MCP tools currently loaded by the MCP manager.
@@ -72,6 +173,83 @@ def _runtime_catalog_help_text() -> str:
         "Tool IDs must exist in the current runtime catalog (built-in tools, configured EXTERNAL_APIS names, "
         "or currently loaded MCP tools)."
     )
+
+
+def _build_skill_context(skill_ids: List[str], project_root: Optional[str] = None) -> str:
+    """Build a concatenated skill instructions block for system message injection, including workspace auto-discovered skills."""
+    if not skill_ids:
+        return ""
+    
+    parts = []
+    import os
+    
+    # Pre-fetch database skills to look up by ID
+    db_skills_dict = {}
+    try:
+        db_skills = list_skills()
+        for item in db_skills:
+            db_skills_dict[item["id"]] = item
+    except Exception as exc:
+        logging.warning("Failed to list skills in _build_skill_context: %s", exc)
+
+    home_dir = os.path.expanduser("~")
+    global_rie_dir = os.path.join(home_dir, ".rie")
+
+    for sid in skill_ids:
+        content = ""
+        title = sid
+        
+        # 1. DB skill check
+        if sid in db_skills_dict:
+            skill = db_skills_dict[sid]
+            title = skill.get("name", sid)
+            content = skill.get("content") or ""
+        
+        # 2. Workspace skill check
+        elif sid.startswith("ws_") and project_root and os.path.isdir(project_root):
+            sub_id = sid[3:]
+            if sub_id == "claude":
+                path = os.path.join(project_root, "CLAUDE.md")
+                title = "Workspace CLAUDE.md"
+            elif sub_id == "rie":
+                path = os.path.join(project_root, "RIE.md")
+                title = "Workspace RIE.md"
+            else:
+                path = os.path.join(project_root, ".rie", "skills", sub_id)
+                title = f"Workspace Skill ({sub_id})"
+                
+            if os.path.isfile(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception as exc:
+                    logging.warning("Failed to read workspace skill file %s: %s", path, exc)
+                    
+        # 3. Global skill check
+        elif sid.startswith("global_"):
+            sub_id = sid[7:]
+            if sub_id == "claude":
+                path = os.path.join(global_rie_dir, "CLAUDE.md")
+                title = "Global CLAUDE.md"
+            elif sub_id == "rie":
+                path = os.path.join(global_rie_dir, "RIE.md")
+                title = "Global RIE.md"
+            else:
+                path = os.path.join(global_rie_dir, "skills", sub_id)
+                title = f"Global Skill ({sub_id})"
+                
+            if os.path.isfile(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception as exc:
+                    logging.warning("Failed to read global skill file %s: %s", path, exc)
+                    
+        if content.strip():
+            parts.append(f"--- START SKILL: {title} ---\n{content.strip()}\n--- END SKILL: {title} ---")
+            
+    return "\n\n".join(parts)
+
 
 def _validate_subagents_config(raw_value: str) -> list[dict]:
     """Validate SUBAGENTS_CONFIG payload and return normalized objects."""
@@ -372,7 +550,6 @@ async def get_rie_usage():
     if not settings.RIE_ACCESS_TOKEN:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    import httpx
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -395,12 +572,61 @@ async def get_rie_usage():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+GEMINI_MODEL_FALLBACK = [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
+
+
+@router.get("/gemini/models")
+async def get_gemini_models():
+    """
+    Fetch available Gemini models from the Generative Language API (uses configured Google API key).
+    """
+    api_key = settings.GOOGLE_API_KEY
+    if not api_key or api_key == "your_gemini_api_key_here":
+        return {"models": GEMINI_MODEL_FALLBACK}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={"key": api_key},
+                timeout=10.0,
+            )
+            if response.status_code != 200:
+                logging.error("Failed to fetch Gemini models: %s", response.text)
+                return {"models": GEMINI_MODEL_FALLBACK}
+
+            data = response.json()
+            models: List[str] = []
+            for model in data.get("models", []):
+                methods = model.get("supportedGenerationMethods") or []
+                if "generateContent" not in methods:
+                    continue
+                name = model.get("name", "")
+                if name.startswith("models/"):
+                    name = name[len("models/") :]
+                if name:
+                    models.append(name)
+
+            models.sort()
+            return {"models": models if models else GEMINI_MODEL_FALLBACK}
+    except Exception as e:
+        logging.error("Failed to fetch Gemini models: %s", e)
+        return {"models": GEMINI_MODEL_FALLBACK}
+
+
 @router.get("/ollama/models")
 async def get_ollama_models():
     """
     Fetch list of downloaded models from Ollama instance (uses configured endpoint and optional API key).
     """
-    import httpx
     try:
         headers = {}
         if settings.OLLAMA_API_KEY:
@@ -422,6 +648,23 @@ async def get_ollama_models():
         return {"models": []}
 
 
+@router.get("/key-rotation-stats")
+async def get_key_rotation_stats():
+    """
+    Get per-key rotation usage statistics for the active LLM provider.
+    Returns null/empty if only a single key is configured or provider is not rotating.
+    """
+    stats = agent_manager.get_key_rotation_stats()
+    if stats is None:
+        return {
+            "rotating": False,
+            "provider": settings.LLM_PROVIDER or "unknown",
+            "total_keys": 0,
+            "keys": [],
+        }
+    return {"rotating": True, **stats}
+
+
 @router.get("/settings", response_model=SettingsResponse)
 async def get_settings():
     """
@@ -430,32 +673,19 @@ async def get_settings():
     settings.reload()
     
     def mask_key(key: Optional[str]) -> Optional[str]:
-        if not key:
-            return key
-        
-        # Support multiple keys (comma or newline separated)
-        if ',' in key or '\n' in key:
-            keys = [k.strip() for k in key.replace('\n', ',').split(',') if k.strip()]
-            masked_keys = []
-            for k in keys:
-                if len(k) <= 8:
-                    masked_keys.append("*" * len(k))
-                else:
-                    masked_keys.append(f"{k[:4]}{'*' * (len(k) - 8)}{k[-4:]}")
-            return ", ".join(masked_keys)
-
-        if len(key) <= 8:
-            return "*" * len(key)
-        return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
+        return key
 
     return SettingsResponse(
         groq_api_key=mask_key(settings.GROQ_API_KEY_STRING),
-        google_api_key=mask_key(settings.GOOGLE_API_KEY),
-        openai_api_key=mask_key(settings.OPENAI_API_KEY),
+        google_api_key=mask_key(settings.GOOGLE_API_KEY_STRING),
+        openai_api_key=mask_key(settings.OPENAI_API_KEY_STRING),
         anthropic_api_key=mask_key(settings.ANTHROPIC_API_KEY),
         tavily_api_key=mask_key(settings.TAVILY_API_KEY),
-        
+        brave_search_api_key=mask_key(settings.BRAVE_SEARCH_API_KEY),
+        web_search_provider=settings.WEB_SEARCH_PROVIDER,
+
         llm_provider=settings.LLM_PROVIDER,
+        fallback_llm_provider=settings.FALLBACK_LLM_PROVIDER,
         vertex_project=settings.VERTEX_PROJECT,
         vertex_location=settings.VERTEX_LOCATION,
         vertex_credentials_path=settings.VERTEX_CREDENTIALS_PATH,
@@ -481,6 +711,11 @@ async def get_settings():
         langsmith_project=settings.LANGSMITH_PROJECT,
         langsmith_endpoint=settings.LANGSMITH_ENDPOINT,
         voice_reply=settings.VOICE_REPLY,
+        share_location=settings.SHARE_LOCATION,
+        exclude_from_capture=settings.EXCLUDE_FROM_CAPTURE,
+        capture_screen_as_text=settings.CAPTURE_SCREEN_AS_TEXT,
+        floating_chat_opacity=settings.FLOATING_CHAT_OPACITY,
+        show_bubble=settings.SHOW_BUBBLE,
         rie_access_token=mask_key(settings.RIE_ACCESS_TOKEN),
         tts_provider=settings.TTS_PROVIDER,
         tts_voice=settings.TTS_VOICE,
@@ -492,7 +727,38 @@ async def get_settings():
         external_apis=settings.EXTERNAL_APIS,
         subagents_config=settings.SUBAGENTS_CONFIG,
         subagent_planner_graph=settings.SUBAGENT_PLANNER_GRAPH,
+        connectivity_ngrok_enabled=settings.CONNECTIVITY_NGROK_ENABLED,
+        connectivity_public_url=settings.CONNECTIVITY_PUBLIC_URL,
+        connectivity_device_name=settings.CONNECTIVITY_DEVICE_NAME,
+        connectivity_ngrok_install_path=settings.CONNECTIVITY_NGROK_INSTALL_PATH,
+        connectivity_ngrok_domain=settings.CONNECTIVITY_NGROK_DOMAIN,
     )
+
+
+def _looks_like_masked_secret(value: str) -> bool:
+    """Detect masked API keys returned by GET /settings (e.g. tvly****abcd)."""
+    if not value:
+        return False
+    
+    # Split by comma or newline for multi-key support
+    parts = [p.strip() for p in value.replace('\n', ',').split(',') if p.strip()]
+    if not parts:
+        return False
+        
+    def _is_single_masked(val: str) -> bool:
+        if len(val) <= 8:
+            return set(val) == {"*"}
+        middle = val[4:-4]
+        return bool(middle) and all(ch == "*" for ch in middle)
+        
+    return any(_is_single_masked(p) for p in parts)
+
+
+_SECRET_SETTING_KEYS = frozenset({
+    "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY", "LANGSMITH_API_KEY",
+    "RIE_ACCESS_TOKEN", "OLLAMA_API_KEY", "CONNECTIVITY_NGROK_AUTH_TOKEN",
+})
 
 
 @router.post("/settings")
@@ -503,17 +769,24 @@ async def update_settings(data: SettingsUpdate):
     # Allowed keys to prevent arbitrary DB writes
     ALLOWED_KEYS = {
         "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", 
-        "ANTHROPIC_API_KEY", "TAVILY_API_KEY", 
+        "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY",
+        "WEB_SEARCH_PROVIDER",
         "VERTEX_PROJECT", "VERTEX_LOCATION", "VERTEX_CREDENTIALS_PATH",
-        "LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
+        "LLM_PROVIDER", "FALLBACK_LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
-        "VOICE_REPLY", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
+        "VOICE_REPLY", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "CAPTURE_SCREEN_AS_TEXT", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
         "OLLAMA_MODEL", "OLLAMA_API_URL", "OLLAMA_API_KEY", "EXTERNAL_APIS",
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
         "SUBAGENTS_CONFIG",
         "SUBAGENT_PLANNER_GRAPH",
+        "CONNECTIVITY_NGROK_ENABLED",
+        "CONNECTIVITY_PUBLIC_URL",
+        "CONNECTIVITY_DEVICE_NAME",
+        "CONNECTIVITY_NGROK_INSTALL_PATH",
+        "CONNECTIVITY_NGROK_AUTH_TOKEN",
+        "CONNECTIVITY_NGROK_DOMAIN",
     }
     
     if data.key not in ALLOWED_KEYS:
@@ -528,8 +801,34 @@ async def update_settings(data: SettingsUpdate):
         if mode not in {"disable", "always", "let_decide"}:
             raise HTTPException(status_code=400, detail="HITL_MODE must be 'disable', 'always' or 'let_decide'")
         value_to_store = mode
+    elif data.key == "WEB_SEARCH_PROVIDER":
+        provider = (data.value or "").strip().lower()
+        if provider not in {"tavily", "brave", "duckduckgo"}:
+            raise HTTPException(
+                status_code=400,
+                detail="WEB_SEARCH_PROVIDER must be 'tavily', 'brave', or 'duckduckgo'",
+            )
+        value_to_store = provider
+    elif data.key == "FLOATING_CHAT_OPACITY":
+        try:
+            val = float(data.value)
+            if not (0.1 <= val <= 1.0):
+                raise ValueError()
+            value_to_store = str(val)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="FLOATING_CHAT_OPACITY must be a float between 0.1 and 1.0",
+            )
     else:
         value_to_store = data.value
+
+    if data.key in _SECRET_SETTING_KEYS and _looks_like_masked_secret(str(value_to_store or "")):
+        return {
+            "status": "success",
+            "message": f"{data.key} unchanged (masked display value was not saved)",
+        }
+
     derived_subagents_value: Optional[str] = None
     if data.key == "SUBAGENTS_CONFIG":
         validated = _validate_subagents_config(data.value)
@@ -541,8 +840,54 @@ async def update_settings(data: SettingsUpdate):
         validated_subagents = _validate_subagents_config(json.dumps(derived_subagents))
         derived_subagents_value = json.dumps(validated_subagents)
 
+    ngrok_toggle_message: Optional[str] = None
+
     # Update DB
     update_setting(data.key, value_to_store)
+    if data.key == "CONNECTIVITY_NGROK_ENABLED":
+        enabled = str(value_to_store).strip().lower() == "true"
+        if not enabled:
+            pid_raw = (get_setting("CONNECTIVITY_NGROK_TUNNEL_PID") or "").strip()
+            pid_hint = int(pid_raw) if pid_raw.isdigit() else None
+            stop_result = await run_in_threadpool(stop_tunnel, pid_hint)
+            update_setting("CONNECTIVITY_PUBLIC_URL", "")
+            update_setting("CONNECTIVITY_NGROK_TUNNEL_PID", "")
+            ngrok_toggle_message = stop_result.get("message") or "ngrok stopped"
+        else:
+            token = (get_setting("CONNECTIVITY_NGROK_AUTH_TOKEN") or "").strip()
+            domain = (get_setting("CONNECTIVITY_NGROK_DOMAIN") or "").strip() or None
+            install_path = (get_setting("CONNECTIVITY_NGROK_INSTALL_PATH") or "").strip()
+            if not install_path:
+                detected = await run_in_threadpool(detect_existing_ngrok)
+                install_path = (detected.get("path") or "").strip()
+            if token and install_path:
+                try:
+                    start_result = await run_in_threadpool(start_tunnel, install_path, token, domain)
+                except Exception as exc:
+                    start_result = {
+                        "ok": False,
+                        "running": False,
+                        "pid": None,
+                        "public_url": None,
+                        "message": f"ngrok start failed: {exc}",
+                    }
+                if start_result.get("ok"):
+                    await run_in_threadpool(
+                        persist_ngrok_setup,
+                        install_path,
+                        start_result.get("public_url"),
+                        start_result.get("pid"),
+                        domain,
+                    )
+                    ngrok_toggle_message = "ngrok tunnel started from saved settings"
+                else:
+                    update_setting("CONNECTIVITY_PUBLIC_URL", "")
+                    update_setting("CONNECTIVITY_NGROK_TUNNEL_PID", "")
+                    ngrok_toggle_message = start_result.get("message") or "ngrok tunnel failed to start"
+            else:
+                update_setting("CONNECTIVITY_PUBLIC_URL", "")
+                update_setting("CONNECTIVITY_NGROK_TUNNEL_PID", "")
+                ngrok_toggle_message = "ngrok enabled; complete setup by saving auth token and install path"
     if derived_subagents_value is not None:
         update_setting("SUBAGENTS_CONFIG", derived_subagents_value)
     
@@ -552,7 +897,6 @@ async def update_settings(data: SettingsUpdate):
     # Re-initialize agent if possible (Async)
     # This might fail if other keys are missing, but that's expected
     try:
-        import asyncio
         # We don't want to block the request on re-init, 
         # but we can trigger it or just let the next request do it.
         # Since initialize_agent is now async, we'll let the next request handle it
@@ -567,7 +911,1339 @@ async def update_settings(data: SettingsUpdate):
             "status": "success",
             "message": "Updated SUBAGENT_PLANNER_GRAPH and auto-synced SUBAGENTS_CONFIG",
         }
+    if data.key == "CONNECTIVITY_NGROK_ENABLED" and ngrok_toggle_message:
+        return {
+            "status": "success",
+            "message": f"Updated {data.key}: {ngrok_toggle_message}",
+        }
     return {"status": "success", "message": f"Updated {data.key}"}
+
+
+@router.get("/settings/export-backup")
+async def export_backup(
+    settings: bool = Query(False),
+    apis: bool = Query(False),
+    tools: bool = Query(False),
+    conversations: bool = Query(False),
+    knowledge: bool = Query(False)
+):
+    """
+    Export database configuration and history selectively
+    """
+    sections = []
+    if settings:
+        sections.append("settings")
+    if apis:
+        sections.append("apis")
+    if tools:
+        sections.append("tools")
+    if conversations:
+        sections.append("conversations")
+    if knowledge:
+        sections.append("knowledge")
+        
+    try:
+        backup_data = await run_in_threadpool(export_backup_data, sections)
+        return backup_data
+    except Exception as e:
+        logging.error(f"Failed to export backup data: {e}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@router.post("/settings/import-backup")
+async def import_backup(req: ImportBackupRequest):
+    """
+    Import database configuration and history selectively
+    """
+    try:
+        result = await run_in_threadpool(import_backup_data, req.import_sections, req.data)
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail="\n".join(result.get("messages", [])))
+        
+        # Reload settings in memory
+        settings.reload()
+        
+        # Re-initialize the agent since API keys or settings might have changed!
+        try:
+            agent_manager._agent = None # Force re-init on next request
+        except Exception as agent_err:
+            logging.error(f"Failed to reset agent after import: {agent_err}")
+            
+        return result
+    except Exception as e:
+        logging.error(f"Failed to import backup data: {e}")
+        raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
+
+
+def _identity_payload() -> Dict[str, Any]:
+    identity = get_or_create_device_identity()
+    configured_name = settings.CONNECTIVITY_DEVICE_NAME
+    if configured_name and configured_name != identity["name"]:
+        identity = update_device_identity_name(configured_name)
+    public_url = settings.CONNECTIVITY_PUBLIC_URL if settings.CONNECTIVITY_NGROK_ENABLED else None
+    return {
+        "device_id": identity["device_id"],
+        "name": identity["name"],
+        "public_key": identity["public_key"],
+        "fingerprint": identity["fingerprint"],
+        "public_url": public_url,
+    }
+
+
+def _normalize_public_url(value: Optional[str]) -> Optional[str]:
+    normalized = (value or "").strip()
+    return normalized or None
+
+
+def _peer_error_code(status_code: int) -> str:
+    if status_code in (401, 403):
+        return "auth_failed"
+    if status_code == 404:
+        return "endpoint_not_found"
+    if status_code == 422:
+        return "invalid_payload"
+    if status_code >= 500:
+        return "peer_server_error"
+    return "peer_rejected"
+
+
+def _extract_peer_http_error_detail(response: httpx.Response, max_len: int = 800) -> Optional[str]:
+    """Best-effort parse of FastAPI / JSON error bodies from peer responses."""
+    try:
+        data = response.json()
+    except Exception:
+        body = response.text.strip()
+        return body[:max_len] + ("..." if len(body) > max_len else "") if body else None
+    detail = data.get("detail") if isinstance(data, dict) else None
+    if isinstance(detail, str) and detail.strip():
+        text = detail.strip()
+    elif isinstance(detail, list) and detail:
+        parts: list[str] = []
+        for item in detail:
+            if isinstance(item, dict):
+                msg = item.get("msg") or item.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    parts.append(msg.strip())
+        text = "; ".join(parts[:5]) if parts else ""
+    else:
+        message = data.get("message") if isinstance(data, dict) else None
+        text = message.strip() if isinstance(message, str) and message.strip() else ""
+
+    if not text:
+        return None
+    return text[:max_len] + ("..." if len(text) > max_len else "")
+
+
+def _peer_log_http_exception_detail(exc: HTTPException) -> str:
+    d = exc.detail
+    if isinstance(d, str):
+        return d
+    return str(d)
+
+
+async def _friend_stream_register(stream_id: str, info: Dict[str, Any]) -> None:
+    async with _friend_stream_lock:
+        _friend_stream_registry[stream_id] = info
+
+
+async def _friend_stream_unregister(stream_id: str) -> None:
+    async with _friend_stream_lock:
+        _friend_stream_registry.pop(stream_id, None)
+
+
+async def _friend_stream_lookup(
+    *,
+    stream_id: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    friend_id: Optional[str] = None,
+) -> Optional[tuple[str, Dict[str, Any]]]:
+    async with _friend_stream_lock:
+        if stream_id:
+            info = _friend_stream_registry.get(stream_id)
+            if info:
+                return stream_id, info
+            return None
+        for sid, info in _friend_stream_registry.items():
+            if thread_id and info.get("thread_id") != thread_id:
+                continue
+            if friend_id and info.get("friend_id") != friend_id:
+                continue
+            return sid, info
+    return None
+
+
+def _peer_flatten_message_content(msg: Any) -> str:
+    """Plain text from a LangChain message object or dict."""
+    if isinstance(msg, dict):
+        content: Any = msg.get("content", "")
+    elif hasattr(msg, "content"):
+        content = getattr(msg, "content")
+    else:
+        return ""
+
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str) and part.strip():
+                parts.append(part.strip())
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        return "\n".join(parts)
+    return ""
+
+
+def _peer_message_is_assistant_reply(msg: Any) -> bool:
+    """True for model/user-facing assistant output; false for tools, human, system."""
+    if isinstance(msg, dict):
+        mt = str(msg.get("type", "")).lower()
+        role = str(msg.get("role", "")).lower()
+        if mt == "tool" or role == "tool":
+            return False
+        if mt in {"ai", "assistant"} or role in {"assistant", "ai"}:
+            return True
+        return False
+    cls = getattr(msg.__class__, "__name__", "")
+    if "ToolMessage" in cls or "HumanMessage" in cls or "SystemMessage" in cls:
+        return False
+    if "AIMessage" in cls:
+        return True
+    if hasattr(msg, "type"):
+        t = str(getattr(msg, "type", "")).lower()
+        if t in {"tool", "human", "system"}:
+            return False
+        if t in {"ai", "assistant"}:
+            return True
+    return False
+
+
+def _extract_peer_assistant_text(agent_result: Any) -> str:
+    """
+    Best-effort extraction of assistant text from agent invoke output.
+    LangGraph returns LangChain message objects (not dicts); we must duck-type them.
+    """
+    if isinstance(agent_result, str):
+        return agent_result.strip()
+    if not isinstance(agent_result, dict):
+        return ""
+
+    messages = agent_result.get("messages")
+    if not isinstance(messages, list):
+        return ""
+
+    for msg in reversed(messages):
+        if not _peer_message_is_assistant_reply(msg):
+            continue
+        text = _peer_flatten_message_content(msg)
+        if text:
+            return text
+
+    return ""
+
+
+@router.get("/connectivity/identity", response_model=DeviceIdentity)
+async def get_connectivity_identity():
+    return DeviceIdentity(**_identity_payload())
+
+
+@router.post("/connectivity/pair/init", response_model=PairingInitResponse)
+async def connectivity_pair_init(data: PairingRequest):
+    if data.name and data.name.strip():
+        update_setting("CONNECTIVITY_DEVICE_NAME", data.name.strip())
+        settings.reload()
+    token = create_pairing_token()
+    return PairingInitResponse(
+        pairing_token=token,
+        identity=DeviceIdentity(**_identity_payload()),
+    )
+
+
+@router.post("/connectivity/pair/confirm", response_model=PairingConfirmResponse)
+async def connectivity_pair_confirm(data: PairingConfirmRequest):
+    if not consume_pairing_token(data.pairing_token):
+        raise HTTPException(status_code=400, detail="Invalid or expired pairing token")
+    peer_public_url = _normalize_public_url(data.peer_public_url)
+    friend = upsert_friend(
+        name=data.peer_name.strip(),
+        device_id=data.peer_device_id.strip(),
+        fingerprint=data.peer_fingerprint.strip(),
+        public_key=data.peer_public_key.strip(),
+        public_url=peer_public_url,
+    )
+    local_identity = _identity_payload()
+    finalize_payload = PairingFinalizeRequest(
+        peer_name=local_identity["name"],
+        peer_device_id=local_identity["device_id"],
+        peer_fingerprint=local_identity["fingerprint"],
+        peer_public_key=local_identity["public_key"],
+        peer_public_url=local_identity.get("public_url"),
+    )
+    finalize_endpoint = f"{peer_public_url.rstrip('/')}/connectivity/pair/finalize" if peer_public_url else None
+
+    reciprocal_synced = False
+    reciprocal_status = "not_attempted"
+    reciprocal_code: Optional[str] = None
+    reciprocal_message: Optional[str] = None
+
+    if not peer_public_url:
+        reciprocal_status = "skipped"
+        reciprocal_code = "missing_peer_public_url"
+        reciprocal_message = "Peer public URL is missing; open Receiver and import finalize payload manually."
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    finalize_endpoint,
+                    json=finalize_payload.model_dump(),
+                )
+            if response.status_code >= 400:
+                reciprocal_status = "failed"
+                reciprocal_code = _peer_error_code(response.status_code)
+                reciprocal_message = f"Peer finalize failed ({response.status_code})"
+            else:
+                reciprocal_synced = True
+                reciprocal_status = "synced"
+                reciprocal_message = "Friend saved on both devices."
+        except httpx.TimeoutException:
+            reciprocal_status = "failed"
+            reciprocal_code = "timeout"
+            reciprocal_message = "Timed out reaching peer finalize endpoint."
+        except httpx.ConnectError:
+            reciprocal_status = "failed"
+            reciprocal_code = "unreachable"
+            reciprocal_message = "Could not connect to peer finalize endpoint."
+        except Exception as exc:
+            reciprocal_status = "failed"
+            reciprocal_code = "network_error"
+            reciprocal_message = f"Peer finalize failed: {exc}"
+
+    return PairingConfirmResponse(
+        friend=_friend_record_from_row(friend),
+        reciprocal_synced=reciprocal_synced,
+        reciprocal_status=reciprocal_status,
+        reciprocal_code=reciprocal_code,
+        reciprocal_message=reciprocal_message,
+        finalize_endpoint=finalize_endpoint,
+        finalize_payload=finalize_payload,
+    )
+
+
+@router.post("/connectivity/pair/finalize", response_model=FriendRecord)
+async def connectivity_pair_finalize(data: PairingFinalizeRequest):
+    friend = upsert_friend(
+        name=data.peer_name.strip(),
+        device_id=data.peer_device_id.strip(),
+        fingerprint=data.peer_fingerprint.strip(),
+        public_key=data.peer_public_key.strip(),
+        public_url=(data.peer_public_url or "").strip() or None,
+    )
+    return _friend_record_from_row(friend)
+
+
+@router.get("/connectivity/peer-access/catalog", response_model=PeerAccessCatalogResponse)
+async def connectivity_peer_access_catalog():
+    full = _get_runtime_tool_catalog_ids()
+    chat_eligible, agent_eligible = split_catalog_for_profiles(full)
+    return PeerAccessCatalogResponse(chat_eligible=chat_eligible, agent_eligible=agent_eligible)
+
+
+@router.patch("/connectivity/friends/{friend_id}/access", response_model=FriendRecord)
+async def connectivity_friend_access_patch(friend_id: str, data: FriendPeerAccessPatch):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    full = _get_runtime_tool_catalog_ids()
+    try:
+        validate_patch_tool_ids(data, full)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    payload = patch_to_policy_dict(data)
+    updated = update_friend_peer_access(friend_id, json.dumps(payload))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    return _friend_record_from_row(updated)
+
+
+@router.get("/connectivity/friends", response_model=List[FriendRecord])
+async def connectivity_friends():
+    return [_friend_record_from_row(item) for item in list_friends()]
+
+
+@router.delete("/connectivity/friends/{friend_id}")
+async def connectivity_friend_delete(friend_id: str):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    deleted = delete_friend(friend_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    return {"status": "success", "friend_id": friend_id}
+
+
+@router.post("/connectivity/friends/{friend_id}/ask", response_model=PeerAskResponse)
+async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
+    if friend_id != data.friend_id:
+        raise HTTPException(status_code=400, detail="Friend ID mismatch")
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+
+    q_log = (data.query or "").strip()
+    thread_id = (data.thread_id or "").strip() or str(uuid.uuid4())
+    fid = friend["id"]
+    fname = friend["name"]
+    await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+    await run_in_threadpool(save_message, thread_id, "user", q_log or "(empty)")
+
+    try:
+        target_url = connectivity_manager.resolve_peer(friend)
+    except RuntimeError as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            str(exc),
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    source_identity = _identity_payload()
+    endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
+    payload = {
+        "from_device_id": source_identity["device_id"],
+        "from_fingerprint": source_identity["fingerprint"],
+        "query": data.query,
+        "thread_id": thread_id,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=PEER_HTTP_ASK_TIMEOUT) as client:
+            response = await client.post(endpoint, json=payload)
+            if response.status_code >= 400:
+                base = f"Peer ask failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                peer_snippet = _extract_peer_http_error_detail(response)
+                detail = f"{base}: {peer_snippet}" if peer_snippet else base
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "outbound",
+                    fid,
+                    fname,
+                    q_log or "(empty)",
+                    "error",
+                    None,
+                    detail,
+                )
+                raise HTTPException(status_code=502, detail=detail)
+            body = response.json()
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            "Peer ask timed out [timeout]",
+        )
+        raise HTTPException(status_code=502, detail="Peer ask timed out [timeout]") from exc
+    except httpx.ConnectError as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            "Peer ask endpoint unreachable [unreachable]",
+        )
+        raise HTTPException(status_code=502, detail="Peer ask endpoint unreachable [unreachable]") from exc
+    except Exception as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "outbound",
+            fid,
+            fname,
+            q_log or "(empty)",
+            "error",
+            None,
+            f"Failed to reach peer [network_error]: {exc}",
+        )
+        raise HTTPException(status_code=502, detail=f"Failed to reach peer [network_error]: {exc}") from exc
+
+    responder_url = _normalize_public_url(str(body.get("responder_public_url") or ""))
+    if responder_url and responder_url != friend.get("public_url"):
+        update_friend_public_url(friend_id, responder_url)
+
+    msg_preview = str(body.get("message", ""))
+    responder_thread_id = str(body.get("thread_id") or thread_id)
+    await run_in_threadpool(upsert_friend_thread, responder_thread_id, fid, fname)
+    await run_in_threadpool(save_message, responder_thread_id, "assistant", msg_preview)
+    await run_in_threadpool(
+        append_peer_query_event,
+        "outbound",
+        fid,
+        fname,
+        q_log or "(empty)",
+        "ok",
+        msg_preview,
+        None,
+    )
+
+    return PeerAskResponse(
+        status=str(body.get("status", "online")),
+        message=msg_preview,
+        thread_id=responder_thread_id,
+        responder_device_id=str(body.get("responder_device_id", friend["device_id"])),
+    )
+
+
+@router.post("/connectivity/friends/{friend_id}/ask/stream")
+async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
+    if friend_id != data.friend_id:
+        raise HTTPException(status_code=400, detail="Friend ID mismatch")
+
+    q_log = (data.query or "").strip()
+    thread_id = (data.thread_id or "").strip() or str(uuid.uuid4())
+    stream_id = str(uuid.uuid4())
+
+    async def event_generator():
+        full_response: List[str] = []
+        stream_error: Optional[str] = None
+        forwarded_events = 0
+        payload: Dict[str, Any] = {}
+        peer_stream_endpoint = ""
+        peer_legacy_endpoint = ""
+        peer_cancel_endpoint = ""
+        fid = friend_id
+        fname = "Friend"
+
+        async def _fallback_legacy_once(client: httpx.AsyncClient) -> None:
+            nonlocal stream_error
+            nonlocal forwarded_events
+            yield f"data: {json.dumps({'step': 'meta', 'peer_mode': 'fallback'})}\n\n"
+            forwarded_events += 1
+            response = await client.post(peer_legacy_endpoint, json=payload)
+            if response.status_code >= 400:
+                base = f"Peer ask fallback failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                peer_snippet = _extract_peer_http_error_detail(response)
+                detail = f"{base}: {peer_snippet}" if peer_snippet else base
+                stream_error = detail
+                yield_payload = {"error": "peer_stream_failed", "details": detail}
+                yield f"data: {json.dumps(yield_payload)}\n\n"
+                return
+            body = response.json()
+            text = str(body.get("message", "")).strip()
+            if text:
+                full_response.append(text)
+                forwarded_events += 1
+                yield f"data: {json.dumps({'step': 'model', 'message': {'type': 'assistant', 'content': text}}, default=str)}\n\n"
+            yield f"data: {json.dumps({'step': 'end', 'done': True}, default=str)}\n\n"
+
+        try:
+            start_payload = {
+                "step": "start",
+                "stream_id": stream_id,
+                "thread_id": thread_id,
+                "friend_id": fid,
+                "friend_name": fname,
+            }
+            yield f"data: {json.dumps(start_payload)}\n\n"
+            forwarded_events += 1
+
+            friend = await run_in_threadpool(get_friend_by_id, friend_id)
+            if not friend:
+                stream_error = "Friend not found"
+                yield f"data: {json.dumps({'error': 'friend_not_found', 'details': stream_error})}\n\n"
+                return
+
+            fid = friend["id"]
+            fname = friend["name"]
+            await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+            await run_in_threadpool(save_message, thread_id, "user", q_log or "(empty)")
+            try:
+                target_url = connectivity_manager.resolve_peer(friend)
+            except RuntimeError as exc:
+                stream_error = str(exc)
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "outbound",
+                    fid,
+                    fname,
+                    q_log or "(empty)",
+                    "error",
+                    None,
+                    stream_error,
+                )
+                yield f"data: {json.dumps({'error': 'resolve_peer_failed', 'details': stream_error})}\n\n"
+                return
+
+            source_identity = _identity_payload()
+            peer_stream_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive/stream"
+            peer_legacy_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
+            peer_cancel_endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive/stream/cancel"
+            payload = {
+                "from_device_id": source_identity["device_id"],
+                "from_fingerprint": source_identity["fingerprint"],
+                "query": data.query,
+                "thread_id": thread_id,
+            }
+            await _friend_stream_register(
+                stream_id,
+                {
+                    "stream_id": stream_id,
+                    "thread_id": thread_id,
+                    "friend_id": fid,
+                    "friend_name": fname,
+                    "peer_cancel_endpoint": peer_cancel_endpoint,
+                    "peer_cancel_payload": {"thread_id": thread_id, "stream_id": stream_id},
+                    "task": asyncio.current_task(),
+                },
+            )
+
+            async with httpx.AsyncClient(timeout=PEER_HTTP_ASK_TIMEOUT) as client:
+                async with client.stream("POST", peer_stream_endpoint, json=payload) as response:
+                    if response.status_code < 400:
+                        yield f"data: {json.dumps({'step': 'meta', 'peer_mode': 'stream'})}\n\n"
+                        forwarded_events += 1
+                    if response.status_code >= 400:
+                        # Backward compatibility: remote peer may not have stream endpoint yet.
+                        if response.status_code in (404, 405):
+                            async for item in _fallback_legacy_once(client):
+                                yield item
+                            return
+                        base = f"Peer ask stream failed ({response.status_code}) [{_peer_error_code(response.status_code)}]"
+                        peer_snippet = _extract_peer_http_error_detail(response)
+                        detail = f"{base}: {peer_snippet}" if peer_snippet else base
+                        stream_error = detail
+                        yield f"data: {json.dumps({'error': 'peer_stream_failed', 'details': detail})}\n\n"
+                        return
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:].strip()
+                        if not data_str:
+                            continue
+                        try:
+                            evt = json.loads(data_str)
+                        except Exception:
+                            continue
+                        msg = evt.get("message", {}) if isinstance(evt, dict) else {}
+                        if evt.get("step") == "model" and isinstance(msg, dict):
+                            content = msg.get("content")
+                            if isinstance(content, str) and content:
+                                full_response.append(content)
+                        if evt.get("error"):
+                            details = str(evt.get("details") or evt.get("error"))
+                            stream_error = details
+                        forwarded_events += 1
+                        yield f"data: {json.dumps(evt, default=str)}\n\n"
+                    # If the peer returned 200 but emitted nothing parseable as SSE, fallback once.
+                    if forwarded_events <= 2:
+                        async for item in _fallback_legacy_once(client):
+                            yield item
+                        return
+        except asyncio.CancelledError:
+            stream_error = "Friend stream cancelled"
+            raise
+        except httpx.TimeoutException:
+            try:
+                async with httpx.AsyncClient(timeout=PEER_HTTP_ASK_TIMEOUT) as fallback_client:
+                    async for item in _fallback_legacy_once(fallback_client):
+                        yield item
+                return
+            except Exception:
+                stream_error = "Peer ask stream timed out [timeout]"
+                yield f"data: {json.dumps({'error': 'timeout', 'details': stream_error})}\n\n"
+        except httpx.ConnectError:
+            try:
+                async with httpx.AsyncClient(timeout=PEER_HTTP_ASK_TIMEOUT) as fallback_client:
+                    async for item in _fallback_legacy_once(fallback_client):
+                        yield item
+                return
+            except Exception:
+                stream_error = "Peer ask stream endpoint unreachable [unreachable]"
+                yield f"data: {json.dumps({'error': 'unreachable', 'details': stream_error})}\n\n"
+        except Exception as exc:
+            try:
+                async with httpx.AsyncClient(timeout=PEER_HTTP_ASK_TIMEOUT) as fallback_client:
+                    async for item in _fallback_legacy_once(fallback_client):
+                        yield item
+                return
+            except Exception:
+                detail = str(exc).strip() or exc.__class__.__name__
+                stream_error = f"Failed to reach peer stream [network_error]: {detail}"
+                yield f"data: {json.dumps({'error': 'network_error', 'details': stream_error})}\n\n"
+        finally:
+            final_text = "".join(full_response).strip()
+            if final_text:
+                await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+                await run_in_threadpool(save_message, thread_id, "assistant", final_text)
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "outbound",
+                    fid,
+                    fname,
+                    q_log or "(empty)",
+                    "ok",
+                    final_text,
+                    None,
+                )
+            elif stream_error:
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "outbound",
+                    fid,
+                    fname,
+                    q_log or "(empty)",
+                    "error",
+                    None,
+                    stream_error,
+                )
+            await _friend_stream_unregister(stream_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
+    )
+
+
+@router.get("/connectivity/friends/{friend_id}/status", response_model=FriendStatusResponse)
+async def connectivity_friend_status(friend_id: str):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    checked_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        target_url = connectivity_manager.resolve_peer(friend)
+    except RuntimeError as exc:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=None,
+            message=str(exc),
+            checked_at=checked_at,
+            failure_code="resolve_failed",
+            failure_stage="resolve_peer",
+        )
+
+    source_identity = _identity_payload()
+    endpoint = f"{target_url.rstrip('/')}/connectivity/peer/receive"
+    payload = {
+        "from_device_id": source_identity["device_id"],
+        "from_fingerprint": source_identity["fingerprint"],
+        "query": "status_ping",
+    }
+    started = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(endpoint, json=payload)
+            if response.status_code >= 400:
+                code = _peer_error_code(response.status_code)
+                return FriendStatusResponse(
+                    friend_id=friend_id,
+                    reachable=False,
+                    status="offline",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    message=f"Peer call failed ({response.status_code}) [{code}]",
+                    checked_at=checked_at,
+                    failure_code=code,
+                    failure_stage="peer_receive",
+                )
+            body = response.json()
+        peer_status = str(body.get("status", "online")).strip().lower()
+        responder_url = _normalize_public_url(str(body.get("responder_public_url") or ""))
+        failure_code = str(body.get("failure_code") or "").strip().lower() or None
+        if responder_url and responder_url != friend.get("public_url"):
+            update_friend_public_url(friend_id, responder_url)
+        elif failure_code == "connectivity_disabled":
+            update_friend_public_url(friend_id, None)
+        reachable = peer_status == "online"
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=reachable,
+            status=peer_status if peer_status else "offline",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message=str(body.get("message", "reachable")),
+            checked_at=checked_at,
+            failure_code=failure_code,
+            failure_stage=None,
+        )
+    except httpx.TimeoutException:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message="Peer call timed out",
+            checked_at=checked_at,
+            failure_code="timeout",
+            failure_stage="network",
+        )
+    except httpx.ConnectError:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message="Peer endpoint unreachable",
+            checked_at=checked_at,
+            failure_code="unreachable",
+            failure_stage="network",
+        )
+    except Exception as exc:
+        return FriendStatusResponse(
+            friend_id=friend_id,
+            reachable=False,
+            status="offline",
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            message=f"Failed to reach peer: {exc}",
+            checked_at=checked_at,
+            failure_code="network_error",
+            failure_stage="network",
+        )
+
+
+@router.post("/connectivity/peer/receive", response_model=PeerAskResponse)
+async def connectivity_peer_receive(data: PeerReceiveRequest):
+    friend = get_friend_by_device_id(data.from_device_id)
+    identity = _identity_payload()
+    query = (data.query or "").strip()
+    peer_query = query if query else "Hello"
+    thread_id = (data.thread_id or "").strip() or f"peer:{data.from_device_id}"
+    fid: Optional[str] = friend["id"] if friend else None
+    fname: Optional[str] = friend["name"] if friend else None
+    if fid and fname:
+        await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+
+    if not friend:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            None,
+            None,
+            peer_query,
+            "error",
+            None,
+            "Unknown peer",
+        )
+        raise HTTPException(status_code=403, detail="Unknown peer")
+    if friend["fingerprint"] != data.from_fingerprint:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            "Fingerprint mismatch",
+        )
+        raise HTTPException(status_code=403, detail="Fingerprint mismatch")
+
+    if not settings.CONNECTIVITY_NGROK_ENABLED:
+        return PeerAskResponse(
+            status="offline",
+            message="Connectivity is disabled on this device",
+            thread_id=thread_id,
+            responder_device_id=identity["device_id"],
+            responder_public_url=None,
+            failure_code="connectivity_disabled",
+        )
+
+    # Keep status checks lightweight: do not route health probes through model inference.
+    if query == "status_ping":
+        return PeerAskResponse(
+            status="online",
+            message="reachable",
+            thread_id=thread_id,
+            responder_device_id=identity["device_id"],
+            responder_public_url=identity.get("public_url"),
+        )
+
+    # Run a local generation respecting per-friend inbound access policy.
+    await run_in_threadpool(save_message, thread_id, "user", peer_query)
+
+    policy = friend_row_peer_policy(friend)
+    full_catalog = _get_runtime_tool_catalog_ids()
+    effective_ids = compute_effective_tool_ids(policy, full_catalog)
+    memory_user_id = (
+        f"peer:{data.from_device_id}" if policy.memory_enabled else "default_user"
+    )
+
+    try:
+        if not agent_manager.is_configured:
+            raise HTTPException(status_code=503, detail="Receiver agent is not configured")
+
+        agent_result = await agent_manager.invoke_peer_inbound(
+            messages=[{"role": "user", "content": peer_query}],
+            thread_id=thread_id,
+            receive_profile=policy.receive_profile,
+            effective_tool_ids=effective_ids,
+            memory_user_id=memory_user_id,
+        )
+        reply_text = _extract_peer_assistant_text(agent_result) or "I received your message but could not generate a reply."
+        if fid and fname:
+            await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+        await run_in_threadpool(save_message, thread_id, "assistant", reply_text)
+    except HTTPException as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            _peer_log_http_exception_detail(exc),
+        )
+        raise
+    except httpx.ConnectError as exc:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            f"Receiver model provider is unreachable [unreachable]: {exc}",
+        )
+        raise HTTPException(status_code=503, detail=f"Receiver model provider is unreachable [unreachable]: {exc}") from exc
+    except RuntimeError as exc:
+        msg = str(exc).lower()
+        if "peer policy" in msg or "no usable tools" in msg:
+            detail = "Peer access policy blocks all tools for this friend. Update Connectivity settings."
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                detail,
+            )
+            raise HTTPException(status_code=403, detail=detail) from exc
+        if "not configured" in msg:
+            detail = "Receiver agent is not configured"
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                detail,
+            )
+            raise HTTPException(status_code=503, detail=detail) from exc
+        raise
+    except Exception as exc:
+        detail_low = str(exc).lower()
+        if "upstream_connection_error" in detail_low or "connection error" in detail_low:
+            d = "Receiver model provider is unreachable [unreachable]"
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                d,
+            )
+            raise HTTPException(status_code=503, detail=d) from exc
+        if "agent not configured" in detail_low:
+            d = "Receiver agent is not configured"
+            await run_in_threadpool(
+                append_peer_query_event,
+                "inbound",
+                fid,
+                fname,
+                peer_query,
+                "error",
+                None,
+                d,
+            )
+            raise HTTPException(status_code=503, detail=d) from exc
+        logging.error(f"Peer receive generation failed: {exc}", exc_info=True)
+        d = f"Receiver failed to generate response [peer_server_error]: {exc}"
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            d,
+        )
+        raise HTTPException(status_code=502, detail=d) from exc
+
+    await run_in_threadpool(
+        append_peer_query_event,
+        "inbound",
+        fid,
+        fname,
+        peer_query,
+        "ok",
+        reply_text,
+        None,
+    )
+
+    return PeerAskResponse(
+        status="online",
+        message=reply_text,
+        thread_id=thread_id,
+        responder_device_id=identity["device_id"],
+        responder_public_url=identity.get("public_url"),
+    )
+
+
+@router.post("/connectivity/peer/receive/stream")
+async def connectivity_peer_receive_stream(data: PeerReceiveRequest):
+    friend = get_friend_by_device_id(data.from_device_id)
+    identity = _identity_payload()
+    query = (data.query or "").strip()
+    peer_query = query if query else "Hello"
+    thread_id = (data.thread_id or "").strip() or f"peer:{data.from_device_id}"
+    stream_id = str(uuid.uuid4())
+    fid: Optional[str] = friend["id"] if friend else None
+    fname: Optional[str] = friend["name"] if friend else None
+    if fid and fname:
+        await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+
+    if not friend:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            None,
+            None,
+            peer_query,
+            "error",
+            None,
+            "Unknown peer",
+        )
+        raise HTTPException(status_code=403, detail="Unknown peer")
+    if friend["fingerprint"] != data.from_fingerprint:
+        await run_in_threadpool(
+            append_peer_query_event,
+            "inbound",
+            fid,
+            fname,
+            peer_query,
+            "error",
+            None,
+            "Fingerprint mismatch",
+        )
+        raise HTTPException(status_code=403, detail="Fingerprint mismatch")
+    if not settings.CONNECTIVITY_NGROK_ENABLED:
+        payload = {
+            "step": "end",
+            "done": True,
+            "status": "offline",
+            "message": "Connectivity is disabled on this device",
+            "thread_id": thread_id,
+            "responder_device_id": identity["device_id"],
+            "responder_public_url": None,
+            "failure_code": "connectivity_disabled",
+        }
+        return StreamingResponse(
+            iter([f"data: {json.dumps(payload)}\n\n"]),
+            media_type="text/event-stream",
+            headers=_SSE_CHAT_HEADERS,
+        )
+    if query == "status_ping":
+        payload = {
+            "step": "end",
+            "done": True,
+            "status": "online",
+            "message": "reachable",
+            "thread_id": thread_id,
+            "responder_device_id": identity["device_id"],
+            "responder_public_url": identity.get("public_url"),
+        }
+        return StreamingResponse(
+            iter([f"data: {json.dumps(payload)}\n\n"]),
+            media_type="text/event-stream",
+            headers=_SSE_CHAT_HEADERS,
+        )
+
+    await run_in_threadpool(save_message, thread_id, "user", peer_query)
+    policy = friend_row_peer_policy(friend)
+    full_catalog = _get_runtime_tool_catalog_ids()
+    effective_ids = compute_effective_tool_ids(policy, full_catalog)
+    memory_user_id = f"peer:{data.from_device_id}" if policy.memory_enabled else "default_user"
+
+    async def peer_event_generator():
+        full_response: List[str] = []
+        stream_error: Optional[str] = None
+        try:
+            start_payload = {
+                "step": "start",
+                "stream_id": stream_id,
+                "thread_id": thread_id,
+                "friend_id": fid,
+                "friend_name": fname,
+            }
+            yield f"data: {json.dumps(start_payload)}\n\n"
+            async for chunk in agent_manager.stream_peer_inbound(
+                messages=[{"role": "user", "content": peer_query}],
+                thread_id=thread_id,
+                receive_profile=policy.receive_profile,
+                effective_tool_ids=effective_ids,
+                memory_user_id=memory_user_id,
+            ):
+                if "__lg_messages__" in chunk:
+                    pair = chunk["__lg_messages__"]
+                    llm_chunk = pair[0] if isinstance(pair, tuple) and len(pair) >= 1 else pair
+                    serialized = _serialize_message(llm_chunk)
+                    if not serialized:
+                        continue
+                    if serialized.get("type") not in ("ai", "assistant"):
+                        continue
+                    content = serialized.get("content")
+                    if isinstance(content, str) and content:
+                        full_response.append(content)
+                    yield f"data: {json.dumps({'step': 'model', 'message': serialized}, default=str)}\n\n"
+                    continue
+
+                if "__interrupt__" in chunk:
+                    continue
+            yield f"data: {json.dumps({'step': 'end', 'done': True})}\n\n"
+        except asyncio.CancelledError:
+            stream_error = "Peer stream cancelled"
+            raise
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "peer policy" in msg or "no usable tools" in msg:
+                stream_error = "Peer access policy blocks all tools for this friend. Update Connectivity settings."
+                yield f"data: {json.dumps({'error': 'peer_policy_blocked', 'details': stream_error})}\n\n"
+            elif "not configured" in msg:
+                stream_error = "Receiver agent is not configured"
+                yield f"data: {json.dumps({'error': 'agent_not_configured', 'details': stream_error})}\n\n"
+            elif "upstream_connection_error" in msg:
+                stream_error = "Receiver model provider is unreachable [unreachable]"
+                yield f"data: {json.dumps({'error': 'upstream_connection_error', 'details': stream_error})}\n\n"
+            else:
+                stream_error = str(exc)
+                yield f"data: {json.dumps({'error': 'peer_stream_error', 'details': stream_error})}\n\n"
+        except Exception as exc:
+            stream_error = f"Receiver failed to generate response [peer_server_error]: {exc}"
+            yield f"data: {json.dumps({'error': 'peer_server_error', 'details': stream_error})}\n\n"
+        finally:
+            reply_text = "".join(full_response).strip()
+            if reply_text:
+                if fid and fname:
+                    await run_in_threadpool(upsert_friend_thread, thread_id, fid, fname)
+                await run_in_threadpool(save_message, thread_id, "assistant", reply_text)
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "inbound",
+                    fid,
+                    fname,
+                    peer_query,
+                    "ok",
+                    reply_text,
+                    None,
+                )
+            elif stream_error:
+                await run_in_threadpool(
+                    append_peer_query_event,
+                    "inbound",
+                    fid,
+                    fname,
+                    peer_query,
+                    "error",
+                    None,
+                    stream_error,
+                )
+
+    return StreamingResponse(
+        peer_event_generator(),
+        media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
+    )
+
+
+@router.post("/connectivity/peer/receive/stream/cancel")
+async def connectivity_peer_receive_stream_cancel(data: PeerStreamCancelRequest):
+    cancelled = await agent_manager.cancel_run(data.thread_id)
+    return {"status": "success" if cancelled else "ignored", "cancelled": cancelled}
+
+
+@router.post("/connectivity/friends/{friend_id}/ask/stream/cancel")
+async def connectivity_friend_ask_stream_cancel(friend_id: str, data: PeerStreamCancelRequest):
+    matched = await _friend_stream_lookup(
+        stream_id=data.stream_id,
+        thread_id=data.thread_id,
+        friend_id=friend_id,
+    )
+    if not matched:
+        return {"status": "ignored", "cancelled": False}
+
+    stream_id, info = matched
+    task = info.get("task")
+    if task and not task.done():
+        task.cancel()
+
+    peer_cancel_endpoint = info.get("peer_cancel_endpoint")
+    peer_cancel_payload = info.get("peer_cancel_payload") or {"thread_id": data.thread_id, "stream_id": stream_id}
+    peer_cancelled = False
+    if isinstance(peer_cancel_endpoint, str) and peer_cancel_endpoint.strip():
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(peer_cancel_endpoint, json=peer_cancel_payload)
+                peer_cancelled = resp.status_code < 400
+        except Exception:
+            peer_cancelled = False
+
+    await _friend_stream_unregister(stream_id)
+    return {"status": "success", "cancelled": True, "peer_cancelled": peer_cancelled}
+
+
+@router.get("/connectivity/peer-query-history", response_model=List[PeerQueryEventItem])
+async def connectivity_peer_query_history(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    rows = await run_in_threadpool(list_peer_query_events, limit, offset)
+    return [PeerQueryEventItem(**r) for r in rows]
+
+
+@router.delete("/connectivity/peer-query-history")
+async def connectivity_peer_query_history_clear():
+    deleted = await run_in_threadpool(clear_peer_query_events)
+    return {"status": "success", "deleted": deleted}
+
+
+@router.post("/connectivity/friends/{friend_id}/endpoint", response_model=FriendRecord)
+async def connectivity_friend_endpoint_update(friend_id: str, data: FriendEndpointUpdateRequest):
+    friend = get_friend_by_id(friend_id)
+    if not friend:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    updated = update_friend_public_url(friend_id, data.public_url)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Friend not found")
+    return _friend_record_from_row(updated)
+
+
+@router.get("/connectivity/friends/{friend_id}/approval")
+async def connectivity_friend_approval(friend_id: str, thread_id: str):
+    return {"approved": has_friend_thread_approval(thread_id, friend_id)}
+
+
+@router.post("/connectivity/friends/{friend_id}/approval")
+async def connectivity_friend_approval_set(friend_id: str, data: FriendApprovalRequest):
+    approve_friend_for_thread(data.thread_id, friend_id)
+    return {"status": "success", "approved": True}
+
+
+@router.get("/connectivity/ngrok/status", response_model=NgrokStatusResponse)
+async def connectivity_ngrok_status():
+    detected = detect_existing_ngrok()
+    runtime = get_tunnel_runtime_status()
+    is_enabled = settings.CONNECTIVITY_NGROK_ENABLED
+    runtime_running = bool(runtime.get("running"))
+    runtime_url = runtime.get("public_url")
+    public_url = runtime_url if (is_enabled and runtime_running) else None
+    ready_state = "ready" if (detected.get("installed") and is_enabled and runtime_running and public_url) else "not_ready"
+    return NgrokStatusResponse(
+        installed=bool(detected.get("installed")),
+        path=detected.get("path") or settings.CONNECTIVITY_NGROK_INSTALL_PATH,
+        version=detected.get("version"),
+        enabled=is_enabled,
+        public_url=public_url,
+        tunnel_running=runtime_running,
+        tunnel_pid=runtime.get("pid"),
+        domain=settings.CONNECTIVITY_NGROK_DOMAIN,
+        ready_state=ready_state,
+    )
+
+
+@router.post("/connectivity/ngrok/install", response_model=NgrokInstallResponse)
+async def connectivity_ngrok_install(data: NgrokInstallRequest):
+    if not data.confirmed:
+        raise HTTPException(status_code=400, detail="Installation confirmation required")
+    token_value = (data.auth_token or settings.CONNECTIVITY_NGROK_AUTH_TOKEN or "").strip()
+    if not token_value:
+        raise HTTPException(status_code=400, detail="ngrok auth token is required")
+    domain_value = (data.domain or settings.CONNECTIVITY_NGROK_DOMAIN or "").strip() or None
+    update_setting("CONNECTIVITY_NGROK_AUTH_TOKEN", token_value)
+    update_setting("CONNECTIVITY_NGROK_DOMAIN", domain_value or "")
+    settings.reload()
+    result = await run_in_threadpool(install_ngrok_windows)
+    if not result.get("ok"):
+        return NgrokInstallResponse(
+            ok=False,
+            installed=False,
+            path=result.get("path"),
+            version=result.get("version"),
+            enabled=settings.CONNECTIVITY_NGROK_ENABLED,
+            public_url=settings.CONNECTIVITY_PUBLIC_URL,
+            tunnel_running=False,
+            tunnel_pid=None,
+            domain=settings.CONNECTIVITY_NGROK_DOMAIN,
+            ready_state="failed",
+            steps=result.get("steps") or [],
+        )
+
+    tunnel = await run_in_threadpool(start_tunnel, result.get("path") or "", token_value, domain_value)
+    all_steps = list(result.get("steps") or [])
+    all_steps.append(
+        {
+            "step": "launch_tunnel",
+            "ok": bool(tunnel.get("ok")),
+            "message": tunnel.get("public_url") or tunnel.get("message") or "ngrok tunnel launched",
+        }
+    )
+    if not tunnel.get("ok"):
+        return NgrokInstallResponse(
+            ok=False,
+            installed=True,
+            path=result.get("path"),
+            version=result.get("version"),
+            enabled=settings.CONNECTIVITY_NGROK_ENABLED,
+            public_url=settings.CONNECTIVITY_PUBLIC_URL,
+            tunnel_running=bool(tunnel.get("running")),
+            tunnel_pid=tunnel.get("pid"),
+            domain=settings.CONNECTIVITY_NGROK_DOMAIN,
+            ready_state="failed",
+            steps=all_steps,
+        )
+
+    persisted = await run_in_threadpool(
+        persist_ngrok_setup,
+        result.get("path") or "",
+        tunnel.get("public_url"),
+        tunnel.get("pid"),
+        domain_value,
+    )
+    return NgrokInstallResponse(
+        ok=True,
+        installed=True,
+        path=result.get("path"),
+        version=result.get("version"),
+        enabled=bool(persisted.get("enabled")),
+        public_url=persisted.get("public_url"),
+        tunnel_running=bool(tunnel.get("running")),
+        tunnel_pid=tunnel.get("pid"),
+        domain=persisted.get("domain"),
+        ready_state="ready" if persisted.get("public_url") else "failed",
+        steps=all_steps,
+    )
 
 
 @router.post("/embedding/download")
@@ -621,24 +2297,20 @@ async def root():
     """
     Root endpoint - health check and configuration status
     """
-    agent_ready = False
+    agent_ready = agent_manager.agent is not None
+    agent_configured = agent_manager.is_configured
 
-    # Eagerly initialize the agent when the backend is probed for health.
-    # This avoids the situation where the very first /chat/stream call in
-    # a fresh process has to pay the full initialization cost (and may
-    # appear to "do nothing" on the client) even though the health check
-    # has already succeeded.
-    try:
-        if agent_manager.is_configured:
-            agent_ready = await agent_manager.ensure_initialized()
-    except Exception as e:
-        logging.error(f"Agent initialization during health check failed: {e}")
-        agent_ready = False
+    # Keep health checks fast/non-blocking so uvicorn reload is never held up
+    # by expensive agent initialization under heavy frontend polling.
+    if agent_configured and not agent_ready:
+        asyncio.create_task(agent_manager.ensure_initialized())
 
     return HealthResponse(
         message="Welcome to Rie BE Chat API",
-        agent_configured=agent_ready,
-        tavily_configured=settings.has_tavily_key
+        agent_configured=agent_configured,
+        tavily_configured=settings.has_tavily_key,
+        web_search_configured=settings.has_web_search_configured,
+        web_search_provider=settings.WEB_SEARCH_PROVIDER,
     )
 
 
@@ -658,6 +2330,9 @@ async def debug():
         "anthropic_api_key_present": bool(settings.ANTHROPIC_API_KEY),
         "openai_api_key_present": bool(settings.OPENAI_API_KEY),
         "tavily_api_key_present": bool(settings.TAVILY_API_KEY),
+        "brave_search_api_key_present": bool(settings.BRAVE_SEARCH_API_KEY),
+        "web_search_provider": settings.WEB_SEARCH_PROVIDER,
+        "web_search_configured": settings.has_web_search_configured,
         "has_llm_api_key": settings.has_llm_api_key,
         "agent_configured": agent_manager.is_configured,
         "groq_model": settings.GROQ_MODEL,
@@ -741,6 +2416,20 @@ async def get_screenshot():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/desktop-text")
+async def get_desktop_text():
+    """
+    Get the text/UIA representation of the current screen/desktop
+    """
+    from app.windows_tools import state_tool
+    try:
+        text = await run_in_threadpool(state_tool, use_vision=False, use_dom=False)
+        return {"text": text}
+    except Exception as e:
+        logging.error(f"Desktop text capture failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/history")
 async def get_history_threads():
     """Get list of chat history threads"""
@@ -753,11 +2442,165 @@ async def get_history_messages(thread_id: str):
     messages = await run_in_threadpool(get_thread_messages, thread_id)
     return messages
 
+
+@router.post("/history/fork")
+async def fork_history_thread(data: ForkThreadRequest):
+    """Fork a thread with conversation history through a user message."""
+    forked = await run_in_threadpool(
+        fork_thread_messages,
+        data.new_thread_id,
+        data.source_thread_id,
+        data.until_message_id,
+        data.messages,
+    )
+    if agent_manager.is_configured and forked:
+        await agent_manager.seed_thread_history(data.new_thread_id, forked)
+    return {
+        "status": "success",
+        "thread_id": data.new_thread_id,
+        "message_count": len(forked),
+    }
+
+
+@router.delete("/history")
+async def delete_all_history():
+    """Delete all chat threads, messages, and cancel all active runs/tasks"""
+    await agent_manager.cancel_all_runs()
+    try:
+        scheduler_manager.cancel_all_tasks()
+    except Exception as e:
+        logging.error(f"Failed to cancel scheduler tasks: {e}")
+    await run_in_threadpool(clear_all_history)
+    return {"status": "success"}
+
+
 @router.delete("/history/{thread_id}")
 async def delete_history_thread(thread_id: str):
     """Delete a thread"""
     await run_in_threadpool(delete_thread, thread_id)
     return {"status": "success"}
+
+
+# --- Custom knowledge packs ---
+
+
+@router.get("/knowledge", response_model=List[KnowledgePackResponse])
+async def list_knowledge_packs():
+    rows = await run_in_threadpool(list_packs_summary)
+    return [
+        KnowledgePackResponse(
+            id=r["id"],
+            name=r["name"],
+            instructions=r.get("instructions"),
+            created_at=r["created_at"],
+            updated_at=r["updated_at"],
+            asset_count=int(r.get("asset_count") or 0),
+        )
+        for r in rows
+    ]
+
+
+@router.post("/knowledge", response_model=KnowledgePackResponse)
+async def create_knowledge_pack_route(body: KnowledgePackCreate):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    row = await run_in_threadpool(create_knowledge_pack, name, body.instructions or "")
+    return KnowledgePackResponse(
+        id=row["id"],
+        name=row["name"],
+        instructions=row.get("instructions"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        asset_count=0,
+    )
+
+
+@router.get("/knowledge/{pack_id}", response_model=KnowledgePackResponse)
+async def get_knowledge_pack_route(pack_id: str):
+    detail = await run_in_threadpool(get_pack_detail, pack_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="Knowledge pack not found")
+    return KnowledgePackResponse(
+        id=detail["id"],
+        name=detail["name"],
+        instructions=detail.get("instructions"),
+        created_at=detail["created_at"],
+        updated_at=detail["updated_at"],
+        asset_count=detail.get("asset_count", 0),
+        assets=detail.get("assets"),
+    )
+
+
+@router.put("/knowledge/{pack_id}", response_model=KnowledgePackResponse)
+async def update_knowledge_pack_route(pack_id: str, body: KnowledgePackUpdate):
+    row = await run_in_threadpool(
+        update_knowledge_pack, pack_id, body.name, body.instructions
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Knowledge pack not found")
+    assets = await run_in_threadpool(get_pack_detail, pack_id)
+    return KnowledgePackResponse(
+        id=row["id"],
+        name=row["name"],
+        instructions=row.get("instructions"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        asset_count=assets.get("asset_count", 0) if assets else 0,
+    )
+
+
+@router.delete("/knowledge/{pack_id}")
+async def delete_knowledge_pack_route(pack_id: str):
+    ok = await run_in_threadpool(delete_knowledge_pack, pack_id)
+    if not ok:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete knowledge pack referenced by locked conversations",
+        )
+    return {"status": "success"}
+
+
+@router.post("/knowledge/{pack_id}/assets")
+async def upload_knowledge_asset(pack_id: str, file: UploadFile = File(...)):
+    pack = await run_in_threadpool(get_knowledge_pack, pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Knowledge pack not found")
+    filename = file.filename or "upload"
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Empty file")
+    try:
+        asset = await save_and_summarize_asset(pack_id, filename, file_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return asset
+
+
+@router.delete("/knowledge/{pack_id}/assets/{asset_id}")
+async def delete_knowledge_asset_route(pack_id: str, asset_id: str):
+    asset = await run_in_threadpool(delete_knowledge_asset, asset_id)
+    if not asset or asset.get("pack_id") != pack_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    await run_in_threadpool(remove_asset_file, asset)
+    return {"status": "success"}
+
+
+@router.get("/threads/{thread_id}/knowledge", response_model=List[ThreadKnowledgeItem])
+async def get_thread_knowledge_route(thread_id: str):
+    rows = await run_in_threadpool(get_thread_knowledge, thread_id)
+    return [
+        ThreadKnowledgeItem(
+            thread_id=r["thread_id"],
+            knowledge_id=r["knowledge_id"],
+            knowledge_name=r["knowledge_name"],
+            is_locked=bool(r.get("is_locked")),
+            attached_at=r["attached_at"],
+        )
+        for r in rows
+    ]
 
 
 @router.post("/maintenance/prune-checkpoints")
@@ -900,8 +2743,12 @@ async def chat_resume(data: ResumeChatRequest):
             speed_mode=speed_mode,
             client_timezone=data.client_timezone,
             client_local_datetime_iso=data.client_local_datetime_iso,
+            client_latitude=data.client_latitude,
+            client_longitude=data.client_longitude,
+            client_location_accuracy_m=data.client_location_accuracy_m,
         ),
         media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
     )
 
 
@@ -909,6 +2756,13 @@ async def chat_resume(data: ResumeChatRequest):
 
 
 LTM_TOOL_NAMES = ["save_memory", "get_memory", "search_memory"]
+
+_SSE_CHAT_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
 
 def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
     """
@@ -938,6 +2792,10 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
             data["content"] = content
     elif hasattr(msg, "text"):
         data["content"] = getattr(msg, "text")
+
+    # Streaming chunks report AIMessageChunk — normalize so the UI treats them like "ai"
+    if data.get("type") == "AIMessageChunk":
+        data["type"] = "ai"
 
     # Tool calls for AIMessage
     if hasattr(msg, "tool_calls") and getattr(msg, "tool_calls"):
@@ -982,6 +2840,13 @@ async def _agent_stream_generator(
     speed_mode: Optional[str] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
+    client_latitude: Optional[float] = None,
+    client_longitude: Optional[float] = None,
+    client_location_accuracy_m: Optional[float] = None,
+    friend_target_id: Optional[str] = None,
+    friend_target_name: Optional[str] = None,
+    knowledge_context: Optional[str] = None,
+    skill_ids: Optional[List[str]] = None,
 ) -> AsyncIterator[str]:
     """
     Wrap the Deep Agent `.stream()` generator into Server‑Sent Events (SSE) lines.
@@ -992,6 +2857,22 @@ async def _agent_stream_generator(
     """
     logger = logging.getLogger(__name__)
     logger.info(f"Stream generator started for thread_id={thread_id}")
+
+    def _classify_stream_error(exc: Exception) -> tuple[str, str]:
+        message = str(exc) or "unknown_error"
+        lowered = message.lower()
+        if "upstream_connection_error" in lowered:
+            return (
+                "upstream_connection_error",
+                "Cannot reach the configured model provider. Check internet, base URL, and provider service status.",
+            )
+        if "connect" in lowered and "error" in lowered:
+            return (
+                "upstream_connection_error",
+                "Network connection to the model provider failed. Please retry.",
+            )
+        return ("internal_stream_error", message)
+
     try:
         from app.terminal_stream import streamer
         term_queue = streamer.get_queue(thread_id)
@@ -1007,6 +2888,8 @@ async def _agent_stream_generator(
                         await sse_queue.put(f"data: {json.dumps({'step': 'interrupt', 'hitl': pending}, default=str)}\n\n")
                         return
 
+                seen_token_stream = False
+
                 async for chunk in agent_manager.stream(
                     messages=messages, 
                     thread_id=thread_id, 
@@ -1018,7 +2901,29 @@ async def _agent_stream_generator(
                     speed_mode=speed_mode,
                     client_timezone=client_timezone,
                     client_local_datetime_iso=client_local_datetime_iso,
+                    client_latitude=client_latitude,
+                    client_longitude=client_longitude,
+                    client_location_accuracy_m=client_location_accuracy_m,
+                    friend_target_id=friend_target_id,
+                    friend_target_name=friend_target_name,
+                    knowledge_context=knowledge_context,
+                    skill_ids=skill_ids,
                 ):
+                    # Token-level LLM chunks (LangGraph stream_mode includes "messages")
+                    if "__lg_messages__" in chunk:
+                        pair = chunk["__lg_messages__"]
+                        llm_chunk = pair[0] if isinstance(pair, tuple) and len(pair) >= 1 else pair
+                        serialized = _serialize_message(llm_chunk)
+                        if serialized is None:
+                            continue
+                        # UI "model" channel is assistant tokens only (not tool/human messages)
+                        if serialized.get("type") not in ("ai", "assistant"):
+                            continue
+                        seen_token_stream = True
+                        payload = {"step": "model", "message": serialized}
+                        await sse_queue.put(f"data: {json.dumps(payload, default=str)}\n\n")
+                        continue
+
                     # Check for interrupt in the chunk
                     if "__interrupt__" in chunk:
                         interrupt_data = chunk["__interrupt__"]
@@ -1060,6 +2965,21 @@ async def _agent_stream_generator(
                             if serialized is None:
                                 continue
 
+                            # Avoid sending the full assistant reply again after token streaming
+                            # (LangGraph emits both "messages" tokens and an "updates" node completion).
+                            # Apply for any graph node name — sub-agents may use steps other than "model".
+                            if (
+                                seen_token_stream
+                                and serialized.get("type") in ("ai", "assistant")
+                            ):
+                                content = serialized.get("content", "")
+                                has_text = isinstance(content, str) and bool(content.strip())
+                                has_tools = bool(serialized.get("tool_calls"))
+                                if has_tools and isinstance(content, str) and content.strip():
+                                    serialized = {**serialized, "content": ""}
+                                elif not has_tools and has_text:
+                                    continue
+
                             payload = {
                                 "step": step,
                                 "message": serialized,
@@ -1090,9 +3010,13 @@ async def _agent_stream_generator(
             except asyncio.CancelledError:
                 logger.info("Agent consumption cancelled")
             except Exception as e:
-                logger.error(f"Stream generator crashed: {e}", exc_info=True)
+                code, details = _classify_stream_error(e)
+                if code == "upstream_connection_error":
+                    logger.warning(f"Stream generator upstream connection issue: {e}")
+                else:
+                    logger.error(f"Stream generator crashed: {e}", exc_info=True)
                 # Attempt to yield error to client if possible
-                err_payload = {"error": "Internal stream error", "details": str(e)}
+                err_payload = {"error": code, "details": details}
                 await sse_queue.put(f"data: {json.dumps(err_payload, default=str)}\n\n")
             finally:
                 await sse_queue.put(None) # Signal completion
@@ -1121,8 +3045,12 @@ async def _agent_stream_generator(
         logger.info("Stream generator cancelled by client")
         raise
     except Exception as e:
-        logger.error(f"Outer stream generator crashed: {e}", exc_info=True)
-        err_payload = {"error": "Internal stream error", "details": str(e)}
+        code, details = _classify_stream_error(e)
+        if code == "upstream_connection_error":
+            logger.warning(f"Outer stream generator upstream connection issue: {e}")
+        else:
+            logger.error(f"Outer stream generator crashed: {e}", exc_info=True)
+        err_payload = {"error": code, "details": details}
         yield f"data: {json.dumps(err_payload, default=str)}\n\n"
     finally:
         agent_task.cancel()
@@ -1141,6 +3069,15 @@ async def _agent_stream_generator_with_save(
     speed_mode: Optional[str] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
+    client_latitude: Optional[float] = None,
+    client_longitude: Optional[float] = None,
+    client_location_accuracy_m: Optional[float] = None,
+    friend_target_id: Optional[str] = None,
+    friend_target_name: Optional[str] = None,
+    knowledge_context: Optional[str] = None,
+    skill_ids: Optional[List[str]] = None,
+    knowledge_lock_thread_id: Optional[str] = None,
+    knowledge_snapshots: Optional[Dict[str, str]] = None,
 ) -> AsyncIterator[str]:
     """
     Wraps the stream generator to accumulate and save the assistant's response.
@@ -1158,6 +3095,13 @@ async def _agent_stream_generator_with_save(
         speed_mode,
         client_timezone,
         client_local_datetime_iso,
+        client_latitude,
+        client_longitude,
+        client_location_accuracy_m,
+        friend_target_id,
+        friend_target_name,
+        knowledge_context,
+        skill_ids,
     ):
         yield chunk
         # Parse chunk to extract content
@@ -1182,8 +3126,99 @@ async def _agent_stream_generator_with_save(
         final_text = "".join(full_response)
         await run_in_threadpool(save_message, thread_id, "assistant", final_text)
 
+    if knowledge_lock_thread_id and knowledge_snapshots is not None and full_response:
+        await run_in_threadpool(
+            lock_thread_knowledge_after_stream,
+            knowledge_lock_thread_id,
+            knowledge_snapshots,
+        )
 
 
+
+
+
+DEFAULT_THREAD_TITLE = "Untitled Chat"
+
+
+def _strip_clipboard_from_message(text: str) -> str:
+    if "\n\n[Clipboard Content]:" in text:
+        return text.split("\n\n[Clipboard Content]:")[0].strip()
+    return text.strip()
+
+
+async def _update_thread_title_after_second_message(thread_id: str) -> None:
+    """Generate an LLM title once the user has sent two messages."""
+    try:
+        messages = await run_in_threadpool(get_thread_messages, thread_id)
+        user_texts = [
+            _strip_clipboard_from_message(m["content"])
+            for m in messages
+            if m.get("role") == "user" and (m.get("content") or "").strip()
+        ]
+        if len(user_texts) < 2:
+            return
+        title = await agent_manager.generate_chat_thread_title(user_texts[:2])
+        await run_in_threadpool(update_thread_title, thread_id, title)
+        logging.info("Updated thread %s title to: %s", thread_id, title)
+    except Exception as exc:
+        logging.warning("Failed to generate thread title for %s: %s", thread_id, exc)
+
+
+async def _chat_stream_with_url_previews(
+    message: str,
+    *,
+    thread_id: str,
+    image_url: Optional[str],
+    is_voice: bool,
+    project_root: Optional[str],
+    token: Optional[str],
+    chat_mode: Optional[str],
+    speed_mode: Optional[str],
+    client_timezone: Optional[str],
+    client_local_datetime_iso: Optional[str],
+    client_latitude: Optional[float],
+    client_longitude: Optional[float],
+    client_location_accuracy_m: Optional[float],
+    friend_target_id: Optional[str],
+    friend_target_name: Optional[str],
+    knowledge_context: Optional[str] = None,
+    knowledge_lock_thread_id: Optional[str] = None,
+    knowledge_snapshots: Optional[Dict[str, str]] = None,
+    skill_ids: Optional[List[str]] = None,
+) -> AsyncIterator[str]:
+    """Emit URL preview SSE events, enrich the user message, then stream the agent."""
+    agent_message = message
+    urls = extract_urls(message)
+    if urls:
+        previews = await fetch_url_previews(urls)
+        if previews:
+            yield f"data: {json.dumps({'step': 'url_preview', 'previews': previews}, default=str)}\n\n"
+            preview_context = format_previews_for_agent(previews)
+            if preview_context:
+                agent_message = f"{message}{preview_context}"
+ 
+    messages = [{"role": "user", "content": agent_message, "image_url": image_url}]
+    async for chunk in _agent_stream_generator_with_save(
+        messages,
+        thread_id=thread_id,
+        is_voice=is_voice,
+        project_root=project_root,
+        token=token,
+        chat_mode=chat_mode,
+        speed_mode=speed_mode,
+        client_timezone=client_timezone,
+        client_local_datetime_iso=client_local_datetime_iso,
+        client_latitude=client_latitude,
+        client_longitude=client_longitude,
+        client_location_accuracy_m=client_location_accuracy_m,
+        friend_target_id=friend_target_id,
+        friend_target_name=friend_target_name,
+        knowledge_context=knowledge_context,
+        knowledge_lock_thread_id=knowledge_lock_thread_id,
+        knowledge_snapshots=knowledge_snapshots,
+        skill_ids=skill_ids,
+    ):
+        yield chunk
 
 
 @router.post("/chat/stream")
@@ -1208,6 +3243,10 @@ async def chat_stream_post(
     clipboard_text = chat_message.clipboard_text
     chat_mode = chat_message.chat_mode
     speed_mode = chat_message.speed_mode
+    friend_target_id = chat_message.friend_target_id
+    friend_target_name = chat_message.friend_target_name
+    knowledge_ids = chat_message.knowledge_ids or []
+    skill_ids = chat_message.skill_ids or []
 
     # If clipboard text is provided, append it to the message
     if clipboard_text:
@@ -1216,20 +3255,48 @@ async def chat_stream_post(
     else:
         logging.info("No clipboard content attached")
 
-    # 1. Ensure thread exists
-    title = message[:30] + "..." if len(message) > 30 else message
-    real_thread_id = await run_in_threadpool(create_thread, title, thread_id)
+    # If files are attached, append their contents to the message
+    attached_files = chat_message.attached_files or []
+    if attached_files:
+        logging.info(f"Attaching {len(attached_files)} file(s) to message")
+        file_blocks = []
+        for f in attached_files:
+            fname = f.get("name", "unknown")
+            fcontent = f.get("content", "")
+            # Truncate very large files to avoid exceeding context limits
+            max_chars = 100_000
+            if len(fcontent) > max_chars:
+                fcontent = fcontent[:max_chars] + f"\n\n... (truncated, file was {len(f.get('content', ''))} chars)"
+            file_blocks.append(f"[Attached File: {fname}]:\n```\n{fcontent}\n```")
+        message = f"{message}\n\n" + "\n\n".join(file_blocks)
 
-    # 2. Save User Message
+    # 1. Ensure thread exists (title stays generic until 2nd user message)
+    real_thread_id = await run_in_threadpool(create_thread, DEFAULT_THREAD_TITLE, thread_id)
+
+    knowledge_context = ""
+    knowledge_snapshots: Dict[str, str] = {}
+    try:
+        knowledge_context, knowledge_snapshots = await run_in_threadpool(
+            prepare_thread_knowledge_for_stream,
+            real_thread_id,
+            knowledge_ids if knowledge_ids else None,
+        )
+    except Exception as exc:
+        logging.warning("Failed to prepare thread knowledge: %s", exc)
+
+    # 2. Save User Message (original text only; previews are injected for the agent at stream time)
     await run_in_threadpool(save_message, real_thread_id, "user", message, image_url)
 
-    # 3. Stream and Save Assistant Message
-    messages = [{"role": "user", "content": message, "image_url": image_url}]
+    user_count = await run_in_threadpool(count_user_messages, real_thread_id)
+    if user_count == 2:
+        asyncio.create_task(_update_thread_title_after_second_message(real_thread_id))
 
+    # 3. Stream URL previews (if any), then agent response
     return StreamingResponse(
-        _agent_stream_generator_with_save(
-            messages,
+        _chat_stream_with_url_previews(
+            message,
             thread_id=real_thread_id,
+            image_url=image_url,
             is_voice=is_voice,
             project_root=project_root,
             token=token,
@@ -1237,7 +3304,234 @@ async def chat_stream_post(
             speed_mode=speed_mode,
             client_timezone=chat_message.client_timezone,
             client_local_datetime_iso=chat_message.client_local_datetime_iso,
+            client_latitude=chat_message.client_latitude,
+            client_longitude=chat_message.client_longitude,
+            client_location_accuracy_m=chat_message.client_location_accuracy_m,
+            friend_target_id=friend_target_id,
+            friend_target_name=friend_target_name,
+            knowledge_context=knowledge_context or None,
+            knowledge_lock_thread_id=real_thread_id if knowledge_context else None,
+            knowledge_snapshots=knowledge_snapshots if knowledge_context else None,
+            skill_ids=skill_ids or None,
         ),
         media_type="text/event-stream",
+        headers=_SSE_CHAT_HEADERS,
     )
 
+
+# ---------------------------------------------------------------------------
+# Skills CRUD endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/skills", response_model=List[SkillResponse])
+async def get_skills():
+    """List all skills."""
+    rows = await run_in_threadpool(list_skills)
+    return [
+        SkillResponse(
+            id=r["id"],
+            name=r["name"],
+            description=r.get("description", ""),
+            content=r.get("content", ""),
+            icon=r.get("icon", "🧠"),
+            tool_ids=r.get("tool_ids", []),
+            enabled=r.get("enabled", True),
+            created_at=r["created_at"],
+            updated_at=r["updated_at"],
+        )
+        for r in rows
+    ]
+
+
+@router.post("/skills", response_model=SkillResponse, status_code=201)
+async def create_skill_endpoint(body: SkillCreate):
+    """Create a new skill."""
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Skill name cannot be empty")
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="Skill content cannot be empty")
+    row = await run_in_threadpool(
+        create_skill,
+        body.name,
+        body.description,
+        body.content,
+        body.icon,
+        body.tool_ids,
+    )
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.get("/skills/{skill_id}", response_model=SkillResponse)
+async def get_skill_endpoint(skill_id: str):
+    """Get a single skill by ID."""
+    row = await run_in_threadpool(get_skill, skill_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.put("/skills/{skill_id}", response_model=SkillResponse)
+async def update_skill_endpoint(skill_id: str, body: SkillUpdate):
+    """Update a skill by ID."""
+    if body.name is not None and not body.name.strip():
+        raise HTTPException(status_code=400, detail="Skill name cannot be empty")
+    if body.content is not None and not body.content.strip():
+        raise HTTPException(status_code=400, detail="Skill content cannot be empty")
+    row = await run_in_threadpool(
+        update_skill,
+        skill_id,
+        body.name,
+        body.description,
+        body.content,
+        body.icon,
+        body.tool_ids,
+        body.enabled,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.delete("/skills/{skill_id}")
+async def delete_skill_endpoint(skill_id: str):
+    """Delete a skill by ID."""
+    deleted = await run_in_threadpool(delete_skill, skill_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return {"ok": True, "id": skill_id}
+
+
+
+
+@router.get("/skills/active")
+async def get_active_skills_endpoint(
+    thread_id: Optional[str] = None,
+    project_root: Optional[str] = None
+):
+    """
+    Returns all active skills for the current context:
+    - DB attached skills (enabled or thread-attached)
+    - Workspace-discovered files (CLAUDE.md, RIE.md, etc.)
+    - Global-discovered files (~/.rie/CLAUDE.md, etc.)
+    """
+    active = []
+    
+    # 1. DB enabled skills
+    try:
+        db_skills = await run_in_threadpool(list_skills)
+        for item in db_skills:
+            if item.get("enabled"):
+                active.append({
+                    "id": item["id"],
+                    "name": item["name"],
+                    "icon": item.get("icon", "🧠"),
+                    "source": "db_thread",
+                    "description": item.get("description", "")
+                })
+    except Exception:
+        pass
+
+    # 2. Workspace skills
+    import os
+    if project_root and os.path.isdir(project_root):
+        try:
+            claude_path = os.path.join(project_root, "CLAUDE.md")
+            if os.path.isfile(claude_path):
+                active.append({
+                    "id": "ws_claude",
+                    "name": "CLAUDE.md",
+                    "icon": "📁",
+                    "source": "workspace",
+                    "description": "Rules loaded from workspace root CLAUDE.md"
+                })
+            rie_path = os.path.join(project_root, "RIE.md")
+            if os.path.isfile(rie_path):
+                active.append({
+                    "id": "ws_rie",
+                    "name": "RIE.md",
+                    "icon": "📁",
+                    "source": "workspace",
+                    "description": "Rules loaded from workspace root RIE.md"
+                })
+            rie_skills_dir = os.path.join(project_root, ".rie", "skills")
+            if os.path.isdir(rie_skills_dir):
+                for filename in sorted(os.listdir(rie_skills_dir)):
+                    if filename.endswith(".md"):
+                        active.append({
+                            "id": f"ws_{filename}",
+                            "name": filename[:-3],
+                            "icon": "📁",
+                            "source": "workspace",
+                            "description": f"Rules loaded from workspace .rie/skills/{filename}"
+                        })
+        except Exception:
+            pass
+
+    # 3. Global skills
+    try:
+        home_dir = os.path.expanduser("~")
+        global_rie_dir = os.path.join(home_dir, ".rie")
+        if os.path.isdir(global_rie_dir):
+            global_claude = os.path.join(global_rie_dir, "CLAUDE.md")
+            if os.path.isfile(global_claude):
+                active.append({
+                    "id": "global_claude",
+                    "name": "CLAUDE.md",
+                    "icon": "🌐",
+                    "source": "global",
+                    "description": "Rules loaded from global ~/.rie/CLAUDE.md"
+                })
+            global_rie = os.path.join(global_rie_dir, "RIE.md")
+            if os.path.isfile(global_rie):
+                active.append({
+                    "id": "global_rie",
+                    "name": "RIE.md",
+                    "icon": "🌐",
+                    "source": "global",
+                    "description": "Rules loaded from global ~/.rie/RIE.md"
+                })
+            global_skills_dir = os.path.join(global_rie_dir, "skills")
+            if os.path.isdir(global_skills_dir):
+                for filename in sorted(os.listdir(global_skills_dir)):
+                    if filename.endswith(".md"):
+                        active.append({
+                            "id": f"global_{filename}",
+                            "name": filename[:-3],
+                            "icon": "🌐",
+                            "source": "global",
+                            "description": f"Rules loaded from global ~/.rie/skills/{filename}"
+                        })
+    except Exception:
+        pass
+
+    return active

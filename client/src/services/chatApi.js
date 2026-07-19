@@ -2,7 +2,7 @@
  * API service for communicating with server chat backend
  */
 
-import { getConversationContext } from "./memoryService";
+import { getClientLocationPayload } from "../utils/locationUtils";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:14300";
 
@@ -32,17 +32,15 @@ export function getClientDatetimePayload() {
 }
 
 /**
- * Convert frontend messages to backend format
- * @param {Array} messages - Array of message objects with {id, from, text}
- * @returns {Array} Array of message objects with {role, content}
+ * Device clock + optional GPS for the backend (scheduling, nearby, weather).
+ * @returns {Promise<Record<string, unknown>>}
  */
-function formatMessagesForBackend(messages) {
-  return messages
-    .filter((msg) => msg.from !== undefined && msg.text !== undefined)
-    .map((msg) => ({
-      role: msg.from === "user" ? "user" : "assistant",
-      content: msg.text,
-    }));
+export async function getClientContextPayload() {
+  const [datetime, location] = await Promise.all([
+    Promise.resolve(getClientDatetimePayload()),
+    getClientLocationPayload(),
+  ]);
+  return { ...datetime, ...location };
 }
 
 let appToken = null;
@@ -56,6 +54,15 @@ export function setAppToken(token) {
 }
 
 /**
+ * Get the current app token
+ * @returns {string|null}
+ */
+export function getAppToken() {
+  return appToken;
+}
+
+
+/**
  * Get headers for API calls including the security token
  * @returns {Object}
  */
@@ -67,6 +74,55 @@ function getHeaders() {
     headers["X-Rie-App-Token"] = appToken;
   }
   return headers;
+}
+
+function pickServerErrorMessage(payload) {
+  if (!payload) return "";
+  if (typeof payload === "string") return payload.trim();
+  if (typeof payload !== "object") return "";
+
+  const candidateKeys = ["detail", "message", "error"];
+  for (const key of candidateKeys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+async function getResponseErrorMessage(response, fallbackMessage = "Request failed") {
+  let serverMessage = "";
+
+  try {
+    const jsonPayload = await response.clone().json();
+    serverMessage = pickServerErrorMessage(jsonPayload);
+  } catch {
+    // Non-JSON responses are handled below.
+  }
+
+  if (!serverMessage) {
+    try {
+      const textPayload = (await response.text()).trim();
+      if (textPayload) {
+        serverMessage = textPayload;
+      }
+    } catch {
+      // Ignore body read failures and use fallback.
+    }
+  }
+
+  if (serverMessage) {
+    return serverMessage;
+  }
+
+  const statusPart = response.status ? ` (status ${response.status})` : "";
+  return `${fallbackMessage}${statusPart}`;
+}
+
+async function throwHttpError(response, fallbackMessage) {
+  const message = await getResponseErrorMessage(response, fallbackMessage);
+  throw new Error(message);
 }
 
 /**
@@ -99,7 +155,7 @@ export async function resumeChat(
     token: token,
     chat_mode: chatMode,
     speed_mode: speedMode,
-    ...getClientDatetimePayload(),
+    ...(await getClientContextPayload()),
   };
 
   try {
@@ -111,7 +167,7 @@ export async function resumeChat(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      await throwHttpError(response, "Failed to resume chat");
     }
 
     const reader = response.body.getReader();
@@ -158,7 +214,7 @@ export async function getPendingAction(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch pending action");
+      await throwHttpError(response, "Failed to fetch pending action");
   }
   return response.json();
 }
@@ -192,7 +248,11 @@ export async function streamChat(
   token = null,
   clipboardText = null,
   chatMode = "agent",
-  speedMode = "thinking"
+  speedMode = "thinking",
+  friendTarget = null,
+  knowledgeIds = null,
+  skillIds = null,
+  attachedFiles = null
 ) {
   const payload = {
     message,
@@ -204,7 +264,12 @@ export async function streamChat(
     clipboard_text: clipboardText,
     chat_mode: chatMode,
     speed_mode: speedMode,
-    ...getClientDatetimePayload(),
+    friend_target_id: friendTarget?.id || null,
+    friend_target_name: friendTarget?.name || null,
+    ...(knowledgeIds?.length ? { knowledge_ids: knowledgeIds } : {}),
+    ...(skillIds?.length ? { skill_ids: skillIds } : {}),
+    ...(attachedFiles?.length ? { attached_files: attachedFiles.map(f => ({ name: f.name, content: f.content })) } : {}),
+    ...(await getClientContextPayload()),
   };
   try {
     const response = await fetch(`${API_BASE_URL}/chat/stream`, {
@@ -215,7 +280,7 @@ export async function streamChat(
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      await throwHttpError(response, "Failed to start chat stream");
     }
 
     const reader = response.body.getReader();
@@ -250,7 +315,8 @@ export async function streamChat(
 
 /**
  * Check if the API is available and configured
- * @returns {Promise<{message: string, agent_configured: boolean, tavily_configured: boolean}>}
+ * @returns {Promise<{message: string, agent_configured: boolean, tavily_configured: boolean, web_search_configured: boolean, web_search_provider: string}>}
+ * Prefer `web_search_configured` for active-provider readiness; `tavily_configured` only reflects a Tavily API key.
  */
 export async function checkApiHealth() {
   try {
@@ -260,7 +326,7 @@ export async function checkApiHealth() {
     });
 
     if (!response.ok) {
-      throw new Error(`Health check failed with status ${response.status}`);
+      await throwHttpError(response, "Health check failed");
     }
 
     return await response.json();
@@ -279,10 +345,7 @@ export async function stopAgent() {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(
-      errorData.detail || `Failed to stop agent (status ${response.status})`
-    );
+    await throwHttpError(response, "Failed to stop agent");
   }
 
   return response.json();
@@ -302,7 +365,7 @@ export async function cancelChat(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to cancel chat");
+    await throwHttpError(response, "Failed to cancel chat");
   }
   return response.json();
 }
@@ -318,7 +381,7 @@ export async function getSettings() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to load settings");
+    await throwHttpError(response, "Failed to load settings");
   }
   return response.json();
 }
@@ -337,7 +400,266 @@ export async function updateSetting(key, value) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to update setting");
+    await throwHttpError(response, "Failed to update setting");
+  }
+  return response.json();
+}
+
+export async function getConnectivityIdentity() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/identity`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to load connectivity identity");
+  }
+  return response.json();
+}
+
+export async function initPairing(name = null) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/pair/init`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to initialize pairing");
+  }
+  return response.json();
+}
+
+export async function confirmPairing(payload) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/pair/confirm`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to confirm pairing");
+  }
+  return response.json();
+}
+
+export async function finalizePairing(payload) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/pair/finalize`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to finalize pairing");
+  }
+  return response.json();
+}
+
+export async function getFriends() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch friends");
+  }
+  return response.json();
+}
+
+export async function getPeerAccessCatalog() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/peer-access/catalog`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch peer access catalog");
+  }
+  return response.json();
+}
+
+export async function updateFriendAccess(friendId, body) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/access`, {
+    method: "PATCH",
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to update friend access");
+  }
+  return response.json();
+}
+
+export async function removeFriend(friendId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to remove paired friend");
+  }
+  return response.json();
+}
+
+export async function fetchPeerQueryHistory(limit = 100, offset = 0) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  const response = await fetch(`${API_BASE_URL}/connectivity/peer-query-history?${params}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch peer query history");
+  }
+  return response.json();
+}
+
+export async function clearPeerQueryHistory() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/peer-query-history`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to clear peer query history");
+  }
+  return response.json();
+}
+
+export async function askFriend(friendId, query, threadId = null) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ friend_id: friendId, query, thread_id: threadId }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to ask friend");
+  }
+  return response.json();
+}
+
+export async function streamFriendChat(
+  friendId,
+  query,
+  threadId,
+  onChunk,
+  onDone,
+  onError,
+  signal = null
+) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask/stream`, {
+    method: "POST",
+    headers: getHeaders(),
+    signal,
+    body: JSON.stringify({ friend_id: friendId, query, thread_id: threadId }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to ask friend");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const data = JSON.parse(line.substring(6));
+          if (onChunk) onChunk(data);
+        } catch (e) {
+          console.error("Error parsing friend stream SSE data", e);
+        }
+      }
+    }
+    if (onDone) onDone();
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    if (onError) onError(error);
+    else console.error("Friend stream error:", error);
+  }
+}
+
+export async function cancelFriendStream(friendId, threadId, streamId = null) {
+  if (!friendId || !threadId) return { status: "ignored", cancelled: false };
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask/stream/cancel`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ thread_id: threadId, stream_id: streamId }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to cancel friend stream");
+  }
+  return response.json();
+}
+
+export async function checkFriendStatus(friendId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/status`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to check friend status");
+  }
+  return response.json();
+}
+
+export async function updateFriendEndpoint(friendId, publicUrl) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/endpoint`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ public_url: publicUrl }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to update friend endpoint");
+  }
+  return response.json();
+}
+
+export async function getNgrokStatus() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/ngrok/status`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to get ngrok status");
+  }
+  return response.json();
+}
+
+export async function installNgrok(authToken, domain = null) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/ngrok/install`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ confirmed: true, auth_token: authToken, domain }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to install ngrok");
+  }
+  return response.json();
+}
+
+export async function getFriendApproval(friendId, threadId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/approval?thread_id=${encodeURIComponent(threadId)}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to get friend approval");
+  }
+  return response.json();
+}
+
+export async function approveFriendForThread(friendId, threadId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/approval`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ thread_id: threadId }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to approve friend");
   }
   return response.json();
 }
@@ -353,7 +675,7 @@ export async function getLogs() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch logs");
+    await throwHttpError(response, "Failed to fetch logs");
   }
   return response.json();
 }
@@ -370,7 +692,7 @@ export async function downloadEmbeddingModel(onProgress) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to start embedding download");
+    await throwHttpError(response, "Failed to start embedding download");
   }
 
   const reader = response.body.getReader();
@@ -413,7 +735,7 @@ export async function getMcpStatus() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch MCP status");
+    await throwHttpError(response, "Failed to fetch MCP status");
   }
   return response.json();
 }
@@ -431,8 +753,7 @@ export async function generatePlannerInstruction(payload) {
   });
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to generate instruction");
+    await throwHttpError(response, "Failed to generate instruction");
   }
   return response.json();
 }
@@ -448,7 +769,7 @@ export async function getHistory() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch history");
+    await throwHttpError(response, "Failed to fetch history");
   }
   return response.json();
 }
@@ -465,7 +786,7 @@ export async function getThreadMessages(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch messages");
+    await throwHttpError(response, "Failed to fetch messages");
   }
   return response.json();
 }
@@ -482,7 +803,50 @@ export async function deleteThread(threadId) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to delete thread");
+    await throwHttpError(response, "Failed to delete thread");
+  }
+  return response.json();
+}
+
+/**
+ * Clear all chat history
+ * @returns {Promise<Object>}
+ */
+export async function clearAllHistory() {
+  const response = await fetch(`${API_BASE_URL}/history`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to clear history");
+  }
+  return response.json();
+}
+
+/**
+ * Fork a thread with history through a given user message.
+ * @param {{ newThreadId: string, sourceThreadId?: string, untilMessageId?: string|number, messages: Array<{role: string, content: string, image_url?: string}> }} params
+ */
+export async function forkThread({
+  newThreadId,
+  sourceThreadId = null,
+  untilMessageId = null,
+  messages = [],
+}) {
+  const response = await fetch(`${API_BASE_URL}/history/fork`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      new_thread_id: newThreadId,
+      source_thread_id: sourceThreadId || null,
+      until_message_id: untilMessageId ?? null,
+      messages,
+    }),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fork thread");
   }
   return response.json();
 }
@@ -498,7 +862,23 @@ export async function getScreenshot() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to capture screenshot");
+    await throwHttpError(response, "Failed to capture screenshot");
+  }
+  return response.json();
+}
+
+/**
+ * Capture desktop text context from the backend via UI Automation
+ * @returns {Promise<{text: string}>}
+ */
+export async function getDesktopText() {
+  const response = await fetch(`${API_BASE_URL}/desktop-text`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to capture desktop text");
   }
   return response.json();
 }
@@ -508,9 +888,9 @@ export async function getScreenshot() {
  * @param {Blob} audioBlob
  * @returns {Promise<{text: string}>}
  */
-export async function transcribeAudio(audioBlob) {
+export async function transcribeAudio(audioBlob, filename = "recording.webm") {
   const formData = new FormData();
-  formData.append("file", audioBlob, "recording.webm");
+  formData.append("file", audioBlob, filename);
 
   const headers = getHeaders();
   delete headers["Content-Type"]; // Let browser set boundary for FormData
@@ -522,8 +902,7 @@ export async function transcribeAudio(audioBlob) {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Transcription failed");
+    await throwHttpError(response, "Transcription failed");
   }
 
   return response.json();
@@ -547,8 +926,7 @@ export async function speakText(
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Text-to-speech failed");
+    await throwHttpError(response, "Text-to-speech failed");
   }
 
   return response.blob();
@@ -565,7 +943,23 @@ export async function getOllamaModels() {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch Ollama models");
+    await throwHttpError(response, "Failed to fetch Ollama models");
+  }
+  return response.json();
+}
+
+/**
+ * Fetch available Gemini models from Google Generative Language API
+ * @returns {Promise<{models: Array<string>}>}
+ */
+export async function getGeminiModels() {
+  const response = await fetch(`${API_BASE_URL}/gemini/models`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch Gemini models");
   }
   return response.json();
 }
@@ -584,8 +978,7 @@ export async function getRieUsage() {
     if (response.status === 401) {
       throw new Error("Session expired");
     }
-    const errorText = await response.text();
-    throw new Error(errorText || "Failed to fetch usage");
+    await throwHttpError(response, "Failed to fetch usage");
   }
   return response.json();
 }
@@ -609,8 +1002,7 @@ export async function scheduleTaskRequest(payload) {
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to schedule task");
+    await throwHttpError(response, "Failed to schedule task");
   }
   return response.json();
 }
@@ -621,7 +1013,7 @@ export async function listScheduledTasks() {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to list scheduled tasks");
+    await throwHttpError(response, "Failed to list scheduled tasks");
   }
   return response.json();
 }
@@ -632,7 +1024,7 @@ export async function cancelScheduledTask(jobId) {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to cancel scheduled task");
+    await throwHttpError(response, "Failed to cancel scheduled task");
   }
   return response.json();
 }
@@ -643,7 +1035,7 @@ export async function getScheduleNotifications() {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to fetch schedule notifications");
+    await throwHttpError(response, "Failed to fetch schedule notifications");
   }
   return response.json();
 }
@@ -657,7 +1049,7 @@ export async function markScheduleNotificationRead(notifId) {
     }
   );
   if (!response.ok) {
-    throw new Error("Failed to mark notification read");
+    await throwHttpError(response, "Failed to mark notification read");
   }
   return response.json();
 }
@@ -668,7 +1060,57 @@ export async function markAllScheduleNotificationsRead() {
     headers: getHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Failed to mark notifications read");
+    await throwHttpError(response, "Failed to mark notifications read");
   }
   return response.json();
 }
+
+/**
+ * Export backup JSON for selected sections
+ * @param {Object} options
+ * @param {boolean} options.settings
+ * @param {boolean} options.apis
+ * @param {boolean} options.tools
+ * @param {boolean} options.conversations
+ * @param {boolean} options.knowledge
+ * @returns {Promise<Object>} The backup JSON
+ */
+export async function exportBackup({ settings = false, apis = false, tools = false, conversations = false, knowledge = false }) {
+  const params = new URLSearchParams({
+    settings: String(settings),
+    apis: String(apis),
+    tools: String(tools),
+    conversations: String(conversations),
+    knowledge: String(knowledge),
+  });
+  const response = await fetch(`${API_BASE_URL}/settings/export-backup?${params}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to export backup");
+  }
+  return response.json();
+}
+
+/**
+ * Import backup JSON for selected sections
+ * @param {Array<string>} importSections
+ * @param {Object} data
+ * @returns {Promise<Object>} The import result
+ */
+export async function importBackup(importSections, data) {
+  const response = await fetch(`${API_BASE_URL}/settings/import-backup`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      import_sections: importSections,
+      data: data,
+    }),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to import backup");
+  }
+  return response.json();
+}
+

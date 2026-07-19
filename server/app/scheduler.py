@@ -273,5 +273,13 @@ class SchedulerManager:
         except Exception:
             return False
 
+    def cancel_all_tasks(self) -> None:
+        """Cancel all pending in-memory scheduler jobs."""
+        for job in list(self.scheduler.get_jobs()):
+            try:
+                self.scheduler.remove_job(job.id)
+            except Exception as e:
+                logger.error("Failed to remove job %s during clear all: %s", job.id, e)
+
 
 scheduler_manager = SchedulerManager()

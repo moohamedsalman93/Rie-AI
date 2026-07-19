@@ -1,6 +1,8 @@
 import { motion } from "framer-motion";
 
-export function ModeToggle({ chatMode, setChatMode, speedMode, setSpeedMode }) {
+export function ModeToggle({ chatMode, setChatMode, speedMode, setSpeedMode, provider }) {
+  const isRie = !provider || provider === 'rie';
+
   return (
     <div className="flex items-center gap-1.5">
       {/* Agent / Chat Toggle */}
@@ -8,30 +10,35 @@ export function ModeToggle({ chatMode, setChatMode, speedMode, setSpeedMode }) {
         <motion.div
           className="absolute h-6 rounded-md"
           animate={{
-            x: chatMode === "agent" ? 2 : "calc(100% + 3px)",
+            x: chatMode === "agent" && !isRie ? 2 : "calc(100% + 3px)",
             width:"48%",
-            backgroundColor: chatMode === "agent" ? "rgba(16, 185, 129, 0.2)" : "rgba(59, 130, 246, 0.2)",
+            backgroundColor: chatMode === "agent" && !isRie ? "rgba(16, 185, 129, 0.2)" : "rgba(59, 130, 246, 0.2)",
           }}
           transition={{ type: "spring", stiffness: 500, damping: 35 }}
           style={{ left: 0 }}
         />
         <button
-          onClick={() => setChatMode("agent")}
+          onClick={() => !isRie && setChatMode("agent")}
+          disabled={isRie}
           className={`relative z-10  w-[50%] rounded-md text-[10px] font-semibold transition-colors tracking-wide  ${
-            chatMode === "agent"
+            isRie
+              ? "text-neutral-600 cursor-not-allowed opacity-50"
+              : chatMode === "agent"
               ? "text-emerald-400"
               : "text-neutral-500 hover:text-neutral-300"
           }`}
+          title={isRie ? "Agent mode is disabled for Rie provider" : "Agent Mode"}
         >
           Agent
         </button>
         <button
           onClick={() => setChatMode("chat")}
           className={`relative z-10 w-[50%] rounded-md text-[10px] font-semibold transition-colors tracking-wide  ${
-            chatMode === "chat"
+            chatMode === "chat" || isRie
               ? "text-blue-400"
               : "text-neutral-500 hover:text-neutral-300"
           }`}
+          title="Chat Mode"
         >
           Chat
         </button>
