@@ -385,6 +385,281 @@ def init_db():
             "Computer Use Guide",
             "Instructions for controlling and automating the Windows OS using mouse, keyboard, and terminal tools.",
             "Guidelines for using computer control tools (desktop state, click, type, scroll, drag, shortcuts, wait, scrape):\n1. **Always Check State First**: Before clicking, typing, or performing actions, call `get_desktop_state` to see the currently open applications, focused window, and interactive elements.\n2. **Visual Verification**: If you are unsure of an element's location, or a text description is insufficient, call `get_desktop_state` with `use_vision=True` to receive a visual screenshot.\n3. **Coordinate Accuracy**: The coordinates returned by `get_desktop_state` are in `[x, y]` format. Always click or type exactly on the identified interactive element's coordinates.\n4. **App Launch & Control**: Use `app_control` to launch or switch to windows. If an app is already running, switch to it instead of starting a new instance.\n5. **Typing Best Practices**: When using `keyboard_type`, click on the input field first. Use `clear=True` if you need to replace existing content, and `press_enter=True` to submit forms or search boxes.\n6. **Wait for UI Transitions**: UI updates are not instantaneous. After launching a program or clicking a button that changes the screen, use the `wait` tool (typically 1-3 seconds) to allow the interface to settle before querying the new state.\n7. **Verify Actions**: After executing clicks or keystrokes, call `get_desktop_state` again to verify that your action was successful and the UI changed as expected. Make sure to verify each step and do not proceed blindly.\n8. **Keyboard Shortcuts**: Use `press_keys` (shortcut tool) for common actions: 'ctrl+c' to copy, 'ctrl+v' to paste, 'alt+tab' to switch active windows, 'win' or 'win+s' to open search."
+        ),
+        (
+            "🐚",
+            "PowerShell Style & Scripting",
+            "Guidelines for writing clean, efficient, and secure PowerShell scripts.",
+            "Always use complete cmdlet names instead of aliases (e.g. use `Get-ChildItem` instead of `ls` or `dir`).\nPrefer using the pipeline for data processing but avoid it in high-performance loops.\nWrite functions with `[CmdletBinding()]` and proper parameter attributes (`[Parameter(Mandatory=$true)]`).\nUse `Write-Output` for returning data, and `Write-Host` or `Write-Information` only for visual feedback/logging.\nHandle errors gracefully using `try { ... } catch { ... }` blocks and check `$PSItem` or `$_` for error details.\nPrefer strongly typed parameters and add HelpMessage or comment-based help to functions.\nUse `$Path = Join-Path $PSScriptRoot \"subdir\"` for relative file paths to ensure cross-environment compatibility."
+        ),
+        (
+            "💻",
+            "Windows System Tasks",
+            "Expert instructions for Windows system operations: wallpaper, registry, services, scheduled tasks, startup, and display settings using native PowerShell APIs.",
+            r"""# Windows System Tasks Skill
+
+You are executing Windows system-level tasks. Follow these rules precisely.
+
+## Setting the Desktop Wallpaper
+NEVER use RUNDLL32 for wallpaper — it is unreliable on modern Windows.
+ALWAYS use SystemParametersInfo via P/Invoke:
+
+```powershell
+$wallpaper = "C:\path\to\image.jpg"
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class Wallpaper {
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+}
+'@
+[Wallpaper]::SystemParametersInfo(0x0014, 0, $wallpaper, 0x0001 -bor 0x0002)
+```
+Flags: 0x0014 = SPI_SETDESKWALLPAPER, 0x0001 = SPIF_UPDATEINIFILE, 0x0002 = SPIF_SENDCHANGE.
+Always ensure the destination folder exists with `New-Item -ItemType Directory -Force` before downloading.
+
+## Registry Operations
+Read:   `Get-ItemProperty -Path 'HKCU:\...' -Name 'ValueName'`
+Write:  `Set-ItemProperty -Path 'HKCU:\...' -Name 'ValueName' -Value 'data'`
+Create: `New-Item -Path 'HKCU:\...' -Force`
+Delete value: `Remove-ItemProperty -Path 'HKCU:\...' -Name 'ValueName'`
+
+Common paths:
+- Startup:   `HKCU:\Software\Microsoft\Windows\CurrentVersion\Run`
+- Desktop:   `HKCU:\Control Panel\Desktop`
+- Taskbar:   `HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband`
+
+## Services
+Start:   `Start-Service -Name "ServiceName"`
+Stop:    `Stop-Service -Name "ServiceName" -Force`
+Status:  `Get-Service -Name "ServiceName"`
+Enable at boot: `Set-Service -Name "ServiceName" -StartupType Automatic`
+List all: `Get-Service | Where-Object { $_.Status -eq 'Running' }`
+
+## Scheduled Tasks
+Create:
+```powershell
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-File "C:\script.ps1"'
+$trigger = New-ScheduledTaskTrigger -Daily -At '09:00AM'
+Register-ScheduledTask -TaskName "MyTask" -Action $action -Trigger $trigger -RunLevel Highest
+```
+List:   `Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\\' }`
+Remove: `Unregister-ScheduledTask -TaskName "MyTask" -Confirm:$false`
+
+## Display & Resolution
+Get displays: `Get-CimInstance -ClassName Win32_VideoController | Select-Object Name, CurrentHorizontalResolution, CurrentVerticalResolution`
+Refresh rate: `Get-CimInstance -ClassName Win32_VideoController | Select-Object CurrentRefreshRate`
+
+## ⚠️ MANDATORY — Command Execution Format
+**NEVER use `powershell -Command "..."` or `powershell -NoProfile -Command "..."`.**
+You are ALREADY inside a PowerShell terminal. Wrapping commands this way causes nested-quote
+parser errors (`TerminatorExpectedAtEndOfString`) because `\"` is NOT a valid PowerShell escape —
+PowerShell uses the backtick (`` ` ``) as its escape character, not backslash.
+Always run commands directly without any wrapper.
+
+**FALLBACK for complex commands**: If a command involves hashtables, nested quotes, loops, or
+special characters that make inline execution risky, write it to a temporary `.ps1` script file
+first, then execute the script:
+```powershell
+# Step 1: Write the script
+Set-Content -Path "$env:TEMP\rie_task.ps1" -Value @'
+$map = @{ "jpg"="Images"; "png"="Images"; "pdf"="Documents" }
+Get-ChildItem -Path "$env:USERPROFILE\Downloads" -File | ForEach-Object {
+    $ext = $_.Extension.TrimStart(".").ToLower()
+    $folder = $map[$ext]; if (-not $folder) { $folder = "Others" }
+    $dest = Join-Path "$env:USERPROFILE\Downloads" $folder
+    if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
+    Move-Item -LiteralPath $_.FullName -Destination $dest -Force
+}
+'@
+# Step 2: Execute it
+& "$env:TEMP\rie_task.ps1"
+```
+This completely avoids all quoting and escaping issues.
+
+## Critical Rules
+- Always use native cmdlets (Set-ItemProperty, New-Item, etc.), not Linux commands.
+- Use backslashes `\` for Windows paths.
+- Prefer `$env:USERPROFILE` over hardcoded `C:\Users\username`."""
+        ),
+        (
+            "📁",
+            "File & Directory Operations",
+            "Best practices for Windows file and directory tasks: copy, move, delete, rename, search, compress/extract archives using native PowerShell cmdlets.",
+            r"""# File & Directory Operations Skill
+
+You are performing file system operations on Windows. Use native PowerShell cmdlets only.
+
+## Creating Files & Directories
+Create directory (with parents): `New-Item -ItemType Directory -Path "C:\path\to\dir" -Force`
+Create empty file:               `New-Item -ItemType File -Path "C:\path\file.txt" -Force`
+Create file with content:        `Set-Content -Path "C:\path\file.txt" -Value "content"`
+Append content:                  `Add-Content -Path "C:\path\file.txt" -Value "more"`
+
+## Copying & Moving
+Copy file:       `Copy-Item -Path "src" -Destination "dst"`
+Copy folder:     `Copy-Item -Path "src" -Destination "dst" -Recurse`
+Move/rename:     `Move-Item -Path "src" -Destination "dst"`
+Copy with force: `Copy-Item -Path "src" -Destination "dst" -Recurse -Force`
+
+## Deleting
+Delete file:     `Remove-Item -Path "C:\path\file.txt"`
+Delete folder:   `Remove-Item -Path "C:\path\folder" -Recurse -Force`
+Delete contents: `Remove-Item -Path "C:\path\*" -Recurse -Force`
+
+## Reading Files
+Read all text: `Get-Content -Path "C:\path\file.txt"`
+Read as lines: `Get-Content -Path "C:\path\file.txt" | ForEach-Object { $_ }`
+First N lines: `Get-Content -Path "C:\path\file.txt" -TotalCount 10`
+Last N lines:  `Get-Content -Path "C:\path\file.txt" -Tail 10`
+
+## Searching
+Find files by name:    `Get-ChildItem -Path "C:\folder" -Filter "*.txt" -Recurse`
+Find by content:       `Select-String -Path "C:\folder\*.log" -Pattern "error" -Recurse`
+Find large files:      `Get-ChildItem -Path "C:\" -Recurse | Where-Object { $_.Length -gt 100MB }`
+Find recent files:     `Get-ChildItem -Path "C:\" -Recurse | Where-Object { $_.LastWriteTime -gt (Get-Date).AddDays(-7) }`
+
+## Listing & Info
+List directory:   `Get-ChildItem -Path "C:\path"`
+Directory size:   `(Get-ChildItem -Path "C:\path" -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB`
+File properties:  `Get-Item -Path "C:\path\file.txt" | Select-Object Name, Length, LastWriteTime, CreationTime`
+Check existence:  `Test-Path -Path "C:\path"` (returns True/False)
+
+## Archives (Zip)
+Compress:   `Compress-Archive -Path "C:\folder" -DestinationPath "C:\archive.zip" -Force`
+Extract:    `Expand-Archive -Path "C:\archive.zip" -DestinationPath "C:\dest" -Force`
+List zip:   `[System.IO.Compression.ZipFile]::OpenRead("C:\archive.zip").Entries | Select-Object FullName, Length`
+
+## Permissions
+Get ACL:  `Get-Acl -Path "C:\path\file.txt"`
+Set owner: `$acl = Get-Acl "path"; $acl.SetOwner([NTAccount]"DOMAIN\user"); Set-Acl "path" $acl`
+
+## ⚠️ MANDATORY — Command Execution Format
+**NEVER use `powershell -Command "..."` or `powershell -NoProfile -Command "..."`.**
+You are ALREADY inside a PowerShell terminal. Wrapping commands this way causes nested-quote
+parser errors (`TerminatorExpectedAtEndOfString`) because `\"` is NOT a valid PowerShell escape —
+PowerShell uses the backtick (`` ` ``) as its escape character, not backslash.
+
+**CORRECT — run commands directly:**
+```powershell
+$downloads = "$env:USERPROFILE\Downloads"
+Get-ChildItem -Path $downloads -File
+```
+
+**WRONG — will ALWAYS break:**
+```
+powershell -Command "& { $downloads = \"$env:USERPROFILE\\Downloads\" ... }"
+```
+
+If a command is multi-line, just emit it as multiple statements. The terminal handles it.
+
+**FALLBACK for complex commands**: If a command involves hashtables, nested quotes, loops, or
+special characters that make inline execution risky, write it to a temporary `.ps1` script file
+first, then execute the script:
+```powershell
+Set-Content -Path "$env:TEMP\rie_task.ps1" -Value @'
+# ... your complex PowerShell code here, no escaping needed inside here-string ...
+'@
+& "$env:TEMP\rie_task.ps1"
+```
+This completely avoids all quoting and escaping issues.
+
+## PowerShell Quoting Rules
+- Use double quotes `"..."` when you need variable expansion: `"$env:USERPROFILE\Downloads"`
+- Use single quotes `'...'` for literal strings: `'Hello World'`
+- Escape a double quote INSIDE a double-quoted string with backtick: `` "`" `` or by doubling the quote.
+- NEVER use backslash `\` to escape quotes — it does NOT work in PowerShell.
+
+## Critical Rules
+- NEVER use Linux commands (`ls`, `cp`, `mv`, `rm`, `mkdir`, `cat`, `touch`).
+- Always use `Test-Path` before deleting or reading to avoid errors.
+- Use `-Force` with `New-Item` and `Remove-Item` to avoid prompts.
+- Prefer `$env:USERPROFILE`, `$env:APPDATA`, `$env:TEMP` over hardcoded paths."""
+        ),
+        (
+            "🌐",
+            "Network & Downloads",
+            "Instructions for downloading files, making HTTP requests, testing connectivity, and network diagnostics using PowerShell on Windows.",
+            r"""# Network & Downloads Skill
+
+You are performing network operations on Windows. Use native PowerShell cmdlets.
+
+## Downloading Files
+ALWAYS ensure the destination directory exists first:
+```powershell
+New-Item -ItemType Directory -Path "$env:USERPROFILE\Downloads" -Force
+Invoke-WebRequest -Uri 'https://example.com/file.zip' -OutFile "$env:USERPROFILE\Downloads\file.zip"
+```
+
+For large files, use `-UseBasicParsing` to avoid IE engine dependency:
+```powershell
+Invoke-WebRequest -Uri 'https://...' -OutFile "C:\dest\file" -UseBasicParsing
+```
+
+Alternatively with .NET for better performance:
+```powershell
+(New-Object System.Net.WebClient).DownloadFile('https://...', 'C:\dest\file')
+```
+
+## HTTP Requests (REST APIs)
+GET:
+```powershell
+$response = Invoke-RestMethod -Uri 'https://api.example.com/data' -Method GET
+$response | ConvertTo-Json -Depth 5
+```
+
+POST with JSON body:
+```powershell
+$body = @{ key = "value"; num = 42 } | ConvertTo-Json
+$response = Invoke-RestMethod -Uri 'https://api.example.com/endpoint' -Method POST -Body $body -ContentType 'application/json'
+```
+
+With headers/auth:
+```powershell
+$headers = @{ 'Authorization' = 'Bearer TOKEN'; 'Content-Type' = 'application/json' }
+Invoke-RestMethod -Uri 'https://...' -Headers $headers -Method GET
+```
+
+## Testing Connectivity
+Ping host:        `Test-NetConnection -ComputerName "google.com"`
+Test port:        `Test-NetConnection -ComputerName "example.com" -Port 443`
+Check internet:   `Test-NetConnection -ComputerName "8.8.8.8" -Port 53`
+DNS lookup:       `Resolve-DnsName "example.com"`
+Traceroute:       `Test-NetConnection -ComputerName "example.com" -TraceRoute`
+
+## Network Info
+All adapters:     `Get-NetAdapter | Select-Object Name, Status, LinkSpeed`
+IP addresses:     `Get-NetIPAddress | Where-Object { $_.AddressFamily -eq 'IPv4' } | Select-Object InterfaceAlias, IPAddress`
+Active connections: `Get-NetTCPConnection | Where-Object { $_.State -eq 'Established' } | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort`
+Open ports:       `Get-NetTCPConnection -State Listen | Select-Object LocalPort | Sort-Object LocalPort`
+
+## Firewall
+Check status:  `Get-NetFirewallProfile | Select-Object Name, Enabled`
+Allow app:     `New-NetFirewallRule -DisplayName "MyApp" -Direction Inbound -Program "C:\app.exe" -Action Allow`
+Block port:    `New-NetFirewallRule -DisplayName "BlockPort" -Direction Inbound -LocalPort 1234 -Protocol TCP -Action Block`
+
+## ⚠️ MANDATORY — Command Execution Format
+**NEVER use `powershell -Command "..."` or `powershell -NoProfile -Command "..."`.**
+You are ALREADY inside a PowerShell terminal. Wrapping commands this way causes nested-quote
+parser errors (`TerminatorExpectedAtEndOfString`) because `\"` is NOT a valid PowerShell escape —
+PowerShell uses the backtick (`` ` ``) as its escape character, not backslash.
+Always run commands directly without any wrapper.
+
+**FALLBACK for complex commands**: If a command involves hashtables, nested quotes, or special
+characters, write it to a temp `.ps1` script first, then execute it:
+```powershell
+Set-Content -Path "$env:TEMP\rie_task.ps1" -Value @'
+# ... complex code here, no escaping needed inside here-string ...
+'@
+& "$env:TEMP\rie_task.ps1"
+```
+
+## Critical Rules
+- ALWAYS create destination directory before downloading: `New-Item -ItemType Directory -Force`
+- For downloading and setting images (e.g. wallpaper), verify the file exists after download with `Test-Path` before applying.
+- Use `Invoke-WebRequest` with `-UseBasicParsing` to avoid dependency on IE's COM engine.
+- On failure, check: DNS (`Resolve-DnsName`), port reachability (`Test-NetConnection -Port`), proxy settings."""
         )
     ]
     
@@ -392,12 +667,13 @@ def init_db():
         cursor.execute("SELECT COUNT(*) FROM skills WHERE name = ?", (name,))
         if cursor.fetchone()[0] == 0:
             skill_id = str(uuid.uuid4())
+            is_enabled = 1 if name in ("File & Directory Operations", "Network & Downloads", "Windows System Tasks") else 0
             cursor.execute(
                 """
                 INSERT INTO skills (id, name, description, content, icon, tool_ids, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, '[]', 0, ?, ?)
+                VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?)
                 """,
-                (skill_id, name, desc, content, icon, now, now)
+                (skill_id, name, desc, content, icon, is_enabled, now, now)
             )
         else:
             cursor.execute(
