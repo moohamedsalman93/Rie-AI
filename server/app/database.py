@@ -12,6 +12,7 @@ import secrets
 import hashlib
 from datetime import datetime
 from typing import Dict, List, Optional, Any
+import logging
 
 def get_db_path() -> Path:
     """Get the path to the SQLite database file"""
@@ -1667,6 +1668,69 @@ def delete_skill(skill_id: str) -> bool:
     conn.commit()
     conn.close()
     return True
+
+
+def clear_all_checkpoints():
+    """Clear all tables in the checkpoints database to remove LangGraph state for all threads."""
+    db_path = get_checkpoint_db_path()
+    if not os.path.exists(db_path):
+        return
+    
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [row[0] for row in cursor.fetchall()]
+        for table in tables:
+            if not table.startswith("sqlite_"):
+                cursor.execute(f"DELETE FROM {table}")
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Error clearing checkpoints db: {e}")
+    finally:
+        conn.close()
+
+
+def clear_all_history():
+    """Delete all chat threads, messages, and associated thread data."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("DELETE FROM messages")
+        cursor.execute("DELETE FROM friend_threads")
+        cursor.execute("DELETE FROM friend_thread_approvals")
+        cursor.execute("DELETE FROM thread_knowledge")
+        cursor.execute("DELETE FROM thread_skills")
+        cursor.execute("DELETE FROM scheduled_tasks")
+        cursor.execute("DELETE FROM schedule_notifications")
+        cursor.execute("DELETE FROM threads")
+        
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Error clearing history: {e}")
+        raise e
+    finally:
+        conn.close()
+        
+    clear_all_checkpoints()
+    
+    # Run vacuum on checkpoints db to reclaim space
+    try:
+        vacuum_checkpoint_db()
+    except Exception as e:
+        logging.error(f"Error vacuuming checkpoints db: {e}")
+        
+    # Run vacuum on main db as well
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("VACUUM")
+    except Exception as e:
+        logging.error(f"Error vacuuming main db: {e}")
+    finally:
+        conn.close()
+
 
 
 

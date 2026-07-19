@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users, Trash2 } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
@@ -181,6 +181,7 @@ export function NormalModeLayout({
             setThreadToDelete(null);
         }
     };
+
 
     const formatDate = (isoString) => {
         const date = new Date(isoString);
@@ -393,7 +394,7 @@ export function NormalModeLayout({
                                     </div>
                                     <button
                                         onClick={onNewChat}
-                                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors shrink-0"
                                         title="New Chat"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1113,6 +1114,7 @@ export function NormalModeLayout({
                 message="This will permanently delete this conversation."
                 confirmText="Delete"
             />
+
 
             <ConfirmationModal
                 isOpen={showExitConfirm}

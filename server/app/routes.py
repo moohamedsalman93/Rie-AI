@@ -53,6 +53,7 @@ from app.database import (
     get_thread_messages,
     fork_thread_messages,
     delete_thread,
+    clear_all_history,
     delete_last_message,
     vacuum_checkpoint_db,
     get_unread_schedule_notifications,
@@ -2400,6 +2401,18 @@ async def fork_history_thread(data: ForkThreadRequest):
         "thread_id": data.new_thread_id,
         "message_count": len(forked),
     }
+
+
+@router.delete("/history")
+async def delete_all_history():
+    """Delete all chat threads, messages, and cancel all active runs/tasks"""
+    await agent_manager.cancel_all_runs()
+    try:
+        scheduler_manager.cancel_all_tasks()
+    except Exception as e:
+        logging.error(f"Failed to cancel scheduler tasks: {e}")
+    await run_in_threadpool(clear_all_history)
+    return {"status": "success"}
 
 
 @router.delete("/history/{thread_id}")

@@ -30,6 +30,7 @@ export function FloatingChatWindow({
   onCloseHistory,
   onSelectThread,
   onDeleteThread,
+  onClearAllHistory,
   activeThreadId,
   streamingThreads,
   messages,
@@ -159,7 +160,7 @@ export function FloatingChatWindow({
           onClose={onCloseApp}
         />
       ) : isSettingsOpen ? (
-        <SettingsPage onClose={() => setIsSettingsOpen(false)} />
+        <SettingsPage onClose={() => setIsSettingsOpen(false)} onClearAllHistory={onClearAllHistory} />
       ) : (
         <>
           <div className="flex flex-1 min-h-0 w-full overflow-hidden">

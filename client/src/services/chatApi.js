@@ -809,6 +809,22 @@ export async function deleteThread(threadId) {
 }
 
 /**
+ * Clear all chat history
+ * @returns {Promise<Object>}
+ */
+export async function clearAllHistory() {
+  const response = await fetch(`${API_BASE_URL}/history`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to clear history");
+  }
+  return response.json();
+}
+
+/**
  * Fork a thread with history through a given user message.
  * @param {{ newThreadId: string, sourceThreadId?: string, untilMessageId?: string|number, messages: Array<{role: string, content: string, image_url?: string}> }} params
  */

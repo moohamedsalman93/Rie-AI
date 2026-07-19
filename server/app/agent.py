@@ -2035,5 +2035,12 @@ class AgentManager:
             logging.getLogger(__name__).info(f"Requested cancellation for thread_id={thread_id}")
             return True
         return False
+
+    async def cancel_all_runs(self) -> None:
+        """Cancel all active agent runs"""
+        for thread_id, task in list(self._active_tasks.items()):
+            if task and not task.done():
+                task.cancel()
+                logging.getLogger(__name__).info(f"Requested cancellation for thread_id={thread_id} during clear all")
 # Global agent manager instance
 agent_manager = AgentManager()

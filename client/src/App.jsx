@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread, clearAllHistory } from "./services/chatApi";
 import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
 import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
 import { isTauri, startNativeRecording, stopNativeRecording } from "./utils/tauriNative";
@@ -1383,6 +1383,30 @@ function MainApp() {
     }
   }, [activeThreadId, handleNewChat, persistFriendMeta]);
 
+  const handleClearAllHistory = useCallback(async () => {
+    try {
+      await clearAllHistory();
+    } catch (err) {
+      console.error("Failed to clear all history:", err);
+    } finally {
+      // Abort all active streams
+      Object.values(abortControllersRef.current).forEach(c => c.abort());
+      abortControllersRef.current = {};
+      
+      setStreamingThreads(new Set());
+      persistFriendMeta({});
+      
+      // Generate a new thread ID
+      const newThreadId = crypto.randomUUID();
+      setSessions({ [newThreadId]: initialMessages });
+      setActiveThreadId(newThreadId);
+      saveThreadId(newThreadId);
+      threadIdRef.current = newThreadId;
+      setAttachedImage(null);
+      loadThreadKnowledge(newThreadId);
+    }
+  }, [persistFriendMeta, loadThreadKnowledge]);
+
   const handleSelectFriendChat = useCallback(async (threadId, friend) => {
     if (!threadId || !friend) return;
     handleAssignFriendToThread(threadId, friend);
@@ -2379,6 +2403,36 @@ function MainApp() {
     };
   }, []);
 
+  // Listen for history-cleared event from standalone settings window
+  useEffect(() => {
+    let unlistenEvent;
+    const setupListener = async () => {
+      unlistenEvent = await listen("history-cleared", () => {
+        // Abort all active streams
+        Object.values(abortControllersRef.current).forEach(c => c.abort());
+        abortControllersRef.current = {};
+        
+        setStreamingThreads(new Set());
+        persistFriendMeta({});
+        
+        // Generate a new thread ID
+        const newThreadId = crypto.randomUUID();
+        setSessions({ [newThreadId]: initialMessages });
+        setActiveThreadId(newThreadId);
+        saveThreadId(newThreadId);
+        threadIdRef.current = newThreadId;
+        setAttachedImage(null);
+        loadThreadKnowledge(newThreadId);
+      });
+    };
+    setupListener();
+    return () => {
+      if (unlistenEvent) {
+        unlistenEvent();
+      }
+    };
+  }, [persistFriendMeta, loadThreadKnowledge]);
+
   // Raw Input custom shortcut listeners on Windows (toggle, PTT, cancel)
   useEffect(() => {
     if (!navigator.userAgent.includes("Windows")) return;
@@ -2492,7 +2546,7 @@ function MainApp() {
                   onMinimize={() => getWindow().minimize()}
                 />
               ) : isSettingsOpen ? (
-                <SettingsPage onClose={() => setIsSettingsOpen(false)} />
+                <SettingsPage onClose={() => setIsSettingsOpen(false)} onClearAllHistory={handleClearAllHistory} />
               ) : (
                 <>
                   <NormalModeLayout
@@ -2506,6 +2560,7 @@ function MainApp() {
                     onCancel={handleCancelRequest}
                     onSelectThread={handleSelectThread}
                     onDeleteThread={handleDeleteThread}
+                    onClearAllHistory={handleClearAllHistory}
                     onNewChat={handleNewChat}
                     currentThreadId={activeThreadId}
                     onOpenSettings={handleOpenSettingsWindow}
@@ -2607,6 +2662,7 @@ function MainApp() {
               onCloseHistory={() => setIsHistoryOpen(false)}
               onSelectThread={handleSelectThread}
               onDeleteThread={handleDeleteThread}
+              onClearAllHistory={handleClearAllHistory}
               activeThreadId={activeThreadId}
               streamingThreads={streamingThreads}
               messages={messages}

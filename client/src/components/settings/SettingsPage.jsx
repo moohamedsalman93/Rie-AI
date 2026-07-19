@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess } from '../../services/chatApi';
+import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory } from '../../services/chatApi';
 import { setShareLocationEnabled, prefetchClientLocation } from '../../utils/locationUtils';
 import { SettingInput } from './SettingInput';
 import { McpServersManager } from './McpServersManager';
@@ -62,7 +62,7 @@ import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen, emit } from '@tauri-apps/api/event';
 import { WINDOW_SIZES } from '../../constants/appConfig';
 
-function SettingsPage({ onClose, initialTab, initialSubTab }) {
+function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory }) {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -82,6 +82,25 @@ function SettingsPage({ onClose, initialTab, initialSubTab }) {
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [copied, setCopied] = useState(false);
   const logsEndRef = useRef(null);
+  const [isClearAllConfirmOpen, setIsClearAllConfirmOpen] = useState(false);
+
+  const handleClearAllConfirm = async () => {
+    setIsClearAllConfirmOpen(false);
+    try {
+      if (onClearAllHistory) {
+        await onClearAllHistory();
+      } else {
+        await clearAllHistory();
+        const { emit } = await import("@tauri-apps/api/event");
+        await emit("history-cleared");
+      }
+      if (onClose) {
+        onClose();
+      }
+    } catch (err) {
+      console.error("Failed to clear history from settings:", err);
+    }
+  };
 
   // Local state for edits
   const [selectedProvider, setSelectedProvider] = useState(null);
@@ -2384,6 +2403,29 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
                   </div>
 
+                  <div className="premium-card rounded-xl p-5 space-y-4">
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <Trash2 size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Data Management</h3>
+                    </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <h4 className="text-sm font-bold text-neutral-200">Clear All Chat History</h4>
+                        <p className="text-[10px] text-neutral-500 max-w-md">
+                          Permanently delete all chat threads, messages, scheduled tasks, notifications, and checkpoints. This cannot be undone.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setIsClearAllConfirmOpen(true)}
+                        className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-semibold rounded-lg transition-colors shrink-0"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+                  </div>
+
                   {/* About Section */}
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center gap-2.5 pb-2 border-b border-white/5 mb-3">
@@ -3350,6 +3392,15 @@ Separate keywords by commas. Commands containing these words will be blocked."
           </div>
         )}
       </AnimatePresence>
+
+      <ConfirmationModal
+        isOpen={isClearAllConfirmOpen}
+        onClose={() => setIsClearAllConfirmOpen(false)}
+        onConfirm={handleClearAllConfirm}
+        title="Clear All History?"
+        message="This will permanently delete all conversations and messages. This action cannot be undone."
+        confirmText="Clear All"
+      />
     </div>
   );
 }

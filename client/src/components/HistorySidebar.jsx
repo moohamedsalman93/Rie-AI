@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, ChevronRight, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, Users, Trash2 } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { KnowledgeHistoryBadge } from './KnowledgeAttachmentChips';
@@ -68,6 +68,7 @@ export function HistorySidebar({
             setThreadToDelete(null);
         }
     };
+
     const getThreadFriendMeta = (threadId) => {
         if (!friendThreadMeta) return null;
         return friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
