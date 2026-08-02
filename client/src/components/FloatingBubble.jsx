@@ -51,7 +51,7 @@ export function FloatingBubble({
       }
       onMouseDown={onMouseDown}
       ref={bubbleRef}
-      className={`pointer-events-auto flex cursor-move items-center gap-2 rounded-full bg-neutral-800/90 backdrop-blur-md hover:bg-neutral-700 px-4 py-2 shadow-xl m-2 border transition-colors ${isSnapping ? "pointer-events-none opacity-80" : ""}`}
+      className={`pointer-events-auto flex   items-center gap-2 rounded-full bg-neutral-800/90 backdrop-blur-md hover:bg-neutral-700 px-4 py-2 shadow-xl m-2 border transition-colors ${isSnapping ? "pointer-events-none opacity-80" : ""}`}
     >
       <div className="relative flex items-center justify-center">
         <img src={logo} alt="Rie-AI" className="h-6 w-6 object-contain z-10" />

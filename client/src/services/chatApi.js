@@ -1114,3 +1114,32 @@ export async function importBackup(importSections, data) {
   return response.json();
 }
 
+/** Browser Subsystem Settings & Observability APIs **/
+
+export async function getBrowserStatus() {
+  const response = await fetch(`${API_BASE_URL}/api/browser/status`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to get browser status");
+  return response.json();
+}
+
+export async function getBrowserProfiles() {
+  const response = await fetch(`${API_BASE_URL}/api/browser/profiles`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to list browser profiles");
+  return response.json();
+}
+
+export async function createBrowserProfile(id, name) {
+  const response = await fetch(`${API_BASE_URL}/api/browser/profiles`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ id, name }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to create browser profile");
+  return response.json();
+}
+
+

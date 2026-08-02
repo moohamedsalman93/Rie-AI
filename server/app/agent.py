@@ -53,6 +53,7 @@ from app.custom_tools import get_external_tools
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 from app.scheduler_tools import schedule_chat_task_tool
 from app.remote_friend_tools import remote_friend_ask_tool
+from app.browser import LANGGRAPH_BROWSER_TOOLS, browser_service, InteractionMode
 from app.runtime_context import set_agent_context, reset_agent_context
 
 
@@ -178,6 +179,7 @@ Priorities: check and use available skills first, accuracy second, efficiency th
 
 Rules:
 - Prioritize using specialized skills/instructions. Before starting any task, check the "Available Skills" section. If any available skill matches or relates to the task, you MUST first call the `load_skill` tool to retrieve and follow its instructions.
+- Web & Browser Tasks: When performing web browsing, page navigation, web searching, or web interactions, if browser tools (such as `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_close`) are available in your toolset, you MUST prioritize `browser_*` tools over desktop GUI tools (`windows_mouse_click`, `windows_key_press`, `get_desktop_state`, `app_control`). Use `browser_*` tools for all web interactions.
 - Prefer verified information and reasoning over assumptions.
 - Select and invoke the single most specific and efficient tool for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
 - When executing terminal commands on Windows, you MUST write correct and native Windows/PowerShell commands. Never use Linux commands (e.g. do not use `cat`, `touch`, `rm`, `cp`, `mv`, or `/` slash path separators; instead use `Get-Content`/`type`, `New-Item`/`echo`, `Remove-Item`, `Copy-Item`, `Move-Item`, and use backslashes `\\` for file paths).
@@ -668,6 +670,7 @@ class AgentManager:
             "internet_search": internet_search,
             "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
+            **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
@@ -1277,6 +1280,7 @@ class AgentManager:
             "internet_search": internet_search,
             "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
+            **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
@@ -1367,7 +1371,14 @@ class AgentManager:
         def _resolve_tools_from_ids(tool_ids: list[str]) -> list[Any]:
             resolved: list[Any] = []
             seen: set[str] = set()
-            for tool_id in tool_ids:
+            expanded_tool_ids = list(tool_ids)
+            # Expand legacy scrape_web or browser_open to full browser tool suite
+            if any(t in expanded_tool_ids for t in ("scrape_web", "browser_open", "browser_snapshot")):
+                for bt in LANGGRAPH_BROWSER_TOOLS:
+                    if bt.name not in expanded_tool_ids:
+                        expanded_tool_ids.append(bt.name)
+
+            for tool_id in expanded_tool_ids:
                 if not isinstance(tool_id, str):
                     continue
                 normalized = tool_id.strip()
@@ -1405,6 +1416,10 @@ class AgentManager:
                 tools_to_use = list(all_tools_map.values())
             else:
                 tools_to_use = _resolve_tools_from_ids(enabled_tool_names)
+                # Automatically include dynamic MCP tools and external API tools
+                for extra_tool in loaded_mcp_tools + loaded_external_tools:
+                    if extra_tool not in tools_to_use:
+                        tools_to_use.append(extra_tool)
 
         print(
             "DEBUG: Initializing agent with orchestration_mode=%s and tools=%s"

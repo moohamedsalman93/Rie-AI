@@ -63,7 +63,7 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
 
             <main className="relative z-10 w-[90%] w-full bg-[#111418]/80 backdrop-blur-xl border border-white/5 rounded-xl py-2 px-4 shadow-2xl flex flex-col h-full">
                 {/* Header section with window controls */}
-                <header className="flex justify-between items-start shrink-0 cursor-move">
+                <header className="flex justify-between items-start shrink-0  ">
                     <div className="flex items-center gap-3" data-tauri-drag-region>
                         <img src={logo} alt="Rie-AI" className="w-8 h-8 object-contain" />
                         <div>
@@ -161,11 +161,10 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
                     <motion.div
                         className="absolute inset-y-0 left-0 bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full"
                         animate={{
-                            width: `${
-                                currentStepIndex === LOADING_STEPS.length - 1
+                            width: `${currentStepIndex === LOADING_STEPS.length - 1
                                     ? 90
                                     : ((currentStepIndex + 1) / LOADING_STEPS.length) * 100
-                            }%`,
+                                }%`,
                         }}
                         transition={{ duration: 0.8, ease: "easeInOut" }}
                     />

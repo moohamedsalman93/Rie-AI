@@ -25,7 +25,7 @@ export function NormalModeLayout({
     onSend,
     onCancel,
     onSelectThread,
-    onDeleteThread = () => {},
+    onDeleteThread = () => { },
     onNewChat,
     currentThreadId,
     onOpenSettings,
@@ -73,17 +73,17 @@ export function NormalModeLayout({
     onClearTerminal,
     scheduleNotifications = [],
     scheduleUnreadCount = 0,
-    onScheduleMarkRead = () => {},
-    onScheduleMarkAllRead = () => {},
-    onScheduleOpenChat = () => {},
+    onScheduleMarkRead = () => { },
+    onScheduleMarkAllRead = () => { },
+    onScheduleOpenChat = () => { },
     friends = [],
     friendThreadMeta = {},
     activeFriendMeta = null,
-    onSelectFriendChat = () => {},
-    onStartFriendChat = () => {},
+    onSelectFriendChat = () => { },
+    onStartFriendChat = () => { },
     attachedKnowledge = [],
-    onAttachKnowledge = () => {},
-    onDetachKnowledge = () => {},
+    onAttachKnowledge = () => { },
+    onDetachKnowledge = () => { },
     provider,
 }) {
     // Sidebar state
@@ -109,7 +109,7 @@ export function NormalModeLayout({
         }
         fetchActiveSkills(currentThreadId, projectRoot)
             .then((data) => setActiveSkillsList(data))
-            .catch(() => {});
+            .catch(() => { });
     }, [currentThreadId, projectRoot]);
 
     const attachImageFile = (file) => {
@@ -286,7 +286,7 @@ export function NormalModeLayout({
             {/* Title Bar */}
             <header
                 data-tauri-drag-region
-                className="h-11 flex items-center justify-between px-3 bg-neutral-900 border-b border-neutral-800 shrink-0 cursor-move"
+                className="h-11 flex items-center justify-between px-3 bg-neutral-900 border-b border-neutral-800 shrink-0  "
             >
                 {/* Left: Logo + Title */}
                 <div data-tauri-drag-region className="flex items-center gap-2 w-[33.3%]">
