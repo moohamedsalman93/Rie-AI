@@ -683,6 +683,7 @@ async def get_settings():
         tavily_api_key=mask_key(settings.TAVILY_API_KEY),
         brave_search_api_key=mask_key(settings.BRAVE_SEARCH_API_KEY),
         web_search_provider=settings.WEB_SEARCH_PROVIDER,
+        camofox_headless_mode=settings.CAMOFOX_HEADLESS_MODE,
 
         llm_provider=settings.LLM_PROVIDER,
         fallback_llm_provider=settings.FALLBACK_LLM_PROVIDER,
@@ -3425,10 +3426,14 @@ async def update_skill_endpoint(skill_id: str, body: SkillUpdate):
 @router.delete("/skills/{skill_id}")
 async def delete_skill_endpoint(skill_id: str):
     """Delete a skill by ID."""
-    deleted = await run_in_threadpool(delete_skill, skill_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    return {"ok": True, "id": skill_id}
+    try:
+        deleted = await run_in_threadpool(delete_skill, skill_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return {"ok": True, "id": skill_id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 
 

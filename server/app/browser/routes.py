@@ -11,6 +11,9 @@ from app.browser.runtime_manager import runtime_manager
 from app.browser.profile_manager import profile_manager
 from app.browser.models import BrowserProfile
 
+from app.config import Settings
+settings = Settings()
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/browser", tags=["browser"])
@@ -29,7 +32,10 @@ class BrowserRuntimeStatus(BaseModel):
     mode: str = Field("embedded", description="Runtime mode (embedded or remote)")
     state: str = Field(..., description="Normalized lifecycle state")
     camoufox_version: Optional[str] = Field(None, description="Camoufox package version")
+    headless_mode: str = Field("auto", description="Configured headless mode (headless, normal, auto)")
     browser_binary: Optional[BrowserBinaryInfo] = Field(None, description="Browser binary status")
+    is_fetching: bool = Field(False, description="Whether binary is currently downloading")
+    fetch_error: Optional[str] = Field(None, description="Error from fetching binary")
     error: Optional[str] = Field(None, description="Error details if unhealthy")
 
 
@@ -42,6 +48,7 @@ class CreateProfileRequest(BaseModel):
 @router.get("/status", response_model=BrowserRuntimeStatus)
 async def get_browser_status() -> BrowserRuntimeStatus:
     """Get current browser runtime status and health metrics."""
+    settings.reload()
     status = await runtime_manager.get_status()
     binary = status.get("browser_binary", {})
 
@@ -50,7 +57,10 @@ async def get_browser_status() -> BrowserRuntimeStatus:
         mode=status.get("mode", "embedded"),
         state=status.get("state", "stopped"),
         camoufox_version=status.get("camoufox_version"),
+        headless_mode=settings.CAMOFOX_HEADLESS_MODE,
         browser_binary=BrowserBinaryInfo(**binary) if binary else None,
+        is_fetching=status.get("is_fetching", False),
+        fetch_error=status.get("fetch_error"),
         error=status.get("error"),
     )
 
@@ -65,6 +75,16 @@ async def initialize_browser_runtime() -> BrowserRuntimeStatus:
             detail=runtime_manager._last_error or "Failed to initialize Camoufox runtime."
         )
     return await get_browser_status()
+
+
+@router.post("/runtime/fetch")
+async def fetch_browser_binary():
+    """Trigger on-demand fetch/download of the Camoufox browser binary."""
+    res = await runtime_manager.fetch_binary()
+    if res.get("status") == "error":
+        raise HTTPException(status_code=500, detail=res.get("error", "Failed to fetch browser binary."))
+    return res
+
 
 
 @router.get("/profiles", response_model=List[BrowserProfile])

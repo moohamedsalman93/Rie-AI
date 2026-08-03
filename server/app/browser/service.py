@@ -308,6 +308,14 @@ class BrowserService:
             self._invalidate_dom()
             return await self.provider.bulk_autofill_form(self._session.session_id, field_data)
 
+    async def upload_file(self, target: str, file_path: str) -> ActionResult:
+        """Upload/inject a file into a targeted file input element."""
+        async with self._lock:
+            self._ensure_active_session("browser_upload_file")
+            self._interaction_mode = InteractionMode.BROWSER
+            self._invalidate_dom()
+            return await self.provider.upload_file(self._session.session_id, target=target, file_path=file_path)
+
     async def close_browser(self) -> ActionResult:
         """Close active browser session and transition state to CLOSED."""
         async with self._lock:

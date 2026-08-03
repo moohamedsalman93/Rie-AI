@@ -98,6 +98,14 @@ class Settings:
         return (self._get("WEB_SEARCH_PROVIDER") or "tavily").strip().lower()
 
     @property
+    def CAMOFOX_HEADLESS_MODE(self) -> str:
+        """Camoufox browser headless mode setting: 'headless', 'normal', or 'auto'."""
+        mode = (self._get("CAMOFOX_HEADLESS_MODE") or self._get("BROWSER_HEADLESS_MODE") or "auto").strip().lower()
+        if mode not in ("headless", "normal", "auto"):
+            return "auto"
+        return mode
+
+    @property
     def GOOGLE_API_KEY_STRING(self) -> Optional[str]:
         """Raw string of Google/Gemini API keys as stored in DB"""
         return self._get("GOOGLE_API_KEY")

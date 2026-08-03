@@ -111,6 +111,11 @@ class BrowserProvider(ABC):
         pass
 
     @abstractmethod
+    async def upload_file(self, session_id: str, target: str, file_path: str) -> ActionResult:
+        """Upload/inject a file into a targeted file input element."""
+        pass
+
+    @abstractmethod
     async def close_session(self, session_id: str) -> bool:
         """Close browser session."""
         pass

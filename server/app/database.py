@@ -343,37 +343,18 @@ def init_db():
     from datetime import datetime
     now = datetime.utcnow().isoformat()
     
+    # Clean up unwanted developer skills if previously seeded
+    unwanted = [
+        "React & TS Guidelines",
+        "Python Style Guide",
+        "No Code Placeholders",
+        "Semantic Git Commits",
+        "Security Hardening",
+    ]
+    for u in unwanted:
+        cursor.execute("DELETE FROM skills WHERE name = ?", (u,))
+
     defaults = [
-        (
-            "⚛️",
-            "React & TS Guidelines",
-            "React components and TypeScript style rules.",
-            "Use functional components and React Hooks only.\nAlways use strict type definitions; avoid using `any` at all costs.\nPrefer Tailwind CSS classes for styling unless customized.\nKeep components clean, modular, and focused (usually under 200 lines).\nExport interfaces and types cleanly at the top of files."
-        ),
-        (
-            "📝",
-            "Python Style Guide",
-            "Python coding conventions and guidelines.",
-            "Always write type hints for all function arguments and return types.\nPrefer Python 3.10+ syntax (e.g. use `x | y` instead of `Union[x, y]`).\nWrite clean docstrings following Google Style style guide.\nUse pytest for tests and place them in `tests/` directory.\nPrefer pathlib over os.path for all filesystem operations."
-        ),
-        (
-            "🚀",
-            "No Code Placeholders",
-            "Enforces complete, self-contained, working implementations.",
-            "Never use placeholder comments like `// TODO`, `// implement later`, or `...`.\nAlways write the complete logic so the code can build and execute immediately.\nWhen modifying files, write the full modified segments cleanly, including necessary imports.\nDouble-check edge cases, error handling, and parameter validations before completing tasks."
-        ),
-        (
-            "🎯",
-            "Semantic Git Commits",
-            "Enforces standard semantic commit message formats.",
-            "Use the semantic commit message prefix format:\n- `feat:` for new features\n- `fix:` for bug fixes\n- `docs:` for documentation updates\n- `style:` for formatting/styling changes\n- `refactor:` for refactoring code structure\n- `test:` for adding or updating unit tests\nWrite commit messages in the imperative mood (e.g. \"add endpoint\" instead of \"added endpoint\").\nKeep commit messages concise (under 72 characters)."
-        ),
-        (
-            "🛡️",
-            "Security Hardening",
-            "Strict rules for credentials and inputs.",
-            "Never hardcode secrets, API keys, private keys, or passwords.\nAlways read credentials from environment variables or secure configuration stores.\nSanitize all user inputs before querying databases or running shell commands.\nUse parameterization/prepared statements for all SQL commands to prevent SQL injection.\nKeep package dependencies updated to avoid known security advisories."
-        ),
         (
             "📄",
             "PDF Generation Expert",
@@ -1909,6 +1890,18 @@ def lock_thread_knowledge(thread_id: str, snapshots: Optional[Dict[str, str]] = 
 # Skills CRUD
 # ---------------------------------------------------------------------------
 
+SYSTEM_SKILL_NAMES = {
+    "File & Directory Operations",
+    "Network & Downloads",
+    "Windows System Tasks",
+    "PowerShell Style & Scripting",
+    "Computer Use Guide",
+    "PDF Generation Expert",
+    "CamoFox Browser",
+    "Job Application Assistant",
+}
+
+
 def _skill_row_to_dict(row) -> Dict[str, Any]:
     """Convert a skills DB row to a plain dict with tool_ids as a list."""
     d = dict(row)
@@ -1917,6 +1910,7 @@ def _skill_row_to_dict(row) -> Dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         d["tool_ids"] = []
     d["enabled"] = bool(d.get("enabled", 1))
+    d["is_system"] = d.get("name") in SYSTEM_SKILL_NAMES
     return d
 
 
@@ -1934,19 +1928,18 @@ def create_skill(
     cursor = conn.cursor()
     skill_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
-    tool_ids_json = json.dumps(tool_ids or [])
     cursor.execute(
         """
         INSERT INTO skills (id, name, description, content, icon, tool_ids, enabled, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
         """,
-        (skill_id, name.strip(), description.strip(), content, icon, tool_ids_json, now, now),
+        (skill_id, name, description, content, icon, json.dumps(tool_ids or []), now, now),
     )
     conn.commit()
     cursor.execute("SELECT * FROM skills WHERE id = ?", (skill_id,))
     row = cursor.fetchone()
     conn.close()
-    return _skill_row_to_dict(row) if row else {}
+    return _skill_row_to_dict(row)
 
 
 def update_skill(
@@ -1958,7 +1951,7 @@ def update_skill(
     tool_ids: Optional[List[str]] = None,
     enabled: Optional[bool] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Update a skill by ID. Only provided fields are changed."""
+    """Update a skill's fields."""
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -2028,11 +2021,16 @@ def delete_skill(skill_id: str) -> bool:
     """Delete a skill and its thread attachments. Returns True if deleted."""
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM skills WHERE id = ?", (skill_id,))
-    if not cursor.fetchone():
+    cursor.execute("SELECT id, name FROM skills WHERE id = ?", (skill_id,))
+    row = cursor.fetchone()
+    if not row:
         conn.close()
         return False
+    if row["name"] in SYSTEM_SKILL_NAMES:
+        conn.close()
+        raise ValueError(f"System skill '{row['name']}' is protected and cannot be deleted.")
     cursor.execute("DELETE FROM thread_skills WHERE skill_id = ?", (skill_id,))
     cursor.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
     conn.commit()

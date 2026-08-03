@@ -25,6 +25,8 @@ class BrowserRuntimeManager:
         self._state: RuntimeState = RuntimeState.STOPPED
         self._last_error: Optional[str] = None
         self._camoufox_version: Optional[str] = None
+        self._is_fetching: bool = False
+        self._fetch_error: Optional[str] = None
 
     @property
     def current_state(self) -> RuntimeState:
@@ -98,6 +100,43 @@ class BrowserRuntimeManager:
             logger.debug(f"Browser binary check failed: {e}")
             return {"available": False, "version": None, "error": str(e)}
 
+    async def fetch_binary(self) -> Dict[str, Any]:
+        """Download/fetch the Camoufox stealth browser executable on demand."""
+        if self._is_fetching:
+            return {"status": "fetching", "message": "Browser binary download is already in progress."}
+
+        import sys
+        import asyncio
+
+        self._is_fetching = True
+        self._fetch_error = None
+        logger.info("Starting on-demand Camoufox browser binary download...")
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "camoufox", "fetch",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode == 0:
+                logger.info("Camoufox browser binary download successful.")
+                self._is_fetching = False
+                await self.check_health()
+                return {"status": "success", "message": "Browser binary downloaded successfully."}
+            else:
+                err_msg = stderr.decode().strip() or stdout.decode().strip() or "Fetch process failed."
+                logger.error(f"Camoufox fetch failed: {err_msg}")
+                self._fetch_error = err_msg
+                self._is_fetching = False
+                return {"status": "error", "error": err_msg}
+        except Exception as e:
+            logger.exception("Failed to execute camoufox fetch")
+            self._fetch_error = str(e)
+            self._is_fetching = False
+            return {"status": "error", "error": str(e)}
+
     async def get_status(self) -> Dict[str, Any]:
         """Return runtime status for backend and frontend Settings UI."""
         is_healthy = await self.check_health()
@@ -116,6 +155,8 @@ class BrowserRuntimeManager:
             "status": self._state.value,
             "camoufox_version": self._camoufox_version,
             "browser_binary": browser_info,
+            "is_fetching": self._is_fetching,
+            "fetch_error": self._fetch_error,
             "error": self._last_error if not is_healthy else None,
         }
 
@@ -127,3 +168,4 @@ class BrowserRuntimeManager:
 
 # Global singleton
 runtime_manager = BrowserRuntimeManager()
+

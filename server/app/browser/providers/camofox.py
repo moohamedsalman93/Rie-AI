@@ -169,8 +169,19 @@ class CamoFoxProvider(BrowserProvider):
         if headless is not None:
             kwargs["headless"] = headless
         else:
-            # Default to visible (headful) GUI so user can see browser and hear audio/music playback
-            kwargs.setdefault("headless", False)
+            from app.config import Settings
+            cfg = Settings()
+            mode = cfg.CAMOFOX_HEADLESS_MODE
+            if mode == "headless":
+                kwargs["headless"] = True
+            elif mode == "normal":
+                kwargs["headless"] = False
+            else:
+                # "auto" mode: default to visible GUI (False) for user sessions
+                kwargs.setdefault("headless", False)
+
+        # Ensure bounded window size so browser fits comfortably on monitor
+        kwargs.setdefault("window", (1280, 720))
 
         # Configure Firefox user preferences to allow media autoplay with sound
         user_prefs = kwargs.setdefault("firefox_user_prefs", {})
@@ -189,22 +200,17 @@ class CamoFoxProvider(BrowserProvider):
             self._camoufox_cm = AsyncCamoufox(**kwargs)
             result = await self._camoufox_cm.__aenter__()
 
-            if self._persistent:
-                # persistent_context returns BrowserContext directly
+            if hasattr(result, "pages"):
+                # AsyncCamoufox returns BrowserContext directly
                 self._context = result
-                self._browser = None
-                if self._context.pages:
-                    self._page = self._context.pages[0]
-                else:
-                    self._page = await self._context.new_page()
+                self._browser = getattr(result, "browser", None)
             else:
-                # Non-persistent returns Browser
                 self._browser = result
-                from camoufox.async_api import AsyncNewContext
-                try:
-                    self._context = await AsyncNewContext(self._browser)
-                except Exception:
-                    self._context = await self._browser.new_context()
+                self._context = await self._browser.new_context()
+
+            if self._context.pages:
+                self._page = self._context.pages[0]
+            else:
                 self._page = await self._context.new_page()
 
             self._session_id = f"camofox-{uuid.uuid4().hex[:8]}"
@@ -1060,6 +1066,49 @@ class CamoFoxProvider(BrowserProvider):
             }
         except Exception as e:
             return {"success": False, "error": str(e), "injected_count": 0}
+
+    async def upload_file(self, session_id: str, target: str, file_path: str) -> ActionResult:
+        """Upload/inject a file into a targeted file input element."""
+        if _is_proactor_loop():
+            return await self._impl_upload_file(session_id, target, file_path)
+        return await self._thread_runner.run(lambda: self._impl_upload_file(session_id, target, file_path))
+
+    async def _impl_upload_file(self, session_id: str, target: str, file_path: str) -> ActionResult:
+        self._require_page()
+        import os
+        if not os.path.exists(file_path):
+            return ActionResult(
+                success=False,
+                url=self._page.url,
+                title=await self._page.title(),
+                message=f"File not found on path: '{file_path}'"
+            )
+
+        locator = self._ref_map.get(target)
+        if not locator:
+            locator = self._page.locator('input[type="file"]').first
+            try:
+                if not await locator.count():
+                    locator = self._page.get_by_label(target).first
+            except Exception:
+                pass
+
+        try:
+            await locator.set_input_files(file_path)
+            return ActionResult(
+                success=True,
+                url=self._page.url,
+                title=await self._page.title(),
+                message=f"Successfully uploaded file '{os.path.basename(file_path)}' into '{target}'.",
+                dom_changed=True
+            )
+        except Exception as e:
+            return ActionResult(
+                success=False,
+                url=self._page.url,
+                title=await self._page.title(),
+                message=f"Failed to upload file: {e}"
+            )
 
     # ------------------------------------------------------------------
     # Helpers

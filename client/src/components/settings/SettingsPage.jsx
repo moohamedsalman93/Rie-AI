@@ -234,6 +234,16 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   // Local state for edits
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [enabledTools, setEnabledTools] = useState([]);
+  const [browserEngine, setBrowserEngine] = useState(() => localStorage.getItem("rie_browser_engine") || "default");
+
+  useEffect(() => {
+    const handleEngineChange = () => {
+      setBrowserEngine(localStorage.getItem("rie_browser_engine") || "default");
+    };
+    window.addEventListener("rie_browser_engine_change", handleEngineChange);
+    return () => window.removeEventListener("rie_browser_engine_change", handleEngineChange);
+  }, []);
+
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [ollamaModels, setOllamaModels] = useState([]);
   const [loadingOllamaModels, setLoadingOllamaModels] = useState(false);
@@ -1757,7 +1767,12 @@ key2,
                       )}
 
                       <div className="flex flex-wrap gap-2.5">
-                        {AVAILABLE_TOOLS.map(tool => {
+                        {AVAILABLE_TOOLS.filter(tool => {
+                          if (browserEngine === "default" && tool.id.startsWith("browser_")) {
+                            return false;
+                          }
+                          return true;
+                        }).map(tool => {
                           const isMissingKey = tool.id === 'internet_search' && !isWebSearchConfigured(settings);
                           const isEnabled = !isMissingKey && enabledTools.includes(tool.id);
                           const tooltipText = isMissingKey

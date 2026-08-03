@@ -536,7 +536,7 @@ class SkillMiddleware(AgentMiddleware):
     """Middleware that injects available database skill descriptions into the system prompt."""
     tools = [load_skill]
 
-    def _build_skills_prompt(self) -> str:
+    def _build_skills_prompt(self, request: Optional[ModelRequest] = None) -> str:
         skills_list = []
         try:
             from app.database import list_skills
@@ -554,9 +554,22 @@ class SkillMiddleware(AgentMiddleware):
                 thread_id = config["configurable"].get("thread_id")
                 skill_ids_from_config = config["configurable"].get("skill_ids", [])
 
+            # Check if browser_open tool is available in the model request
+            has_camofox_tools = True
+            if request and hasattr(request, "tools"):
+                tool_names = [getattr(t, "name", str(t)) for t in (request.tools or [])]
+                has_camofox_tools = any(t in tool_names for t in ("browser_open", "browser_snapshot"))
+
             # Collect active/available database skills:
             db_skills = list_skills()
             for row in db_skills:
+                name = row.get("name", "Skill")
+                lower_name = name.lower()
+
+                # If Camoufox browser tools are not present, filter out CamoFox and Job Application skills
+                if not has_camofox_tools and ("camofox" in lower_name or "camoufox" in lower_name or "job application" in lower_name):
+                    continue
+
                 # check if globally enabled or attached via skill_ids from config
                 is_active = row.get("enabled") or row.get("id") in skill_ids_from_config
                 # check if attached to this thread
@@ -575,7 +588,6 @@ class SkillMiddleware(AgentMiddleware):
                         pass
                 
                 if is_active:
-                    name = row.get("name", "Skill")
                     desc = row.get("description", "").strip() or "Database-defined skill instructions."
                     skills_list.append(f"- **{name}**: {desc}")
 
@@ -589,7 +601,7 @@ class SkillMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        skills_prompt = self._build_skills_prompt()
+        skills_prompt = self._build_skills_prompt(request)
         if skills_prompt:
             skills_addendum = (
                 f"\n\n## Available Skills\n"
@@ -614,7 +626,7 @@ class SkillMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        skills_prompt = self._build_skills_prompt()
+        skills_prompt = self._build_skills_prompt(request)
         if skills_prompt:
             skills_addendum = (
                 f"\n\n## Available Skills\n"

@@ -23,7 +23,7 @@ async def browser_open(url: Optional[str] = None, profile: Optional[str] = None,
     Args:
         url: Optional webpage URL to open (e.g. 'https://youtube.com').
         profile: Optional persistent browser profile identifier (e.g. 'work', 'personal', 'default').
-        headless: Optional boolean. Defaults to False (visible browser GUI window on desktop with full audio/video sound support). Set to True for hidden background execution.
+        headless: Optional boolean. When Auto mode is enabled in settings, the LLM decides: pass True for hidden background tasks/scraping, or pass False for visible desktop GUI window (e.g. playing music/video, manual login, user interaction).
     """
     try:
         res = await browser_service.open_browser(url=url, profile=profile, headless=headless)
@@ -248,6 +248,23 @@ async def browser_job_bulk_autofill(field_data: dict) -> str:
 
 
 @tool
+async def browser_upload_file(target: str, file_path: str) -> str:
+    """Injects/uploads a file (e.g. PDF resume, cover letter, image, photo, or document) into a file input element on the active webpage.
+    
+    Args:
+        target: Element reference ID (e.g., 'ref-2'), file input label, or selector.
+        file_path: Absolute local path to the PDF, image, or file to upload (e.g. 'C:/path/to/resume.pdf').
+    """
+    try:
+        res = await browser_service.upload_file(target=target, file_path=file_path)
+        if res.success:
+            return f"Uploaded file '{file_path}' into '{target}' successfully."
+        return f"File upload into '{target}' failed: {res.message}"
+    except Exception as e:
+        return f"Upload file error: {e}"
+
+
+@tool
 async def browser_close() -> str:
     """Closes the active browser session.
     
@@ -272,5 +289,6 @@ LANGGRAPH_BROWSER_TOOLS = [
     browser_extract,
     browser_job_extract_form,
     browser_job_bulk_autofill,
+    browser_upload_file,
     browser_close,
 ]
