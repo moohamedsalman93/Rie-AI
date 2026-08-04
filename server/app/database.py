@@ -1788,6 +1788,37 @@ def update_knowledge_asset_summary(asset_id: str, summary: str) -> None:
     conn.close()
 
 
+def update_knowledge_asset(asset_id: str, summary: Optional[str] = None, filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_assets WHERE id = ?", (asset_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    fields = []
+    values = []
+    if summary is not None:
+        fields.append("summary = ?")
+        values.append(summary)
+    if filename is not None and filename.strip():
+        fields.append("filename = ?")
+        values.append(filename.strip())
+    if fields:
+        values.append(asset_id)
+        cursor.execute(f"UPDATE knowledge_assets SET {', '.join(fields)} WHERE id = ?", tuple(values))
+        now = datetime.utcnow().isoformat()
+        cursor.execute("UPDATE knowledge_packs SET updated_at = ? WHERE id = ?", (now, row["pack_id"]))
+        conn.commit()
+    cursor.execute("SELECT * FROM knowledge_assets WHERE id = ?", (asset_id,))
+    updated = cursor.fetchone()
+    conn.close()
+    return dict(updated) if updated else None
+
+
+
 def delete_knowledge_asset(asset_id: str) -> Optional[Dict[str, Any]]:
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)

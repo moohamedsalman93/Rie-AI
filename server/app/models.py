@@ -80,6 +80,11 @@ class KnowledgeAssetResponse(BaseModel):
     created_at: str
 
 
+class UpdateKnowledgeAssetRequest(BaseModel):
+    summary: Optional[str] = None
+    filename: Optional[str] = None
+
+
 class KnowledgePackResponse(BaseModel):
     id: str
     name: str

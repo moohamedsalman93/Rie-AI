@@ -107,6 +107,19 @@ export async function deleteKnowledgeAsset(packId, assetId) {
   return response.json();
 }
 
+export async function updateKnowledgeAsset(packId, assetId, { summary, filename }) {
+  const response = await fetch(
+    `${API_BASE_URL}/knowledge/${encodeURIComponent(packId)}/assets/${encodeURIComponent(assetId)}`,
+    {
+      method: "PATCH",
+      headers: getHeaders(),
+      body: JSON.stringify({ summary, filename }),
+    }
+  );
+  if (!response.ok) await throwHttpError(response, "Failed to update asset");
+  return response.json();
+}
+
 export async function getThreadKnowledge(threadId) {
   const response = await fetch(`${API_BASE_URL}/threads/${encodeURIComponent(threadId)}/knowledge`, {
     headers: getHeaders(),

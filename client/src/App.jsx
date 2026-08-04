@@ -2589,6 +2589,9 @@ function MainApp() {
                     onPickProjectPath={handlePickProjectPath}
                     isCapturing={isCapturing}
                     isRecording={isRecording}
+                    onStartRecording={startRecording}
+                    onStopRecording={stopRecording}
+                    onToggleRecording={() => (isRecording ? stopRecording() : startRecording())}
                     isAttachmentPopoverOpen={isAttachmentPopoverOpen}
                     setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
                     attachedClipboardText={attachedClipboardText}

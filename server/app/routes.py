@@ -27,7 +27,7 @@ from app.models import (
     FriendPeerAccessPatch, PeerAccessCatalogResponse,
     PeerQueryEventItem,
     PeerStreamCancelRequest,
-    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, ThreadKnowledgeItem,
+    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, UpdateKnowledgeAssetRequest, ThreadKnowledgeItem,
     SkillCreate, SkillUpdate, SkillResponse,
     ImportBackupRequest,
 )
@@ -82,6 +82,7 @@ from app.database import (
     get_knowledge_pack,
     delete_knowledge_pack,
     delete_knowledge_asset,
+    update_knowledge_asset,
     get_thread_knowledge,
     create_skill,
     update_skill,
@@ -2587,6 +2588,14 @@ async def delete_knowledge_asset_route(pack_id: str, asset_id: str):
         raise HTTPException(status_code=404, detail="Asset not found")
     await run_in_threadpool(remove_asset_file, asset)
     return {"status": "success"}
+
+
+@router.patch("/knowledge/{pack_id}/assets/{asset_id}")
+async def update_knowledge_asset_route(pack_id: str, asset_id: str, payload: UpdateKnowledgeAssetRequest):
+    asset = await run_in_threadpool(update_knowledge_asset, asset_id, payload.summary, payload.filename)
+    if not asset or asset.get("pack_id") != pack_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return asset
 
 
 @router.get("/threads/{thread_id}/knowledge", response_model=List[ThreadKnowledgeItem])
