@@ -19,6 +19,7 @@ import {
   Sparkles,
   ShieldCheck,
   Square,
+  Globe,
 } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -31,6 +32,7 @@ import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
 import { KnowledgeAttachmentChips, KnowledgeHistoryBadge, KnowledgeChatBanner } from './KnowledgeAttachmentChips';
 import { KnowledgePickerModal } from './KnowledgePickerModal';
+import { LiveCamoufoxPanel } from './LiveCamoufoxPanel';
 import { fetchActiveSkills } from '../services/skillsApi';
 import logo from '../assets/logo.png';
 
@@ -119,11 +121,49 @@ export function NormalModeLayout({
     const [showExitConfirm, setShowExitConfirm] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(true);
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
+    const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
+    const [browserPanelWidth, setBrowserPanelWidth] = useState(65);
+    const [isResizingPanel, setIsResizingPanel] = useState(false);
     const [activeSkillsList, setActiveSkillsList] = useState([]);
     const [isFullWindow, setIsFullWindow] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1200);
     const isDragging = dragCounter > 0;
     const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
     const isNewChat = !messages || messages.length === 0;
+
+    const handleStartResize = (e) => {
+        e.preventDefault();
+        setIsResizingPanel(true);
+    };
+
+    useEffect(() => {
+        if (!isResizingPanel) return;
+
+        const handleMouseMove = (e) => {
+            const windowWidth = window.innerWidth;
+            const mouseX = e.clientX;
+            const minChatWidthPx = 380;
+            const minBrowserWidthPx = 320;
+
+            let maxBrowserPercent = Math.max(20, ((windowWidth - minChatWidthPx) / windowWidth) * 100);
+            let minBrowserPercent = Math.min(80, (minBrowserWidthPx / windowWidth) * 100);
+
+            let newPercent = ((windowWidth - mouseX) / windowWidth) * 100;
+            if (newPercent < minBrowserPercent) newPercent = minBrowserPercent;
+            if (newPercent > maxBrowserPercent) newPercent = maxBrowserPercent;
+            setBrowserPanelWidth(newPercent);
+        };
+
+        const handleMouseUp = () => {
+            setIsResizingPanel(false);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isResizingPanel]);
 
     useEffect(() => {
         const handleResize = () => {
@@ -374,6 +414,14 @@ export function NormalModeLayout({
                         </svg>
                     </button>
                     <button
+                        onClick={() => setIsBrowserPanelOpen(prev => !prev)}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className={`p-2 rounded-lg transition-colors ${isBrowserPanelOpen ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
+                        title="Live Camoufox Stealth Browser Workspace"
+                    >
+                        <Globe size={16} />
+                    </button>
+                    <button
                         onClick={onToggleFloating}
                         onMouseDown={(e) => e.stopPropagation()}
                         className="p-2 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors"
@@ -573,31 +621,35 @@ export function NormalModeLayout({
                 </AnimatePresence>
 
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col min-w-0 bg-neutral-950 relative">
+                <div
+                    style={isBrowserPanelOpen ? { width: `${100 - browserPanelWidth}%` } : undefined}
+                    className={`flex flex-col min-w-[380px] bg-neutral-950 relative ${isBrowserPanelOpen ? "shrink-0 border-r border-neutral-800/80" : "flex-1"}`}
+                >
                     {/* Messages */}
                     {!isNewChat ? (
-                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
-                            {activeFriendMeta?.isFriendChat && (
-                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-                                    <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
-                                    <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
-                                </div>
-                            )}
-                            <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
-                            <SkillsChatBanner activeSkills={activeSkillsList} />
-                            <AnimatePresence>
-                                {messages.map((m) => {
-                                    if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
-                                        return null;
-                                    }
-                                    return (
-                                        <motion.div
-                                            key={m.id}
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
-                                        >
-                                            <div className={`flex items-end gap-2 min-w-0  ${m.from === 'user' ? 'justify-end' : ''}`}>
+                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-4" : "px-12")} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+                            <div className="max-w-3xl mx-auto w-full space-y-3">
+                                {activeFriendMeta?.isFriendChat && (
+                                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                                        <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
+                                        <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
+                                    </div>
+                                )}
+                                <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
+                                <SkillsChatBanner activeSkills={activeSkillsList} />
+                                <AnimatePresence>
+                                    {messages.map((m) => {
+                                        if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
+                                            return null;
+                                        }
+                                        return (
+                                            <motion.div
+                                                key={m.id}
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
+                                            >
+                                                <div className={`flex items-end gap-2 min-w-0 w-full ${m.from === 'user' ? 'justify-end' : ''}`}>
 
                                                 {m.from === 'user' && m.error && (
                                                     <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
@@ -729,6 +781,7 @@ export function NormalModeLayout({
                                 />
                             )}
                             <div ref={messagesEndRef} />
+                            </div>
                         </main>
                     ) : (
                         <div className="flex-1" />
@@ -765,7 +818,7 @@ export function NormalModeLayout({
                         }}
                         className={isNewChat
                             ? "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[60%] w-full max-w-2xl px-6 z-10 flex flex-col justify-center"
-                            : `px-4 py-2 relative ${isHistoryVisible ? "px-6" : "px-24"}`
+                            : `px-4 py-2 relative ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-6" : "px-24")}`
                         }
                     >                        {isNewChat ? (
                             <div className="w-full max-w-3xl mx-auto flex flex-col justify-center py-4">
@@ -1343,6 +1396,33 @@ export function NormalModeLayout({
                                     </>
                                 )}
                             </div>
+                        </motion.aside>
+                    )}
+                </AnimatePresence>
+
+                {/* Draggable Divider Handle */}
+                {isBrowserPanelOpen && (
+                    <div
+                        onMouseDown={handleStartResize}
+                        className="w-1.5 hover:w-2 bg-neutral-800/80 hover:bg-cyan-500/80 cursor-col-resize h-full shrink-0 transition-colors z-30 flex items-center justify-center group"
+                        title="Drag to resize browser panel"
+                    >
+                        <div className="h-8 w-0.5 bg-neutral-600 group-hover:bg-cyan-200 rounded-full" />
+                    </div>
+                )}
+
+                {/* Embedded Camoufox Browser Workspace Panel */}
+                <AnimatePresence>
+                    {isBrowserPanelOpen && (
+                        <motion.aside
+                            initial={{ width: 0, opacity: 0 }}
+                            animate={{ width: `${browserPanelWidth}%`, opacity: 1 }}
+                            exit={{ width: 0, opacity: 0 }}
+                            transition={isResizingPanel ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 30 }}
+                            style={{ width: `${browserPanelWidth}%` }}
+                            className="h-full bg-neutral-950 flex flex-col overflow-hidden shrink-0"
+                        >
+                            <LiveCamoufoxPanel onClose={() => setIsBrowserPanelOpen(false)} />
                         </motion.aside>
                     )}
                 </AnimatePresence>

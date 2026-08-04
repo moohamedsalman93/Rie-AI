@@ -108,7 +108,7 @@ from app.browser.routes import router as browser_router
 
 # Include routers
 app.include_router(router, dependencies=[Depends(verify_app_token)])
-app.include_router(browser_router, dependencies=[Depends(verify_app_token)])
+app.include_router(browser_router)
 
 
 if __name__ == "__main__":

@@ -1151,5 +1151,23 @@ export async function fetchBrowserBinary() {
   return response.json();
 }
 
+export async function getBrowserActiveSession() {
+  const response = await fetch(`${API_BASE_URL}/api/browser/active_session`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to get active browser session");
+  return response.json();
+}
+
+export async function performBrowserAction(action, payload = {}) {
+  const response = await fetch(`${API_BASE_URL}/api/browser/action`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ action, ...payload }),
+  });
+  if (!response.ok) await throwHttpError(response, `Failed to perform browser action: ${action}`);
+  return response.json();
+}
+
 
 

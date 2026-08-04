@@ -180,8 +180,9 @@ class CamoFoxProvider(BrowserProvider):
                 # "auto" mode: default to visible GUI (False) for user sessions
                 kwargs.setdefault("headless", False)
 
-        # Ensure bounded window size so browser fits comfortably on monitor
-        kwargs.setdefault("window", (1280, 720))
+        # Ensure high resolution window size to fill desktop panel workspace
+        kwargs.setdefault("window", (1920, 1080))
+        self._headless = kwargs.get("headless", False)
 
         # Configure Firefox user preferences to allow media autoplay with sound
         user_prefs = kwargs.setdefault("firefox_user_prefs", {})
@@ -727,6 +728,27 @@ class CamoFoxProvider(BrowserProvider):
 
         return ActionResult(success=False, message=f"Unknown tab action '{action}'")
 
+    async def resize_viewport(self, session_id: str, width: int, height: int) -> ActionResult:
+        """Resize active page viewport dynamically."""
+        if _is_proactor_loop():
+            return await self._impl_resize_viewport(session_id, width, height)
+        return await self._thread_runner.run(lambda: self._impl_resize_viewport(session_id, width, height))
+
+    async def _impl_resize_viewport(self, session_id: str, width: int, height: int) -> ActionResult:
+        self._require_page()
+        try:
+            target_w = max(320, width)
+            target_h = max(240, height)
+            await self._page.set_viewport_size({"width": target_w, "height": target_h})
+            return ActionResult(
+                success=True,
+                url=self._page.url,
+                title=await self._page.title(),
+                message=f"Viewport resized to {target_w}x{target_h}",
+            )
+        except Exception as e:
+            return ActionResult(success=False, message=f"Resize viewport error: {e}")
+
     async def extract_content(self, session_id: str, query: Optional[str] = None, tab_id: Optional[str] = None) -> ExtractResult:
         """Extract page content as clean text."""
         if _is_proactor_loop():
@@ -1109,6 +1131,70 @@ class CamoFoxProvider(BrowserProvider):
                 title=await self._page.title(),
                 message=f"Failed to upload file: {e}"
             )
+
+    async def click_at_coords(self, session_id: str, x: int, y: int) -> ActionResult:
+        """Click at pixel coordinates."""
+        if _is_proactor_loop():
+            return await self._impl_click_at_coords(session_id, x, y)
+        return await self._thread_runner.run(lambda: self._impl_click_at_coords(session_id, x, y))
+
+    async def _impl_click_at_coords(self, session_id: str, x: int, y: int) -> ActionResult:
+        self._require_page()
+        try:
+            await self._page.mouse.click(x, y)
+            await asyncio.sleep(0.1)
+            return ActionResult(
+                success=True,
+                url=self._page.url,
+                title=await self._page.title(),
+                message=f"Clicked at ({x}, {y})",
+                changed=True,
+            )
+        except Exception as e:
+            return ActionResult(success=False, message=f"Click failed: {e}")
+
+    async def scroll_page(self, session_id: str, delta_x: int, delta_y: int) -> ActionResult:
+        """Scroll page by delta offsets."""
+        if _is_proactor_loop():
+            return await self._impl_scroll_page(session_id, delta_x, delta_y)
+        return await self._thread_runner.run(lambda: self._impl_scroll_page(session_id, delta_x, delta_y))
+
+    async def _impl_scroll_page(self, session_id: str, delta_x: int, delta_y: int) -> ActionResult:
+        self._require_page()
+        try:
+            await self._page.mouse.wheel(delta_x, delta_y)
+            return ActionResult(
+                success=True,
+                url=self._page.url,
+                title=await self._page.title(),
+                message=f"Scrolled by ({delta_x}, {delta_y})",
+                changed=True,
+            )
+        except Exception as e:
+            return ActionResult(success=False, message=f"Scroll failed: {e}")
+
+    async def send_keyboard_input(self, session_id: str, text: str) -> ActionResult:
+        """Send keyboard typing or key press."""
+        if _is_proactor_loop():
+            return await self._impl_send_keyboard_input(session_id, text)
+        return await self._thread_runner.run(lambda: self._impl_send_keyboard_input(session_id, text))
+
+    async def _impl_send_keyboard_input(self, session_id: str, text: str) -> ActionResult:
+        self._require_page()
+        try:
+            if len(text) == 1 or text in ["Enter", "Backspace", "Tab", "Escape", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"]:
+                await self._page.keyboard.press(text)
+            else:
+                await self._page.keyboard.type(text)
+            return ActionResult(
+                success=True,
+                url=self._page.url,
+                title=await self._page.title(),
+                message="Sent keyboard input",
+                changed=True,
+            )
+        except Exception as e:
+            return ActionResult(success=False, message=f"Keyboard input failed: {e}")
 
     # ------------------------------------------------------------------
     # Helpers

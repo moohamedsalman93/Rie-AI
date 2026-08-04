@@ -108,6 +108,17 @@ class BrowserService:
     async def open_browser(self, url: Optional[str] = None, profile: Optional[str] = None, headless: Optional[bool] = None) -> ActionResult:
         """Open browser session and optionally navigate to URL."""
         async with self._lock:
+            if self.has_active_session() and headless is not None:
+                current_headless = getattr(self.provider, "_headless", None)
+                if current_headless is not None and current_headless != headless:
+                    logger.info(f"Switching browser session headless mode to {headless}...")
+                    try:
+                        await self.provider.close_session(self._session.session_id)
+                    except Exception as e:
+                        logger.warning(f"Error closing old session during mode switch: {e}")
+                    self._session = None
+                    self._state = BrowserSessionState.CLOSED
+
             if not self.has_active_session():
                 logger.info("Verifying browser runtime process readiness...")
                 await runtime_manager.ensure_running()
@@ -315,6 +326,39 @@ class BrowserService:
             self._interaction_mode = InteractionMode.BROWSER
             self._invalidate_dom()
             return await self.provider.upload_file(self._session.session_id, target=target, file_path=file_path)
+
+    async def click_at_coords(self, x: int, y: int) -> ActionResult:
+        """Click at absolute pixel coordinates."""
+        async with self._lock:
+            self._ensure_active_session("browser_click_at_coords")
+            self._interaction_mode = InteractionMode.BROWSER
+            self._invalidate_dom()
+            res = await getattr(self.provider, "click_at_coords", lambda s, x, y: None)(self._session.session_id, x, y)
+            if res:
+                self._current_url = res.url or self._current_url
+                self._current_title = res.title or self._current_title
+            return res or ActionResult(success=False, message="click_at_coords not implemented")
+
+    async def scroll_page(self, delta_x: int, delta_y: int) -> ActionResult:
+        """Scroll page by delta offsets."""
+        async with self._lock:
+            self._ensure_active_session("browser_scroll_page")
+            self._interaction_mode = InteractionMode.BROWSER
+            return await getattr(self.provider, "scroll_page", lambda s, dx, dy: None)(self._session.session_id, delta_x, delta_y) or ActionResult(success=False, message="scroll_page not implemented")
+
+    async def send_keyboard_input(self, text: str) -> ActionResult:
+        """Send keyboard typing or key press."""
+        async with self._lock:
+            self._ensure_active_session("browser_send_keyboard_input")
+            self._interaction_mode = InteractionMode.BROWSER
+            self._invalidate_dom()
+            return await getattr(self.provider, "send_keyboard_input", lambda s, t: None)(self._session.session_id, text) or ActionResult(success=False, message="send_keyboard_input not implemented")
+
+    async def resize_viewport(self, width: int, height: int) -> ActionResult:
+        """Resize active page viewport dynamically."""
+        async with self._lock:
+            self._ensure_active_session("browser_resize_viewport")
+            return await getattr(self.provider, "resize_viewport", lambda s, w, h: None)(self._session.session_id, width, height) or ActionResult(success=False, message="resize_viewport not implemented")
 
     async def close_browser(self) -> ActionResult:
         """Close active browser session and transition state to CLOSED."""
