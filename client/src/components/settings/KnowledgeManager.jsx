@@ -49,20 +49,24 @@ export function KnowledgeManager() {
   const [copiedAssetId, setCopiedAssetId] = useState(false);
   const fileInputRef = useRef(null);
 
-  const refreshList = async () => {
-    setLoading(true);
-    try {
-      const rows = await listKnowledge();
-      setPacks(rows || []);
-    } catch (e) {
-      setError(e.message || 'Failed to load knowledge packs');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let mounted = true;
+    const refreshList = async () => {
+      setLoading(true);
+      try {
+        const rows = await listKnowledge();
+        if (mounted) setPacks(rows || []);
+      } catch (e) {
+        if (mounted) setError(e.message || 'Failed to load knowledge packs');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
     refreshList();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const loadDetail = async (packId) => {

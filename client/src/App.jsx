@@ -2132,9 +2132,11 @@ function MainApp() {
   // Handle Window Resizing for Settings & Welcome (skip during loading - applyWindowMode handles it)
   useEffect(() => {
     if (isAppInitializing) return;
-    const resizeWindow = async () => {
+    let cancelled = false;
+    const timer = setTimeout(async () => {
       try {
         const win = getWindow();
+        if (cancelled) return;
         if (isSettingsOpen || showWelcome) {
           await win.setSize(new LogicalSize(WINDOW_SIZES.SETTINGS.width, WINDOW_SIZES.SETTINGS.height));
         } else if (isOpen) {
@@ -2145,8 +2147,11 @@ function MainApp() {
       } catch (err) {
         console.error("Failed to resize window:", err);
       }
+    }, 50);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
     };
-    resizeWindow();
   }, [isAppInitializing, isSettingsOpen, showWelcome, isOpen, getWindow, windowMode]);
 
   // Auto-scroll to bottom when messages change or window state shifts

@@ -39,22 +39,26 @@ export function McpServersManager({ servers, onSave, isSaving }) {
 
   // Fetch MCP status on component mount
   useEffect(() => {
-    fetchMcpStatus();
-  }, []);
+    let mounted = true;
+    const fetchMcpStatus = async () => {
+      try {
+        setLoadingStatus(true);
+        setStatusError(null);
+        const status = await getMcpStatus();
+        if (mounted) setMcpStatus(status);
+      } catch (err) {
+        console.error('Failed to fetch MCP status:', err);
+        if (mounted) setStatusError(err.message);
+      } finally {
+        if (mounted) setLoadingStatus(false);
+      }
+    };
 
-  const fetchMcpStatus = async () => {
-    try {
-      setLoadingStatus(true);
-      setStatusError(null);
-      const status = await getMcpStatus();
-      setMcpStatus(status);
-    } catch (err) {
-      console.error('Failed to fetch MCP status:', err);
-      setStatusError(err.message);
-    } finally {
-      setLoadingStatus(false);
-    }
-  };
+    fetchMcpStatus();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const toggleServerExpand = (index) => {
     const newExpanded = new Set(expandedServers);

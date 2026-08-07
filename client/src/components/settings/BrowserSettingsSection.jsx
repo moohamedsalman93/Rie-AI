@@ -40,35 +40,40 @@ export default function BrowserSettingsSection() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [error, setError] = useState(null);
 
-  const fetchBrowserData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const [statusData, profilesData] = await Promise.all([
-        getBrowserStatus(),
-        getBrowserProfiles(),
-      ]);
-      setStatus(statusData);
-      setProfiles(profilesData);
-      if (statusData?.headless_mode) {
-        setHeadlessMode(statusData.headless_mode);
-        localStorage.setItem("rie_camofox_headless_mode", statusData.headless_mode);
-      }
-      if (statusData?.is_fetching) {
-        setFetchingBinary(true);
-      } else {
-        setFetchingBinary(false);
-      }
-    } catch (err) {
-      console.error("Error fetching browser subsystem data:", err);
-      setError(err.message || "Failed to connect to browser engine service.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let mounted = true;
+    const fetchBrowserData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [statusData, profilesData] = await Promise.all([
+          getBrowserStatus(),
+          getBrowserProfiles(),
+        ]);
+        if (!mounted) return;
+        setStatus(statusData);
+        setProfiles(profilesData);
+        if (statusData?.headless_mode) {
+          setHeadlessMode(statusData.headless_mode);
+          localStorage.setItem("rie_camofox_headless_mode", statusData.headless_mode);
+        }
+        if (statusData?.is_fetching) {
+          setFetchingBinary(true);
+        } else {
+          setFetchingBinary(false);
+        }
+      } catch (err) {
+        console.error("Error fetching browser subsystem data:", err);
+        if (mounted) setError(err.message || "Failed to connect to browser engine service.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
     fetchBrowserData();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const handleSelectEngine = (choice) => {
@@ -90,10 +95,12 @@ export default function BrowserSettingsSection() {
   // Poll while binary is fetching
   useEffect(() => {
     let timer;
+    let mounted = true;
     if (fetchingBinary) {
       timer = setInterval(async () => {
         try {
           const statusData = await getBrowserStatus();
+          if (!mounted) return;
           setStatus(statusData);
           if (!statusData?.is_fetching) {
             setFetchingBinary(false);
@@ -103,7 +110,10 @@ export default function BrowserSettingsSection() {
         }
       }, 3000);
     }
-    return () => clearInterval(timer);
+    return () => {
+      mounted = false;
+      if (timer) clearInterval(timer);
+    };
   }, [fetchingBinary]);
 
   const handleDownloadBinary = async () => {

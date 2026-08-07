@@ -79,6 +79,15 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     normalizeTabId(initialTab) === 'advanced' ? normalizeSubTab('advanced', initialSubTab) || 'orchestration' : 'orchestration'
   );
   const [settingsSearch, setSettingsSearch] = useState('');
+  const isMountedRef = useRef(true);
+  const searchTimeoutRef = useRef(null);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
   const [savingKey, setSavingKey] = useState(null);
   const [logs, setLogs] = useState('');
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -555,6 +564,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     try {
       if (showSpinner) setLoading(true);
       const data = await getSettings(false); // Always load masked by default
+      if (!isMountedRef.current) return;
       setSettings(data);
       if (data.hasOwnProperty('share_location')) {
         setShareLocationEnabled(data.share_location);
@@ -562,7 +572,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
           prefetchClientLocation();
         }
       }
-      setSelectedProvider(data.llm_provider || 'rie'); // Default to rie if not set
+      setSelectedProvider(prev => prev || data.llm_provider || 'rie'); // Preserve user choice if already changed
       // Initialize embedding download state based on persisted path
       if (data.embedding_model_path) {
         setEmbeddingDownloadProgress(100);
@@ -578,10 +588,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
         setEnabledTools(data.enabled_tools);
       }
       setError(null);
-      // Check auto-start status
-      const autostart = await isEnabled();
-      setAutoStartEnabled(autostart);
-
+      
       // Restore Rie Token from settings if available
       if (data.rie_access_token) {
         setRieToken(data.rie_access_token);
@@ -590,13 +597,21 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       } else {
         setRieToken(null);
       }
-      await loadConnectivityData();
+
+      // Check auto-start status asynchronously without blocking
+      isEnabled().then(autostart => {
+        if (isMountedRef.current) setAutoStartEnabled(autostart);
+      }).catch(() => {});
+
     } catch (err) {
       console.error("Settings load error:", err);
-      setError("Failed to load settings: " + (err.message || String(err)));
+      if (isMountedRef.current) setError("Failed to load settings: " + (err.message || String(err)));
     } finally {
-      if (showSpinner) setLoading(false);
+      if (isMountedRef.current && showSpinner) setLoading(false);
     }
+
+    // Load connectivity data asynchronously without holding up initial settings view
+    loadConnectivityData();
   };
 
   const loadConnectivityData = async () => {
@@ -606,6 +621,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
         getFriends(),
         getNgrokStatus(),
       ]);
+      if (!isMountedRef.current) return;
       setConnectivityIdentity(identityData);
       setFriends(Array.isArray(friendsData) ? friendsData : []);
       setNgrokStatus(tunnelStatus);
@@ -617,10 +633,10 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
 
   const handleRefreshConnectivity = async () => {
     try {
-      setConnectivityRefreshing(true);
+      if (isMountedRef.current) setConnectivityRefreshing(true);
       await loadConnectivityData();
     } finally {
-      setConnectivityRefreshing(false);
+      if (isMountedRef.current) setConnectivityRefreshing(false);
     }
   };
 
@@ -628,11 +644,11 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     try {
       setLoadingOllamaModels(true);
       const data = await getOllamaModels();
-      setOllamaModels(data.models || []);
+      if (isMountedRef.current) setOllamaModels(data.models || []);
     } catch (err) {
       console.error("Failed to fetch Ollama models:", err);
     } finally {
-      setLoadingOllamaModels(false);
+      if (isMountedRef.current) setLoadingOllamaModels(false);
     }
   };
 
@@ -640,11 +656,11 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     try {
       setLoadingGeminiModels(true);
       const data = await getGeminiModels();
-      setGeminiModels(data.models || []);
+      if (isMountedRef.current) setGeminiModels(data.models || []);
     } catch (err) {
       console.error("Failed to fetch Gemini models:", err);
     } finally {
-      setLoadingGeminiModels(false);
+      if (isMountedRef.current) setLoadingGeminiModels(false);
     }
   };
 
@@ -904,9 +920,10 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
             return [friendId, result];
           })
         );
-        if (cancelled) return;
+        if (cancelled || !isMountedRef.current) return;
 
         setFriendStatusById((prev) => {
+          if (!isMountedRef.current) return prev;
           const next = { ...prev };
           settled.forEach((entry, index) => {
             const friendId = friendIds[index];
@@ -942,15 +959,19 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
 
   const handleSettingsSearch = (query) => {
     setSettingsSearch(query);
-    const hit = searchSettings(query);
-    if (hit) {
-      setActiveTab(hit.tab);
-      if (hit.subTab) {
-        if (hit.tab === 'capabilities') setCapabilityTab(hit.subTab);
-        if (hit.tab === 'diagnostics') setDiagnosticsSubTab(hit.subTab);
-        if (hit.tab === 'advanced') setAdvancedSubTab(hit.subTab);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      const hit = searchSettings(query);
+      if (hit) {
+        setActiveTab(hit.tab);
+        if (hit.subTab) {
+          if (hit.tab === 'capabilities') setCapabilityTab(hit.subTab);
+          if (hit.tab === 'diagnostics') setDiagnosticsSubTab(hit.subTab);
+          if (hit.tab === 'advanced') setAdvancedSubTab(hit.subTab);
+        }
       }
-    }
+    }, 250);
   };
 
   const navGroups = filterNavGroups(settingsSearch);
