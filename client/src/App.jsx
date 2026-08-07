@@ -126,7 +126,6 @@ function MainApp() {
   const [isAppInitializing, setIsAppInitializing] = useState(true);
   const [currentTool, setCurrentTool] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [typesWrite, setTypesWrite] = useState('');
   const [isWindowDraggingFile, setIsWindowDraggingFile] = useState(false);
   const [pendingActions, setPendingActions] = useState({}); // Map: threadId -> HITL request
 
@@ -217,6 +216,43 @@ function MainApp() {
   const audioChunksRef = useRef([]);
   const currentAudioRef = useRef(null);
   const accumulatedTextRef = useRef("");
+  const pendingStreamTextRef = useRef({});
+  const rafIdRef = useRef(null);
+
+  const flushStreamText = useCallback(() => {
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    const entries = Object.entries(pendingStreamTextRef.current);
+    if (entries.length === 0) return;
+    const updates = { ...pendingStreamTextRef.current };
+    pendingStreamTextRef.current = {};
+
+    setSessions((prev) => {
+      let changed = false;
+      const nextSessions = { ...prev };
+      Object.entries(updates).forEach(([tId, data]) => {
+        const { botMsgId, pendingText } = data;
+        if (!pendingText || !nextSessions[tId]) return;
+        changed = true;
+        nextSessions[tId] = nextSessions[tId].map((m) => {
+          if (m.id === botMsgId) {
+            const blocks = m.blocks || [];
+            const lastBlock = blocks[blocks.length - 1];
+            if (lastBlock && lastBlock.type === "text") {
+              return { ...m, blocks: [...blocks.slice(0, -1), { ...lastBlock, text: (lastBlock.text || "") + pendingText }] };
+            } else {
+              return { ...m, blocks: [...blocks, { type: "text", text: pendingText }] };
+            }
+          }
+          return m;
+        });
+      });
+      return changed ? nextSessions : prev;
+    });
+  }, []);
+
   const voiceReplyRef = useRef(true);
   const lastTurnWasVoiceRef = useRef(false);
   const ttsProviderRef = useRef("edge-tts");
@@ -428,6 +464,7 @@ function MainApp() {
   const processStreamChunk = useCallback((data, botMessageId, threadId, userMessageId) => {
     try {
       if (data.done || data.step === "end") {
+        flushStreamText();
         setStreamingThreads(prev => {
           const next = new Set(prev);
           next.delete(threadId);
@@ -469,6 +506,7 @@ function MainApp() {
       }
 
       if (data.step === "interrupt") {
+        flushStreamText();
         const hitl = data.hitl;
         const firstActionName = hitl?.action_requests?.[0]?.name;
         // Only surface HITL in the UI for terminal commands
@@ -492,6 +530,7 @@ function MainApp() {
       }
 
       if (data.error) {
+        flushStreamText();
         const rawError = typeof data.error === "string" ? data.error.trim() : "";
         const rawDetails = typeof data.details === "string" ? data.details.trim() : "";
         const isGenericStreamError =
@@ -605,28 +644,22 @@ function MainApp() {
         if (content) {
           accumulatedTextRef.current += content;
 
-          setSessions((prev) => {
-            const newSessions = { ...prev };
-            if (newSessions[threadId]) {
-              newSessions[threadId] = newSessions[threadId].map((m) => {
-                if (m.id === botMessageId) {
-                  const blocks = m.blocks || [];
-                  const lastBlock = blocks[blocks.length - 1];
-                  if (lastBlock && lastBlock.type === "text") {
-                    return { ...m, blocks: [...blocks.slice(0, -1), { ...lastBlock, text: (lastBlock.text || "") + content }] };
-                  } else {
-                    return { ...m, blocks: [...blocks, { type: "text", text: content }] };
-                  }
-                }
-                return m;
-              });
-            }
-            return newSessions;
-          });
+          if (!pendingStreamTextRef.current[threadId]) {
+            pendingStreamTextRef.current[threadId] = { botMsgId: botMessageId, pendingText: "" };
+          }
+          pendingStreamTextRef.current[threadId].pendingText += content;
+
+          if (!rafIdRef.current) {
+            rafIdRef.current = requestAnimationFrame(() => {
+              rafIdRef.current = null;
+              flushStreamText();
+            });
+          }
         }
       }
 
       if (step === "tools" || msg.type === "tool" || msg.role === "tool") {
+        flushStreamText();
         const content = msg.content;
         if (content && typeof content === "string") {
           const toolName = msg.name || currentTool;
@@ -2119,7 +2152,16 @@ function MainApp() {
   // Auto-scroll to bottom when messages change or window state shifts
   useEffect(() => {
     if (isOpen && !isSettingsOpen && !showWelcome) {
-      // Small timeout to allow Framer Motion animations to finish and DOM to settle
+      if (streamingThreads.size > 0) {
+        // Direct non-blocking scroll during active streaming
+        if (messagesEndRef.current) {
+          const scrollContainer = messagesEndRef.current.parentElement;
+          if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          }
+        }
+        return;
+      }
       const timer = setTimeout(() => {
         if (messagesEndRef.current) {
           const scrollContainer = messagesEndRef.current.parentElement;
@@ -2130,10 +2172,10 @@ function MainApp() {
             });
           }
         }
-      }, 300); // Increased timeout for bubble-to-chat animation
+      }, 100);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, sessions, activeThreadId, isSettingsOpen, showWelcome, typesWrite]);
+  }, [isOpen, sessions, activeThreadId, isSettingsOpen, showWelcome, streamingThreads.size]);
 
   // Cleanup intervals on unmount
   useEffect(() => {
@@ -2599,8 +2641,6 @@ function MainApp() {
                     onAttachClipboard={handleAttachClipboard}
                     onDeleteMessage={handleDeleteMessage}
                     onOpenMessageInNewChat={handleOpenMessageInNewChat}
-                    typesWrite={typesWrite}
-                    setTypesWrite={setTypesWrite}
                     isWindowDraggingFile={isWindowDraggingFile}
                     pendingAction={pendingActions[activeThreadId] || null}
                     onActionDecision={handleActionDecision}
@@ -2672,8 +2712,6 @@ function MainApp() {
               sessionsByThread={sessions}
               isLoading={isLoading}
               streamingBotMessageId={isLoading ? lastTurnIdsRef.current[activeThreadId]?.botMessageId : null}
-              typesWrite={typesWrite}
-              setTypesWrite={setTypesWrite}
               messagesEndRef={messagesEndRef}
               input={input}
               setInput={setInput}

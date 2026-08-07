@@ -86,8 +86,6 @@ export function NormalModeLayout({
     onAttachClipboard,
     onDeleteMessage,
     onOpenMessageInNewChat,
-    typesWrite,
-    setTypesWrite,
     isWindowDraggingFile,
     pendingAction,
     onActionDecision,
@@ -753,8 +751,6 @@ export function NormalModeLayout({
                                                                             <MarkdownMessage
                                                                                 content={block.text}
                                                                                 isStreaming={m.id === streamingBotMessageId}
-                                                                                typesWrite={typesWrite}
-                                                                                setTypesWrite={setTypesWrite}
                                                                             />
                                                                         ) : (
                                                                             <ToolChip
@@ -1136,7 +1132,7 @@ export function NormalModeLayout({
                             </div>
                         </div>
                     ) : (
-                        <div className="w-full max-w-2xl mx-auto">
+                        <div className="w-full max-w-xl mx-auto">
                             <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1 flex flex-col gap-2.5 transition-all">
                                 {/* Inline Attachments (if any attached) */}
                                 {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
