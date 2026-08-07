@@ -150,5 +150,9 @@ if __name__ == "__main__":
         # Force ProactorEventLoop on Windows even with --reload.
         # uvicorn defaults to SelectorEventLoop when use_subprocess=True,
         # but Playwright/Camoufox need ProactorEventLoop for subprocess spawning.
-        loop="app.loop:proactor_loop_factory" if sys.platform == "win32" else "auto",
+        # When frozen (PyInstaller), uvicorn's dynamic module loader cannot resolve "app.loop"
+        # because PyInstaller bundles modules differently. Since we already set
+        # WindowsProactorEventLoopPolicy() at the top, using loop="asyncio" makes
+        # uvicorn honor that policy. In dev mode, we use the explicit factory.
+        loop=("asyncio" if is_frozen else "app.loop:proactor_loop_factory") if sys.platform == "win32" else "auto",
     )
