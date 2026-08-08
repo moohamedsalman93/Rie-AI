@@ -77,6 +77,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: 'client/src-tauri'
+          shared-key: 'rie-ai-tauri-cache'
 
       # 7. Build Tauri App and Auto-Publish Release Assets
       - name: Build and Publish Tauri Application
