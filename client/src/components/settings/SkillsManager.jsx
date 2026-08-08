@@ -10,6 +10,17 @@ import {
 
 const ICONS = ['🧠', '⚡', '🔧', '🎯', '🌐', '📝', '🔬', '💡', '🎨', '🛡️', '📊', '🚀'];
 
+const SYSTEM_SKILL_NAMES = [
+  'File & Directory Operations',
+  'Network & Downloads',
+  'Windows System Tasks',
+  'PowerShell Style & Scripting',
+  'Computer Use Guide',
+  'PDF Generation Expert',
+  'CamoFox Browser',
+  'Job Application Assistant',
+];
+
 const EMPTY_FORM = {
   name: '',
   description: '',
@@ -36,22 +47,25 @@ export function SkillsManager() {
     }));
   };
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const data = await fetchSkills();
-      setSkills(data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const data = await fetchSkills();
+        if (mounted) setSkills(data);
+      } catch (e) {
+        if (mounted) setError(e.message);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
     load();
-  }, [load]);
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   function openCreate() {
     setForm(EMPTY_FORM);
@@ -164,9 +178,29 @@ export function SkillsManager() {
       )}
 
       {/* Skills List */}
-      {!loading && skills.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {skills.map((skill) => (
+      {!loading && skills.length > 0 && (() => {
+        const currentBrowserEngine = localStorage.getItem("rie_browser_engine") || "default";
+        const visibleSkills = skills.filter((skill) => {
+          if (currentBrowserEngine === "default") {
+            const lowerName = (skill.name || "").toLowerCase();
+            if (lowerName.includes("camofox") || lowerName.includes("camoufox") || lowerName.includes("job application")) {
+              return false;
+            }
+          }
+          return true;
+        });
+
+        if (visibleSkills.length === 0) {
+          return (
+            <div className="border border-white/5 bg-white/[0.01] rounded-xl p-8 text-center space-y-2">
+              <p className="text-xs text-neutral-500">No active skills available for default browser mode.</p>
+            </div>
+          );
+        }
+
+        return (
+          <div className="flex flex-col gap-3">
+            {visibleSkills.map((skill) => (
             <div
               key={skill.id}
               className={`premium-card rounded-xl border border-white/5 flex flex-col transition-all duration-200 ${
@@ -182,6 +216,11 @@ export function SkillsManager() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h5 className="text-xs font-bold text-neutral-200 truncate">{skill.name}</h5>
+                      {(skill.is_system || SYSTEM_SKILL_NAMES.includes(skill.name)) && (
+                        <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700/60 flex items-center gap-1 shrink-0">
+                          <Shield size={9} /> System
+                        </span>
+                      )}
                       <span className={`text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded shrink-0 ${
                         skill.enabled ? 'bg-emerald-950/20 text-emerald-400 border border-emerald-500/15' : 'bg-neutral-800 text-neutral-400 border border-neutral-700/50'
                       }`}>
@@ -228,13 +267,20 @@ export function SkillsManager() {
                     >
                       <Pencil size={12} />
                     </button>
-                    <button
-                      onClick={() => setDeleteConfirm(skill.id)}
-                      className="p-1.5 hover:bg-red-500/10 rounded-lg border border-transparent hover:border-red-500/10 text-neutral-400 hover:text-red-400 transition-all"
-                      title="Delete"
-                    >
-                      <Trash2 size={12} />
-                    </button>
+
+                    {skill.is_system || SYSTEM_SKILL_NAMES.includes(skill.name) ? (
+                      <span className="p-1.5 text-neutral-600 cursor-not-allowed" title="System skill (Protected)">
+                        <Shield size={12} className="text-neutral-500" />
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => setDeleteConfirm(skill.id)}
+                        className="p-1.5 hover:bg-red-500/10 rounded-lg border border-transparent hover:border-red-500/10 text-neutral-400 hover:text-red-400 transition-all"
+                        title="Delete"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -261,7 +307,8 @@ export function SkillsManager() {
             </div>
           ))}
         </div>
-      )}
+        );
+      })()}
 
       {/* Create/Edit Modal overlay */}
       {modal && (

@@ -18,13 +18,16 @@ PEER_AUTH_EXEMPT_PATHS = (
     "/connectivity/pair/finalize",
 )
 
-async def verify_app_token(request: Request, api_key: str = Security(api_key_header)):
+async def verify_app_token(request: Request = None, api_key: str = Security(api_key_header)):
     """
     Verify the RIE_APP_TOKEN from environment matches the request header.
     If RIE_APP_TOKEN is not set, we allow the request (for dev/local run without tauri).
     """
+    if request is None:
+        return None
+
     # Browser CORS preflight must be allowed through so CORSMiddleware can respond.
-    if request.method == "OPTIONS":
+    if getattr(request, "method", None) == "OPTIONS":
         return None
 
     path = request.url.path

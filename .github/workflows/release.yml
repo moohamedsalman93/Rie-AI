@@ -76,7 +76,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './client/src-tauri -> target'
+          workspaces: 'client/src-tauri'
 
       # 7. Build Tauri App and Auto-Publish Release Assets
       - name: Build and Publish Tauri Application

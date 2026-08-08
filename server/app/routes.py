@@ -27,7 +27,7 @@ from app.models import (
     FriendPeerAccessPatch, PeerAccessCatalogResponse,
     PeerQueryEventItem,
     PeerStreamCancelRequest,
-    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, ThreadKnowledgeItem,
+    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, UpdateKnowledgeAssetRequest, ThreadKnowledgeItem,
     SkillCreate, SkillUpdate, SkillResponse,
     ImportBackupRequest,
 )
@@ -82,6 +82,7 @@ from app.database import (
     get_knowledge_pack,
     delete_knowledge_pack,
     delete_knowledge_asset,
+    update_knowledge_asset,
     get_thread_knowledge,
     create_skill,
     update_skill,
@@ -683,6 +684,7 @@ async def get_settings():
         tavily_api_key=mask_key(settings.TAVILY_API_KEY),
         brave_search_api_key=mask_key(settings.BRAVE_SEARCH_API_KEY),
         web_search_provider=settings.WEB_SEARCH_PROVIDER,
+        camofox_headless_mode=settings.CAMOFOX_HEADLESS_MODE,
 
         llm_provider=settings.LLM_PROVIDER,
         fallback_llm_provider=settings.FALLBACK_LLM_PROVIDER,
@@ -2588,6 +2590,14 @@ async def delete_knowledge_asset_route(pack_id: str, asset_id: str):
     return {"status": "success"}
 
 
+@router.patch("/knowledge/{pack_id}/assets/{asset_id}")
+async def update_knowledge_asset_route(pack_id: str, asset_id: str, payload: UpdateKnowledgeAssetRequest):
+    asset = await run_in_threadpool(update_knowledge_asset, asset_id, payload.summary, payload.filename)
+    if not asset or asset.get("pack_id") != pack_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return asset
+
+
 @router.get("/threads/{thread_id}/knowledge", response_model=List[ThreadKnowledgeItem])
 async def get_thread_knowledge_route(thread_id: str):
     rows = await run_in_threadpool(get_thread_knowledge, thread_id)
@@ -3425,10 +3435,14 @@ async def update_skill_endpoint(skill_id: str, body: SkillUpdate):
 @router.delete("/skills/{skill_id}")
 async def delete_skill_endpoint(skill_id: str):
     """Delete a skill by ID."""
-    deleted = await run_in_threadpool(delete_skill, skill_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    return {"ok": True, "id": skill_id}
+    try:
+        deleted = await run_in_threadpool(delete_skill, skill_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return {"ok": True, "id": skill_id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 
 

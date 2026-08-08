@@ -104,9 +104,11 @@ app.add_middleware(
 
 from app.security import verify_app_token
 from fastapi import Depends
+from app.browser.routes import router as browser_router
 
 # Include routers
 app.include_router(router, dependencies=[Depends(verify_app_token)])
+app.include_router(browser_router)
 
 
 if __name__ == "__main__":
@@ -144,5 +146,13 @@ if __name__ == "__main__":
         port=14300,
         reload=settings.DEBUG if not is_frozen else False,
         use_colors=not is_frozen,  # Disable colors in frozen/windowed mode
-        log_config=LOG_CONFIG
+        log_config=LOG_CONFIG,
+        # Force ProactorEventLoop on Windows even with --reload.
+        # uvicorn defaults to SelectorEventLoop when use_subprocess=True,
+        # but Playwright/Camoufox need ProactorEventLoop for subprocess spawning.
+        # When frozen (PyInstaller), uvicorn's dynamic module loader cannot resolve "app.loop"
+        # because PyInstaller bundles modules differently. Since we already set
+        # WindowsProactorEventLoopPolicy() at the top, using loop="asyncio" makes
+        # uvicorn honor that policy. In dev mode, we use the explicit factory.
+        loop=("asyncio" if is_frozen else "app.loop:proactor_loop_factory") if sys.platform == "win32" else "auto",
     )

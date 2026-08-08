@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Trash2, AlertTriangle, Info, X } from 'lucide-react';
 
 export function ConfirmationModal({
     isOpen,
@@ -10,7 +12,44 @@ export function ConfirmationModal({
     cancelText = "Cancel",
     type = "danger" // 'danger', 'warning', 'info'
 }) {
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (!isOpen) return;
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen, onClose]);
+
     const isDanger = type === 'danger';
+    const isWarning = type === 'warning';
+
+    const getThemeConfig = () => {
+        if (isDanger) {
+            return {
+                iconBg: 'bg-red-500/10 text-red-400 border border-red-500/20',
+                IconComponent: Trash2,
+                confirmBtn: 'bg-red-600 hover:bg-red-500 text-white',
+            };
+        }
+        if (isWarning) {
+            return {
+                iconBg: 'bg-amber-500/10 text-amber-400 border border-amber-500/20',
+                IconComponent: AlertTriangle,
+                confirmBtn: 'bg-amber-600 hover:bg-amber-500 text-white',
+            };
+        }
+        return {
+            iconBg: 'bg-neutral-800 text-neutral-200 border border-neutral-700/60',
+            IconComponent: Info,
+            confirmBtn: 'bg-neutral-100 hover:bg-white text-neutral-900',
+        };
+    };
+
+    const config = getThemeConfig();
+    const Icon = config.IconComponent;
 
     return (
         <AnimatePresence>
@@ -22,57 +61,56 @@ export function ConfirmationModal({
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={onClose}
-                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                        className="fixed inset-0 bg-black/70 backdrop-blur-sm transition-opacity"
                     />
 
-                    {/* Modal */}
+                    {/* Modal Box */}
                     <motion.div
-                        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                        initial={{ opacity: 0, scale: 0.96, y: 10 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                        transition={{ type: "spring", damping: 25, stiffness: 300 }}
-                        className="relative w-full max-w-[240px] bg-neutral-900/95 border border-neutral-800 rounded-xl shadow-2xl overflow-hidden backdrop-blur-xl"
+                        exit={{ opacity: 0, scale: 0.96, y: 10 }}
+                        transition={{ duration: 0.15, ease: "easeOut" }}
+                        className="relative w-full max-w-[340px] bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-5 overflow-hidden"
                     >
-                        <div className="p-4">
-                            {/* Icon / Header */}
-                            <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${isDanger ? 'bg-red-500/10 text-red-500' : 'bg-amber-500/10 text-amber-500'
-                                }`}>
-                                {isDanger ? (
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M3 6h18"></path>
-                                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                                    </svg>
-                                ) : (
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
-                                        <line x1="12" y1="9" x2="12" y2="13"></line>
-                                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                                    </svg>
-                                )}
+                        {/* Close button */}
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="absolute top-4 right-4 p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                        >
+                            <X size={15} />
+                        </button>
+
+                        <div className="flex flex-col gap-4">
+                            {/* Header Icon & Text */}
+                            <div className="flex items-start gap-3.5">
+                                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${config.iconBg}`}>
+                                    <Icon size={18} />
+                                </div>
+                                <div className="flex-1 pr-4">
+                                    <h3 className="text-sm font-semibold text-neutral-100">{title}</h3>
+                                    <p className="text-xs text-neutral-400 leading-relaxed mt-1">
+                                        {message}
+                                    </p>
+                                </div>
                             </div>
 
-                            <h3 className="text-sm font-semibold text-neutral-100 mb-1">{title}</h3>
-                            <p className="text-xs text-neutral-500 leading-relaxed mb-4">
-                                {message}
-                            </p>
-
-                            <div className="flex gap-2">
+                            {/* Buttons */}
+                            <div className="flex items-center gap-2.5 mt-1">
                                 <button
+                                    type="button"
                                     onClick={onClose}
-                                    className="flex-1 px-3 py-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-medium border border-neutral-700 transition-all"
+                                    className="flex-1 px-3.5 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700/80 text-neutral-300 text-xs font-medium border border-neutral-700/50 transition-colors cursor-pointer"
                                 >
                                     {cancelText}
                                 </button>
                                 <button
+                                    type="button"
                                     onClick={() => {
                                         onConfirm();
                                         onClose();
                                     }}
-                                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isDanger
-                                        ? 'bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20'
-                                        : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20'
-                                        }`}
+                                    className={`flex-1 px-3.5 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${config.confirmBtn}`}
                                 >
                                     {confirmText}
                                 </button>
@@ -84,3 +122,5 @@ export function ConfirmationModal({
         </AnimatePresence>
     );
 }
+
+

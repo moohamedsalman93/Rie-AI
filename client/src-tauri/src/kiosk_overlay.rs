@@ -315,7 +315,7 @@ pub fn register_raw_input(hwnd: isize) -> Result<(), String> {
             std::mem::size_of::<RAWINPUTDEVICE>() as u32,
         ).map_err(|e| e.to_string())?;
     }
-    println!("[kiosk-overlay] Raw input devices registered successfully");
+    println!("[input-system] Raw input devices registered successfully");
     Ok(())
 }
 
@@ -329,7 +329,7 @@ pub fn subclass_window(hwnd: isize) {
         );
         ORIGINAL_WNDPROC.store(original, Ordering::Relaxed);
     }
-    println!("[kiosk-overlay] Window subclassed successfully");
+    println!("[input-system] Window subclassed successfully");
 }
 
 #[cfg(target_os = "windows")]

@@ -24,9 +24,9 @@ export function ChatHeader({
   setSpeedMode,
   scheduleNotifications = [],
   scheduleUnreadCount,
-  onScheduleMarkRead = () => {},
-  onScheduleMarkAllRead = () => {},
-  onScheduleOpenChat = () => {},
+  onScheduleMarkRead = () => { },
+  onScheduleMarkAllRead = () => { },
+  onScheduleOpenChat = () => { },
   /** Floating mode: opens full schedule sheet from ⋮ menu */
   onOpenSchedule = null,
   onToggleFriends = null,
@@ -35,7 +35,7 @@ export function ChatHeader({
   return (
     <header
       data-tauri-drag-region
-      className="flex rounded-xl absolute w-[95%] left-1/2 -translate-x-1/2 top-1 border-b border-neutral-700/40 bg-neutral-800 cursor-move h-10 items-center justify-between gap-3 px-2 py-2.5 z-40"
+      className="flex rounded-xl absolute w-[95%] left-1/2 -translate-x-1/2 top-1 border-b border-neutral-700/40 bg-neutral-800   h-10 items-center justify-between gap-3 px-2 py-2.5 z-40"
       onMouseDown={onDragStart}
     >
       <div className="flex items-center gap-2">
@@ -198,13 +198,13 @@ export function ChatHeader({
                 </button>
 
                 <div className="my-1 h-[1px] bg-neutral-700/50" />
-                
+
                 <div className=" py-1">
-                  <ModeToggle 
-                    chatMode={chatMode} 
-                    setChatMode={setChatMode} 
-                    speedMode={speedMode} 
-                    setSpeedMode={setSpeedMode} 
+                  <ModeToggle
+                    chatMode={chatMode}
+                    setChatMode={setChatMode}
+                    speedMode={speedMode}
+                    setSpeedMode={setSpeedMode}
                     provider={provider}
                   />
                 </div>

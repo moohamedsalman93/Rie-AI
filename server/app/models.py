@@ -80,6 +80,11 @@ class KnowledgeAssetResponse(BaseModel):
     created_at: str
 
 
+class UpdateKnowledgeAssetRequest(BaseModel):
+    summary: Optional[str] = None
+    filename: Optional[str] = None
+
+
 class KnowledgePackResponse(BaseModel):
     id: str
     name: str
@@ -204,6 +209,7 @@ class SettingsResponse(BaseModel):
     tavily_api_key: Optional[str] = None
     brave_search_api_key: Optional[str] = None
     web_search_provider: str = "tavily"
+    camofox_headless_mode: str = "auto"
 
     # Advanced Settings
     llm_provider: Optional[str] = None

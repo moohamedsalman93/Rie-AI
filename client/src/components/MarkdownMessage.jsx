@@ -1,15 +1,15 @@
+import React, { memo, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useTypewriter } from '../hooks/useTypewriter';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
 
 /**
  * Component for rendering markdown content in chat messages
  */
-const CopyButton = ({ code }) => {
+const CopyButton = memo(({ code }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -31,9 +31,11 @@ const CopyButton = ({ code }) => {
       {copied ? <Check size={14} /> : <Copy size={14} />}
     </button>
   );
-};
+});
 
-export function MarkdownMessage({ content, className = "", isStreaming = false, typesWrite, setTypesWrite }) {
+CopyButton.displayName = 'CopyButton';
+
+function MarkdownMessageImpl({ content, className = "", isStreaming = false }) {
   const displayedText = useTypewriter(content, isStreaming);
 
   const handleOpenExternalUrl = useCallback(async (event, href) => {
@@ -48,13 +50,6 @@ export function MarkdownMessage({ content, className = "", isStreaming = false, 
       window.open(href, '_blank', 'noopener,noreferrer');
     }
   }, []);
-
-  // Update parent state for auto-scrolling only when streaming
-  useEffect(() => {
-    if (isStreaming && setTypesWrite) {
-      setTypesWrite(displayedText);
-    }
-  }, [displayedText, isStreaming, setTypesWrite]);
 
   return (
     <div className={`markdown-content min-w-0 max-w-full break-words ${className}`}>
@@ -177,3 +172,14 @@ export function MarkdownMessage({ content, className = "", isStreaming = false, 
     </div>
   );
 }
+
+export const MarkdownMessage = memo(MarkdownMessageImpl, (prevProps, nextProps) => {
+  return (
+    prevProps.content === nextProps.content &&
+    prevProps.isStreaming === nextProps.isStreaming &&
+    prevProps.className === nextProps.className
+  );
+});
+
+MarkdownMessage.displayName = 'MarkdownMessage';
+

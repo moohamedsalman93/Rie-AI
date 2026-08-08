@@ -9,6 +9,7 @@ import { McpServersManager } from './McpServersManager';
 import { ExternalApisManager } from './ExternalApisManager';
 import { KnowledgeManager } from './KnowledgeManager';
 import { SkillsManager } from './SkillsManager';
+import BrowserSettingsSection from './BrowserSettingsSection';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
@@ -78,6 +79,15 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     normalizeTabId(initialTab) === 'advanced' ? normalizeSubTab('advanced', initialSubTab) || 'orchestration' : 'orchestration'
   );
   const [settingsSearch, setSettingsSearch] = useState('');
+  const isMountedRef = useRef(true);
+  const searchTimeoutRef = useRef(null);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
   const [savingKey, setSavingKey] = useState(null);
   const [logs, setLogs] = useState('');
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -189,15 +199,15 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       }
       const response = await importBackup(selectedSections, importData);
       setImportStatusMsg(response.messages?.join('\n') || 'Import completed successfully!');
-      
+
       const freshSettings = await getSettings();
       setSettings(freshSettings);
-      
+
       if (importOptions.conversations) {
         const { emit } = await import("@tauri-apps/api/event");
         await emit("history-cleared");
       }
-      
+
       setTimeout(() => {
         setIsImportModalOpen(false);
         setImportData(null);
@@ -233,6 +243,16 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   // Local state for edits
   const [selectedProvider, setSelectedProvider] = useState(null);
   const [enabledTools, setEnabledTools] = useState([]);
+  const [browserEngine, setBrowserEngine] = useState(() => localStorage.getItem("rie_browser_engine") || "default");
+
+  useEffect(() => {
+    const handleEngineChange = () => {
+      setBrowserEngine(localStorage.getItem("rie_browser_engine") || "default");
+    };
+    window.addEventListener("rie_browser_engine_change", handleEngineChange);
+    return () => window.removeEventListener("rie_browser_engine_change", handleEngineChange);
+  }, []);
+
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [ollamaModels, setOllamaModels] = useState([]);
   const [loadingOllamaModels, setLoadingOllamaModels] = useState(false);
@@ -544,6 +564,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     try {
       if (showSpinner) setLoading(true);
       const data = await getSettings(false); // Always load masked by default
+      if (!isMountedRef.current) return;
       setSettings(data);
       if (data.hasOwnProperty('share_location')) {
         setShareLocationEnabled(data.share_location);
@@ -551,7 +572,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
           prefetchClientLocation();
         }
       }
-      setSelectedProvider(data.llm_provider || 'rie'); // Default to rie if not set
+      setSelectedProvider(prev => prev || data.llm_provider || 'rie'); // Preserve user choice if already changed
       // Initialize embedding download state based on persisted path
       if (data.embedding_model_path) {
         setEmbeddingDownloadProgress(100);
@@ -567,10 +588,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
         setEnabledTools(data.enabled_tools);
       }
       setError(null);
-      // Check auto-start status
-      const autostart = await isEnabled();
-      setAutoStartEnabled(autostart);
-
+      
       // Restore Rie Token from settings if available
       if (data.rie_access_token) {
         setRieToken(data.rie_access_token);
@@ -579,13 +597,21 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       } else {
         setRieToken(null);
       }
-      await loadConnectivityData();
+
+      // Check auto-start status asynchronously without blocking
+      isEnabled().then(autostart => {
+        if (isMountedRef.current) setAutoStartEnabled(autostart);
+      }).catch(() => {});
+
     } catch (err) {
       console.error("Settings load error:", err);
-      setError("Failed to load settings: " + (err.message || String(err)));
+      if (isMountedRef.current) setError("Failed to load settings: " + (err.message || String(err)));
     } finally {
-      if (showSpinner) setLoading(false);
+      if (isMountedRef.current && showSpinner) setLoading(false);
     }
+
+    // Load connectivity data asynchronously without holding up initial settings view
+    loadConnectivityData();
   };
 
   const loadConnectivityData = async () => {
@@ -595,6 +621,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
         getFriends(),
         getNgrokStatus(),
       ]);
+      if (!isMountedRef.current) return;
       setConnectivityIdentity(identityData);
       setFriends(Array.isArray(friendsData) ? friendsData : []);
       setNgrokStatus(tunnelStatus);
@@ -606,10 +633,10 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
 
   const handleRefreshConnectivity = async () => {
     try {
-      setConnectivityRefreshing(true);
+      if (isMountedRef.current) setConnectivityRefreshing(true);
       await loadConnectivityData();
     } finally {
-      setConnectivityRefreshing(false);
+      if (isMountedRef.current) setConnectivityRefreshing(false);
     }
   };
 
@@ -617,11 +644,11 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     try {
       setLoadingOllamaModels(true);
       const data = await getOllamaModels();
-      setOllamaModels(data.models || []);
+      if (isMountedRef.current) setOllamaModels(data.models || []);
     } catch (err) {
       console.error("Failed to fetch Ollama models:", err);
     } finally {
-      setLoadingOllamaModels(false);
+      if (isMountedRef.current) setLoadingOllamaModels(false);
     }
   };
 
@@ -629,11 +656,11 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     try {
       setLoadingGeminiModels(true);
       const data = await getGeminiModels();
-      setGeminiModels(data.models || []);
+      if (isMountedRef.current) setGeminiModels(data.models || []);
     } catch (err) {
       console.error("Failed to fetch Gemini models:", err);
     } finally {
-      setLoadingGeminiModels(false);
+      if (isMountedRef.current) setLoadingGeminiModels(false);
     }
   };
 
@@ -670,7 +697,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       try {
         const toolsList = typeof value === 'string' ? JSON.parse(value) : value;
         setEnabledTools(toolsList);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // Auto-set LLM_PROVIDER if not set
@@ -893,9 +920,10 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
             return [friendId, result];
           })
         );
-        if (cancelled) return;
+        if (cancelled || !isMountedRef.current) return;
 
         setFriendStatusById((prev) => {
+          if (!isMountedRef.current) return prev;
           const next = { ...prev };
           settled.forEach((entry, index) => {
             const friendId = friendIds[index];
@@ -931,15 +959,19 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
 
   const handleSettingsSearch = (query) => {
     setSettingsSearch(query);
-    const hit = searchSettings(query);
-    if (hit) {
-      setActiveTab(hit.tab);
-      if (hit.subTab) {
-        if (hit.tab === 'capabilities') setCapabilityTab(hit.subTab);
-        if (hit.tab === 'diagnostics') setDiagnosticsSubTab(hit.subTab);
-        if (hit.tab === 'advanced') setAdvancedSubTab(hit.subTab);
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      const hit = searchSettings(query);
+      if (hit) {
+        setActiveTab(hit.tab);
+        if (hit.subTab) {
+          if (hit.tab === 'capabilities') setCapabilityTab(hit.subTab);
+          if (hit.tab === 'diagnostics') setDiagnosticsSubTab(hit.subTab);
+          if (hit.tab === 'advanced') setAdvancedSubTab(hit.subTab);
+        }
       }
-    }
+    }, 250);
   };
 
   const navGroups = filterNavGroups(settingsSearch);
@@ -1144,7 +1176,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       {/* Header */}
       <div
         data-tauri-drag-region
-        className="flex items-center justify-between px-6 py-1 border-b border-white/5 bg-neutral-900 cursor-move shrink-0"
+        className="flex items-center justify-between px-6 py-1 border-b border-white/5 bg-neutral-900   shrink-0"
       >
         <div className="flex items-center gap-3">
           <div className="p-2 bg-emerald-500/10 rounded-xl">
@@ -1307,9 +1339,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
                           {/* Card Header (Clickable to toggle) */}
                           <div
                             onClick={() => setExpandedProviders(prev => ({ ...prev, [key]: !prev[key] }))}
-                            className={`flex items-center justify-between p-4 cursor-pointer select-none transition-colors duration-150 ${
-                              isExpanded ? 'bg-neutral-800/10' : 'hover:bg-neutral-800/10'
-                            }`}
+                            className={`flex items-center justify-between p-4 cursor-pointer select-none transition-colors duration-150 ${isExpanded ? 'bg-neutral-800/10' : 'hover:bg-neutral-800/10'
+                              }`}
                           >
                             <div className="flex items-center gap-3">
                               <div className="p-2 bg-neutral-800/80 rounded-lg text-neutral-200 shrink-0">
@@ -1757,7 +1788,12 @@ key2,
                       )}
 
                       <div className="flex flex-wrap gap-2.5">
-                        {AVAILABLE_TOOLS.map(tool => {
+                        {AVAILABLE_TOOLS.filter(tool => {
+                          if (browserEngine === "default" && tool.id.startsWith("browser_")) {
+                            return false;
+                          }
+                          return true;
+                        }).map(tool => {
                           const isMissingKey = tool.id === 'internet_search' && !isWebSearchConfigured(settings);
                           const isEnabled = !isMissingKey && enabledTools.includes(tool.id);
                           const tooltipText = isMissingKey
@@ -1788,6 +1824,10 @@ key2,
                         })}
                       </div>
                     </div>
+                  )}
+
+                  {capabilityTab === 'browser' && (
+                    <BrowserSettingsSection />
                   )}
 
                   {capabilityTab === 'mcp' && (
@@ -1863,465 +1903,459 @@ key2,
                   </div>
                   <SubTabBar tabs={ADVANCED_SUB_TABS} activeId={advancedSubTab} onChange={setAdvancedSubTab} />
 
-              {advancedSubTab === 'orchestration' && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className={SL.pageHeader}>
-                    <h3 className={SL.pageTitle}>Orchestration &amp; Planner</h3>
-                    <p className={SL.pageDesc}>
-                      Solo agent or planner-led team.
-                    </p>
-                  </div>
-
-                  <div className="premium-card rounded-xl p-5 space-y-4">
-                    <div className="space-y-3 p-3">
-                      <div className="text-[11px] uppercase tracking-wider text-neutral-400">Orchestration Mode</div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleLocalSettingChange('AGENT_ORCHESTRATION_MODE', 'solo')}
-                          className={`px-3 py-1.5 rounded-lg text-xs border ${
-                            (settings.agent_orchestration_mode || 'team') === 'solo'
-                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                              : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
-                          }`}
-                        >
-                          Solo (Main only)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleLocalSettingChange('AGENT_ORCHESTRATION_MODE', 'team')}
-                          className={`px-3 py-1.5 rounded-lg text-xs border ${
-                            (settings.agent_orchestration_mode || 'team') === 'team'
-                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                              : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
-                          }`}
-                        >
-                          Team (Planner delegation)
-                        </button>
-                      </div>
-                      {(settings.agent_orchestration_mode || 'team') === 'solo' ? (
-                        <div className="text-xs text-neutral-500 leading-relaxed space-y-1">
-                          <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
-                            Solo
-                          </div>
-                          <p>
-                            One main agent runs the full workflow: reasoning, tool use, and answers stay in a single
-                            pipeline with one shared configuration.
-                          </p>
-                          <p className="text-neutral-500 text-xs">
-                            Use this when you want the simplest setup and do not need separate roles or delegated
-                            sub-agents.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="text-xs text-neutral-500 leading-relaxed space-y-1">
-                          <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
-                            Team
-                          </div>
-                          <p>
-                            The planner breaks work into steps and delegates to a boss and member agents. Each role can
-                            have its own tools, external APIs, and instructions.
-                          </p>
-                          <p className="text-neutral-500 text-xs">
-                            Use this when tasks benefit from structured delegation or when different agents should use
-                            different capabilities.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    
-
-                    <button
-                      type="button"
-                      onClick={handleOpenPlannerWindow}
-                      className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
-                    >
-                      Open planner
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {advancedSubTab === 'remote' && (
-                <div className="relative overflow-x-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="pointer-events-none absolute -right-16 -top-12 h-56 w-56 rounded-full bg-white/[0.03] blur-3xl" />
-
-                  <div className="relative flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="flex gap-3">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
-                        <Link className="h-5 w-5 text-neutral-300" strokeWidth={2} aria-hidden />
-                      </div>
-                      <div className="space-y-0.5 min-w-0">
-                        <h3 className="text-base font-semibold tracking-tight text-white">Remote access & pairing</h3>
-                        <p className="max-w-xl text-sm leading-relaxed text-neutral-500">
-                          Expose your agent safely through ngrok, then pair trusted devices so friends can reach this instance
-                          at a stable URL.
+                  {advancedSubTab === 'orchestration' && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className={SL.pageHeader}>
+                        <h3 className={SL.pageTitle}>Orchestration &amp; Planner</h3>
+                        <p className={SL.pageDesc}>
+                          Solo agent or planner-led team.
                         </p>
                       </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 lg:justify-end shrink-0">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
-                        <span
-                          className={`h-2 w-2 shrink-0 rounded-full ${
-                            connectivityChipState === 'running' ? 'bg-emerald-500/80' : connectivityChipState === 'not install' ? 'bg-red-400/80' : 'bg-amber-400/90'
-                          }`}
-                        />
-                        Tunnel: <span className="font-semibold text-neutral-100">{connectivityChipState}</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
-                        <Users size={12} className="text-neutral-500" aria-hidden />
-                        Pairs: <span className="font-semibold text-neutral-100">{friends.length}</span>
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
-                        Ready:{' '}
-                        <span className="font-mono text-[10px] font-semibold uppercase text-neutral-100">{ngrokReadyState || 'â€”'}</span>
-                      </span>
-                    </div>
-                  </div>
 
-                  <div className="relative mt-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-400/30 bg-amber-500/10">
-                        <AlertTriangle className="h-4 w-4 text-amber-300" aria-hidden />
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-sm font-semibold text-amber-200">Warning before using connectivity</h4>
-                        <p className="mt-1 text-xs leading-relaxed text-amber-100/85">
-                          Opening remote connectivity can expose your local agent to the internet. This may lead to
-                          unauthorized access or data leakage if you share endpoints with untrusted devices.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="relative mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
-                    <div className="xl:col-span-7 space-y-4">
-                      <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950/80 p-1 shadow-lg shadow-black/20">
-                        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                        <div className="rounded-[14px] bg-neutral-950/90 p-5 sm:p-6">
-                          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="flex gap-4 min-w-0">
-                              <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
-                                <Wifi className="h-5 w-5 text-neutral-400" aria-hidden />
-                                {connectivityChipState === 'running' ? (
-                                  <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5 rounded-full bg-emerald-500/90 ring-2 ring-neutral-950" title="Tunnel running" />
-                                ) : null}
-                              </div>
-                              <div className="min-w-0 space-y-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <h4 className="text-base font-semibold text-white">ngrok public tunnel</h4>
-                                  <span
-                                    className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-                                      connectivityChipState === 'running'
-                                        ? 'border-emerald-500/25 bg-emerald-950/40 text-emerald-200/90'
-                                        : connectivityChipState === 'not install'
-                                        ? 'border-red-500/25 bg-red-950/35 text-red-200/85'
-                                        : 'border-amber-500/25 bg-amber-950/35 text-amber-200/85'
-                                    }`}
-                                  >
-                                    {connectivityChipState}
-                                  </span>
-                                </div>
-                                <p className="text-xs leading-relaxed text-neutral-500">
-                                  When enabled, Rie can advertise an HTTPS URL peers use instead of a LAN address.
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-3 rounded-xl border border-white/5 bg-neutral-900/50 px-3 py-2">
-                              <span className="text-[11px] font-medium text-neutral-400">Expose tunnel</span>
-                              <button
-                                type="button"
-                                onClick={() => handleLocalSettingChange('CONNECTIVITY_NGROK_ENABLED', String(!settings.connectivity_ngrok_enabled))}
-                                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all duration-300 ${
-                                  settings.connectivity_ngrok_enabled
-                                    ? 'bg-emerald-700/85'
-                                    : 'border border-neutral-700 bg-neutral-800'
+                      <div className="premium-card rounded-xl p-5 space-y-4">
+                        <div className="space-y-3 p-3">
+                          <div className="text-[11px] uppercase tracking-wider text-neutral-400">Orchestration Mode</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleLocalSettingChange('AGENT_ORCHESTRATION_MODE', 'solo')}
+                              className={`px-3 py-1.5 rounded-lg text-xs border ${(settings.agent_orchestration_mode || 'team') === 'solo'
+                                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                  : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
                                 }`}
-                                aria-label="Toggle ngrok tunnel"
-                              >
-                                <motion.span
-                                  animate={{ x: settings.connectivity_ngrok_enabled ? 28 : 4 }}
-                                  className="inline-block h-5 w-5 rounded-full bg-white shadow-md"
-                                />
-                              </button>
-                            </div>
+                            >
+                              Solo (Main only)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleLocalSettingChange('AGENT_ORCHESTRATION_MODE', 'team')}
+                              className={`px-3 py-1.5 rounded-lg text-xs border ${(settings.agent_orchestration_mode || 'team') === 'team'
+                                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                  : 'bg-white/[0.02] border-white/10 text-neutral-400 hover:text-neutral-200'
+                                }`}
+                            >
+                              Team (Planner delegation)
+                            </button>
                           </div>
-
-                          <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                            <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500">Engine state</div>
-                              <p className="mt-2 font-mono text-sm font-semibold text-white">{ngrokReadyState || 'unknown'}</p>
+                          {(settings.agent_orchestration_mode || 'team') === 'solo' ? (
+                            <div className="text-xs text-neutral-500 leading-relaxed space-y-1">
+                              <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
+                                Solo
+                              </div>
+                              <p>
+                                One main agent runs the full workflow: reasoning, tool use, and answers stay in a single
+                                pipeline with one shared configuration.
+                              </p>
+                              <p className="text-neutral-500 text-xs">
+                                Use this when you want the simplest setup and do not need separate roles or delegated
+                                sub-agents.
+                              </p>
                             </div>
-                            <div className="rounded-xl border border-white/10 bg-black/30 p-4 sm:col-span-1">
-                              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500">Public HTTPS</div>
-                              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <p className="min-w-0 break-all font-mono text-[11px] leading-snug text-neutral-200">
-                                  {ngrokStatus?.public_url || (
-                                    <span className="text-neutral-500">Not assigned — run tunnel config when you are ready.</span>
-                                  )}
-                                </p>
-                                {ngrokStatus?.public_url ? (
-                                  <motion.button
+                          ) : (
+                            <div className="text-xs text-neutral-500 leading-relaxed space-y-1">
+                              <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
+                                Team
+                              </div>
+                              <p>
+                                The planner breaks work into steps and delegates to a boss and member agents. Each role can
+                                have its own tools, external APIs, and instructions.
+                              </p>
+                              <p className="text-neutral-500 text-xs">
+                                Use this when tasks benefit from structured delegation or when different agents should use
+                                different capabilities.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+
+
+                        <button
+                          type="button"
+                          onClick={handleOpenPlannerWindow}
+                          className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-colors"
+                        >
+                          Open planner
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {advancedSubTab === 'remote' && (
+                    <div className="relative overflow-x-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className="pointer-events-none absolute -right-16 -top-12 h-56 w-56 rounded-full bg-white/[0.03] blur-3xl" />
+
+                      <div className="relative flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="flex gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
+                            <Link className="h-5 w-5 text-neutral-300" strokeWidth={2} aria-hidden />
+                          </div>
+                          <div className="space-y-0.5 min-w-0">
+                            <h3 className="text-base font-semibold tracking-tight text-white">Remote access & pairing</h3>
+                            <p className="max-w-xl text-sm leading-relaxed text-neutral-500">
+                              Expose your agent safely through ngrok, then pair trusted devices so friends can reach this instance
+                              at a stable URL.
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 lg:justify-end shrink-0">
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
+                            <span
+                              className={`h-2 w-2 shrink-0 rounded-full ${connectivityChipState === 'running' ? 'bg-emerald-500/80' : connectivityChipState === 'not install' ? 'bg-red-400/80' : 'bg-amber-400/90'
+                                }`}
+                            />
+                            Tunnel: <span className="font-semibold text-neutral-100">{connectivityChipState}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
+                            <Users size={12} className="text-neutral-500" aria-hidden />
+                            Pairs: <span className="font-semibold text-neutral-100">{friends.length}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
+                            Ready:{' '}
+                            <span className="font-mono text-[10px] font-semibold uppercase text-neutral-100">{ngrokReadyState || 'â€”'}</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="relative mt-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-400/30 bg-amber-500/10">
+                            <AlertTriangle className="h-4 w-4 text-amber-300" aria-hidden />
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-sm font-semibold text-amber-200">Warning before using connectivity</h4>
+                            <p className="mt-1 text-xs leading-relaxed text-amber-100/85">
+                              Opening remote connectivity can expose your local agent to the internet. This may lead to
+                              unauthorized access or data leakage if you share endpoints with untrusted devices.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="relative mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
+                        <div className="xl:col-span-7 space-y-4">
+                          <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950/80 p-1 shadow-lg shadow-black/20">
+                            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+                            <div className="rounded-[14px] bg-neutral-950/90 p-5 sm:p-6">
+                              <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="flex gap-4 min-w-0">
+                                  <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
+                                    <Wifi className="h-5 w-5 text-neutral-400" aria-hidden />
+                                    {connectivityChipState === 'running' ? (
+                                      <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5 rounded-full bg-emerald-500/90 ring-2 ring-neutral-950" title="Tunnel running" />
+                                    ) : null}
+                                  </div>
+                                  <div className="min-w-0 space-y-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h4 className="text-base font-semibold text-white">ngrok public tunnel</h4>
+                                      <span
+                                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${connectivityChipState === 'running'
+                                            ? 'border-emerald-500/25 bg-emerald-950/40 text-emerald-200/90'
+                                            : connectivityChipState === 'not install'
+                                              ? 'border-red-500/25 bg-red-950/35 text-red-200/85'
+                                              : 'border-amber-500/25 bg-amber-950/35 text-amber-200/85'
+                                          }`}
+                                      >
+                                        {connectivityChipState}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs leading-relaxed text-neutral-500">
+                                      When enabled, Rie can advertise an HTTPS URL peers use instead of a LAN address.
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-3 rounded-xl border border-white/5 bg-neutral-900/50 px-3 py-2">
+                                  <span className="text-[11px] font-medium text-neutral-400">Expose tunnel</span>
+                                  <button
                                     type="button"
-                                    whileTap={{ scale: 0.97 }}
-                                    onClick={async () => {
-                                      try {
-                                        await navigator.clipboard.writeText(ngrokStatus.public_url);
-                                        setConnectivityQuickCopy('url');
-                                        setTimeout(() => setConnectivityQuickCopy(null), 1400);
-                                      } catch {
-                                        /* ignore */
-                                      }
-                                    }}
-                                    className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/12 bg-neutral-900/70 px-2.5 py-1.5 text-[10px] font-medium text-neutral-300 hover:border-white/18 hover:bg-neutral-800 hover:text-neutral-100"
+                                    onClick={() => handleLocalSettingChange('CONNECTIVITY_NGROK_ENABLED', String(!settings.connectivity_ngrok_enabled))}
+                                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all duration-300 ${settings.connectivity_ngrok_enabled
+                                        ? 'bg-emerald-700/85'
+                                        : 'border border-neutral-700 bg-neutral-800'
+                                      }`}
+                                    aria-label="Toggle ngrok tunnel"
                                   >
-                                    {connectivityQuickCopy === 'url' ? <Check size={12} /> : <Copy size={12} />}
-                                    {connectivityQuickCopy === 'url' ? 'Copied' : 'Copy'}
-                                  </motion.button>
-                                ) : null}
+                                    <motion.span
+                                      animate={{ x: settings.connectivity_ngrok_enabled ? 28 : 4 }}
+                                      className="inline-block h-5 w-5 rounded-full bg-white shadow-md"
+                                    />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="mt-6 grid gap-3 sm:grid-cols-2">
+                                <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+                                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500">Engine state</div>
+                                  <p className="mt-2 font-mono text-sm font-semibold text-white">{ngrokReadyState || 'unknown'}</p>
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-black/30 p-4 sm:col-span-1">
+                                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500">Public HTTPS</div>
+                                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <p className="min-w-0 break-all font-mono text-[11px] leading-snug text-neutral-200">
+                                      {ngrokStatus?.public_url || (
+                                        <span className="text-neutral-500">Not assigned — run tunnel config when you are ready.</span>
+                                      )}
+                                    </p>
+                                    {ngrokStatus?.public_url ? (
+                                      <motion.button
+                                        type="button"
+                                        whileTap={{ scale: 0.97 }}
+                                        onClick={async () => {
+                                          try {
+                                            await navigator.clipboard.writeText(ngrokStatus.public_url);
+                                            setConnectivityQuickCopy('url');
+                                            setTimeout(() => setConnectivityQuickCopy(null), 1400);
+                                          } catch {
+                                            /* ignore */
+                                          }
+                                        }}
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/12 bg-neutral-900/70 px-2.5 py-1.5 text-[10px] font-medium text-neutral-300 hover:border-white/18 hover:bg-neutral-800 hover:text-neutral-100"
+                                      >
+                                        {connectivityQuickCopy === 'url' ? <Check size={12} /> : <Copy size={12} />}
+                                        {connectivityQuickCopy === 'url' ? 'Copied' : 'Copy'}
+                                      </motion.button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-white/5 pt-5">
+                                <motion.button
+                                  whileTap={{ scale: 0.97 }}
+                                  onClick={() => setConnectivityConfigOpen(true)}
+                                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-600 bg-neutral-900/60 px-3.5 py-2.5 text-xs font-medium text-neutral-100 transition-colors hover:border-neutral-500 hover:bg-neutral-800"
+                                >
+                                  <Settings size={14} aria-hidden />
+                                  Tunnel setup
+                                </motion.button>
+                                <motion.button
+                                  whileTap={{ scale: 0.97 }}
+                                  onClick={handleOpenPairModal}
+                                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-950/45 px-3.5 py-2.5 text-xs font-medium text-emerald-100/95 transition-colors hover:border-emerald-500/50 hover:bg-emerald-950/70"
+                                >
+                                  <Plus size={14} aria-hidden />
+                                  Pair a device
+                                </motion.button>
+                                <button
+                                  type="button"
+                                  onClick={handleRefreshConnectivity}
+                                  disabled={connectivityRefreshing}
+                                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-700 px-3.5 py-2.5 text-xs font-medium text-neutral-300 transition-colors hover:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <RefreshCw size={14} className={connectivityRefreshing ? 'animate-spin' : ''} aria-hidden />
+                                  Refresh
+                                </button>
                               </div>
                             </div>
                           </div>
+                        </div>
 
-                          <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-white/5 pt-5">
-                            <motion.button
-                              whileTap={{ scale: 0.97 }}
-                              onClick={() => setConnectivityConfigOpen(true)}
-                              className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-600 bg-neutral-900/60 px-3.5 py-2.5 text-xs font-medium text-neutral-100 transition-colors hover:border-neutral-500 hover:bg-neutral-800"
-                            >
-                              <Settings size={14} aria-hidden />
-                              Tunnel setup
-                            </motion.button>
+                        <div className="xl:col-span-5">
+                          <div className="h-full rounded-2xl border border-white/[0.08] bg-neutral-950/70 p-5 shadow-lg shadow-black/15">
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
+                                <Fingerprint className="h-5 w-5 text-neutral-400" aria-hidden />
+                              </div>
+                              <div className="min-w-0">
+                                <h5 className="text-sm font-semibold text-white">This device</h5>
+                                <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">
+                                  Shown to the other device when you start a pairing handoff.
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-5 space-y-4">
+                              <div className="rounded-xl border border-white/10 bg-black/25 p-3">
+                                <SettingInput
+                                  label="Device display name"
+                                  dbKey="CONNECTIVITY_DEVICE_NAME"
+                                  value={settings.connectivity_device_name ?? connectivityIdentity?.name ?? ''}
+                                  onSave={handleLocalSettingChange}
+                                  isSaving={isSavingAll}
+                                  placeholder="e.g. My Rie"
+                                  allowEmpty={false}
+                                />
+                              </div>
+
+                              <div className="rounded-xl border border-white/10 bg-black/25 p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-neutral-500">Identity ID</span>
+                                  {connectivityIdentity?.device_id ? (
+                                    <motion.button
+                                      type="button"
+                                      whileTap={{ scale: 0.97 }}
+                                      onClick={async () => {
+                                        try {
+                                          await navigator.clipboard.writeText(connectivityIdentity.device_id);
+                                          setConnectivityQuickCopy('id');
+                                          setTimeout(() => setConnectivityQuickCopy(null), 1400);
+                                        } catch {
+                                          /* ignore */
+                                        }
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded-lg border border-neutral-600 px-2 py-1 text-[10px] font-medium text-neutral-300 hover:border-neutral-500"
+                                    >
+                                      {connectivityQuickCopy === 'id' ? <Check size={11} /> : <Copy size={11} />}
+                                      {connectivityQuickCopy === 'id' ? 'Copied' : 'Copy'}
+                                    </motion.button>
+                                  ) : null}
+                                </div>
+                                <p className="mt-2 break-all font-mono text-[11px] leading-relaxed text-neutral-200 selection:bg-neutral-600">
+                                  {connectivityIdentity?.device_id || 'â€”'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="relative mt-2 rounded-2xl border border-white/[0.08] bg-neutral-950/60 p-5 sm:p-6">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-900 ring-1 ring-white/10">
+                              <Users className="h-5 w-5 text-neutral-200" aria-hidden />
+                            </div>
+                            <div>
+                              <h5 className="text-sm font-semibold text-white">Trusted peers</h5>
+                              <p className="text-[11px] text-neutral-500">
+                                Last health check is per-row â€” tap the refresh control to update.
+                              </p>
+                            </div>
+                          </div>
+                          <span className="self-start rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-400 sm:self-center">
+                            {friends.length} linked {friends.length === 1 ? 'device' : 'devices'}
+                          </span>
+                        </div>
+
+                        {friends.length === 0 ? (
+                          <div className="mt-4 rounded-lg border border-dashed border-neutral-700/80 bg-neutral-900/20 px-4 py-8 text-center">
+                            <p className="text-sm font-medium text-neutral-300">No peers linked yet</p>
+                            <p className="mx-auto mt-1 max-w-sm text-xs text-neutral-500">
+                              Pair another Rie install so you can route work or share context across machines.
+                            </p>
                             <motion.button
                               whileTap={{ scale: 0.97 }}
                               onClick={handleOpenPairModal}
-                              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-950/45 px-3.5 py-2.5 text-xs font-medium text-emerald-100/95 transition-colors hover:border-emerald-500/50 hover:bg-emerald-950/70"
+                              className="mt-5 inline-flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-950/45 px-4 py-2.5 text-xs font-medium text-emerald-100/95 transition-colors hover:border-emerald-500/50 hover:bg-emerald-950/70"
                             >
                               <Plus size={14} aria-hidden />
-                              Pair a device
+                              Start pairing
                             </motion.button>
-                            <button
-                              type="button"
-                              onClick={handleRefreshConnectivity}
-                              disabled={connectivityRefreshing}
-                              className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-700 px-3.5 py-2.5 text-xs font-medium text-neutral-300 transition-colors hover:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <RefreshCw size={14} className={connectivityRefreshing ? 'animate-spin' : ''} aria-hidden />
-                              Refresh
-                            </button>
                           </div>
-                        </div>
-                      </div>
-                    </div>
+                        ) : (
+                          <ul className="mt-6 space-y-3">
+                            {friends.map((friend) => {
+                              const statusRow = friendStatusById[friend.id];
+                              const checkedAtMs = statusRow?.checked_at ? Date.parse(statusRow.checked_at) : NaN;
+                              const isFresh = Number.isFinite(checkedAtMs) && (Date.now() - checkedAtMs) <= FRIEND_STATUS_STALE_MS;
+                              const hasStatus = !!statusRow;
+                              const isStale = hasStatus && !isFresh;
+                              const reachable = statusRow?.reachable === true && !isStale;
+                              const statusLabel = !hasStatus || isStale ? 'unknown' : (reachable ? 'online' : 'offline');
+                              const initials = (friend.name || '?')
+                                .trim()
+                                .split(/\s+/)
+                                .filter(Boolean)
+                                .slice(0, 2)
+                                .map((w) => w[0]?.toUpperCase())
+                                .join('');
+                              return (
+                                <li key={friend.id}>
+                                  <div className="overflow-hidden rounded-2xl border border-white/10 bg-neutral-900/35 transition-colors hover:bg-neutral-900/55">
+                                    <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
+                                      <div className="flex min-w-0 flex-1 gap-3">
 
-                    <div className="xl:col-span-5">
-                      <div className="h-full rounded-2xl border border-white/[0.08] bg-neutral-950/70 p-5 shadow-lg shadow-black/15">
-                        <div className="flex items-start gap-3">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
-                            <Fingerprint className="h-5 w-5 text-neutral-400" aria-hidden />
-                          </div>
-                          <div className="min-w-0">
-                            <h5 className="text-sm font-semibold text-white">This device</h5>
-                            <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">
-                              Shown to the other device when you start a pairing handoff.
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="mt-5 space-y-4">
-                          <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                            <SettingInput
-                              label="Device display name"
-                              dbKey="CONNECTIVITY_DEVICE_NAME"
-                              value={settings.connectivity_device_name ?? connectivityIdentity?.name ?? ''}
-                              onSave={handleLocalSettingChange}
-                              isSaving={isSavingAll}
-                              placeholder="e.g. My Rie"
-                              allowEmpty={false}
-                            />
-                          </div>
-
-                          <div className="rounded-xl border border-white/10 bg-black/25 p-4">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-neutral-500">Identity ID</span>
-                              {connectivityIdentity?.device_id ? (
-                                <motion.button
-                                  type="button"
-                                  whileTap={{ scale: 0.97 }}
-                                  onClick={async () => {
-                                    try {
-                                      await navigator.clipboard.writeText(connectivityIdentity.device_id);
-                                      setConnectivityQuickCopy('id');
-                                      setTimeout(() => setConnectivityQuickCopy(null), 1400);
-                                    } catch {
-                                      /* ignore */
-                                    }
-                                  }}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-neutral-600 px-2 py-1 text-[10px] font-medium text-neutral-300 hover:border-neutral-500"
-                                >
-                                  {connectivityQuickCopy === 'id' ? <Check size={11} /> : <Copy size={11} />}
-                                  {connectivityQuickCopy === 'id' ? 'Copied' : 'Copy'}
-                                </motion.button>
-                              ) : null}
-                            </div>
-                            <p className="mt-2 break-all font-mono text-[11px] leading-relaxed text-neutral-200 selection:bg-neutral-600">
-                              {connectivityIdentity?.device_id || 'â€”'}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="relative mt-2 rounded-2xl border border-white/[0.08] bg-neutral-950/60 p-5 sm:p-6">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-900 ring-1 ring-white/10">
-                          <Users className="h-5 w-5 text-neutral-200" aria-hidden />
-                        </div>
-                        <div>
-                          <h5 className="text-sm font-semibold text-white">Trusted peers</h5>
-                          <p className="text-[11px] text-neutral-500">
-                            Last health check is per-row â€” tap the refresh control to update.
-                          </p>
-                        </div>
-                      </div>
-                      <span className="self-start rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-400 sm:self-center">
-                        {friends.length} linked {friends.length === 1 ? 'device' : 'devices'}
-                      </span>
-                    </div>
-
-                    {friends.length === 0 ? (
-                      <div className="mt-4 rounded-lg border border-dashed border-neutral-700/80 bg-neutral-900/20 px-4 py-8 text-center">
-                        <p className="text-sm font-medium text-neutral-300">No peers linked yet</p>
-                        <p className="mx-auto mt-1 max-w-sm text-xs text-neutral-500">
-                          Pair another Rie install so you can route work or share context across machines.
-                        </p>
-                        <motion.button
-                          whileTap={{ scale: 0.97 }}
-                          onClick={handleOpenPairModal}
-                          className="mt-5 inline-flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-950/45 px-4 py-2.5 text-xs font-medium text-emerald-100/95 transition-colors hover:border-emerald-500/50 hover:bg-emerald-950/70"
-                        >
-                          <Plus size={14} aria-hidden />
-                          Start pairing
-                        </motion.button>
-                      </div>
-                    ) : (
-                      <ul className="mt-6 space-y-3">
-                        {friends.map((friend) => {
-                          const statusRow = friendStatusById[friend.id];
-                          const checkedAtMs = statusRow?.checked_at ? Date.parse(statusRow.checked_at) : NaN;
-                          const isFresh = Number.isFinite(checkedAtMs) && (Date.now() - checkedAtMs) <= FRIEND_STATUS_STALE_MS;
-                          const hasStatus = !!statusRow;
-                          const isStale = hasStatus && !isFresh;
-                          const reachable = statusRow?.reachable === true && !isStale;
-                          const statusLabel = !hasStatus || isStale ? 'unknown' : (reachable ? 'online' : 'offline');
-                          const initials = (friend.name || '?')
-                            .trim()
-                            .split(/\s+/)
-                            .filter(Boolean)
-                            .slice(0, 2)
-                            .map((w) => w[0]?.toUpperCase())
-                            .join('');
-                          return (
-                            <li key={friend.id}>
-                              <div className="overflow-hidden rounded-2xl border border-white/10 bg-neutral-900/35 transition-colors hover:bg-neutral-900/55">
-                                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
-                                  <div className="flex min-w-0 flex-1 gap-3">
-                                    
-                                    <div className="min-w-0 flex-1 space-y-1">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span className="truncate font-semibold text-white" title={friend.name || 'Unnamed friend'}>
-                                          {friend.name || 'Unnamed friend'}
-                                        </span>
-                                        <span
-                                          className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                                            statusLabel === 'unknown'
-                                              ? 'border-neutral-600 bg-neutral-800/80 text-neutral-400'
-                                              : statusLabel === 'online'
-                                              ? 'border-emerald-500/25 bg-emerald-950/45 text-emerald-200/90'
-                                              : 'border-red-500/25 bg-red-950/35 text-red-200/85'
-                                          }`}
-                                        >
-                                          {statusLabel}
-                                        </span>
+                                        <div className="min-w-0 flex-1 space-y-1">
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="truncate font-semibold text-white" title={friend.name || 'Unnamed friend'}>
+                                              {friend.name || 'Unnamed friend'}
+                                            </span>
+                                            <span
+                                              className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusLabel === 'unknown'
+                                                  ? 'border-neutral-600 bg-neutral-800/80 text-neutral-400'
+                                                  : statusLabel === 'online'
+                                                    ? 'border-emerald-500/25 bg-emerald-950/45 text-emerald-200/90'
+                                                    : 'border-red-500/25 bg-red-950/35 text-red-200/85'
+                                                }`}
+                                            >
+                                              {statusLabel}
+                                            </span>
+                                          </div>
+                                          <p
+                                            className="break-all font-mono text-[10px] leading-relaxed text-neutral-500"
+                                            title={friend.public_url || undefined}
+                                          >
+                                            {friend.public_url || 'No public endpoint saved'}
+                                          </p>
+                                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-neutral-500">
+                                            <span>
+                                              Latency{' '}
+                                              <span className="tabular-nums text-neutral-300">
+                                                {statusRow?.latency_ms != null ? `${statusRow.latency_ms} ms` : 'â€”'}
+                                              </span>
+                                            </span>
+                                            <span>
+                                              Checked{' '}
+                                              <span className="text-neutral-400">
+                                                {statusRow?.checked_at ? new Date(statusRow.checked_at).toLocaleString() : 'â€”'}
+                                                {isStale ? ' (stale)' : ''}
+                                              </span>
+                                            </span>
+                                          </div>
+                                        </div>
                                       </div>
-                                      <p
-                                        className="break-all font-mono text-[10px] leading-relaxed text-neutral-500"
-                                        title={friend.public_url || undefined}
-                                      >
-                                        {friend.public_url || 'No public endpoint saved'}
-                                      </p>
-                                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-neutral-500">
-                                        <span>
-                                          Latency{' '}
-                                          <span className="tabular-nums text-neutral-300">
-                                            {statusRow?.latency_ms != null ? `${statusRow.latency_ms} ms` : 'â€”'}
-                                          </span>
-                                        </span>
-                                        <span>
-                                          Checked{' '}
-                                          <span className="text-neutral-400">
-                                            {statusRow?.checked_at ? new Date(statusRow.checked_at).toLocaleString() : 'â€”'}
-                                            {isStale ? ' (stale)' : ''}
-                                          </span>
-                                        </span>
+                                      <div className="flex shrink-0 items-center gap-2 self-end sm:self-center">
+                                        <motion.button
+                                          type="button"
+                                          whileTap={{ scale: 0.97 }}
+                                          onClick={() => openPeerAccessModal(friend)}
+                                          disabled={removingFriendId === friend.id}
+                                          className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-white/15 hover:bg-neutral-800/90 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                          title="Inbound access â€” tools and memory"
+                                          aria-label="Configure peer access"
+                                        >
+                                          <Shield size={16} aria-hidden />
+                                        </motion.button>
+                                        <motion.button
+                                          type="button"
+                                          whileTap={{ scale: 0.97 }}
+                                          onClick={() => handleRemoveFriend(friend.id, friend.name)}
+                                          disabled={removingFriendId === friend.id}
+                                          className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-red-500/35 hover:bg-red-950/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                          title="Remove pairing"
+                                          aria-label={removingFriendId === friend.id ? 'Removing pairing' : 'Remove pairing'}
+                                        >
+                                          <Trash2 size={16} aria-hidden />
+                                        </motion.button>
+                                        <motion.button
+                                          type="button"
+                                          whileTap={{ scale: 0.97 }}
+                                          onClick={() => handleCheckFriendStatus(friend.id)}
+                                          disabled={checkingFriendId === friend.id || removingFriendId === friend.id}
+                                          className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-white/15 hover:bg-neutral-800/90 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                          title="Ping peer health"
+                                          aria-label={checkingFriendId === friend.id ? 'Checking status' : 'Check status'}
+                                        >
+                                          <RefreshCw size={16} className={checkingFriendId === friend.id ? 'animate-spin' : ''} aria-hidden />
+                                        </motion.button>
                                       </div>
                                     </div>
+                                    {statusRow?.failure_code ? (
+                                      <div className="border-t border-white/[0.06] bg-neutral-900/40 px-4 py-2.5 text-[11px] text-neutral-300">
+                                        <span className="font-medium text-neutral-200">Issue:</span>{' '}
+                                        {statusRow.failure_code}
+                                        {statusRow?.failure_stage ? ` (${statusRow.failure_stage})` : ''}
+                                      </div>
+                                    ) : null}
                                   </div>
-                                  <div className="flex shrink-0 items-center gap-2 self-end sm:self-center">
-                                    <motion.button
-                                      type="button"
-                                      whileTap={{ scale: 0.97 }}
-                                      onClick={() => openPeerAccessModal(friend)}
-                                      disabled={removingFriendId === friend.id}
-                                      className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-white/15 hover:bg-neutral-800/90 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                      title="Inbound access â€” tools and memory"
-                                      aria-label="Configure peer access"
-                                    >
-                                      <Shield size={16} aria-hidden />
-                                    </motion.button>
-                                    <motion.button
-                                      type="button"
-                                      whileTap={{ scale: 0.97 }}
-                                      onClick={() => handleRemoveFriend(friend.id, friend.name)}
-                                      disabled={removingFriendId === friend.id}
-                                      className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-red-500/35 hover:bg-red-950/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
-                                      title="Remove pairing"
-                                      aria-label={removingFriendId === friend.id ? 'Removing pairing' : 'Remove pairing'}
-                                    >
-                                      <Trash2 size={16} aria-hidden />
-                                    </motion.button>
-                                    <motion.button
-                                      type="button"
-                                      whileTap={{ scale: 0.97 }}
-                                      onClick={() => handleCheckFriendStatus(friend.id)}
-                                      disabled={checkingFriendId === friend.id || removingFriendId === friend.id}
-                                      className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-white/15 hover:bg-neutral-800/90 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                      title="Ping peer health"
-                                      aria-label={checkingFriendId === friend.id ? 'Checking status' : 'Check status'}
-                                    >
-                                      <RefreshCw size={16} className={checkingFriendId === friend.id ? 'animate-spin' : ''} aria-hidden />
-                                    </motion.button>
-                                  </div>
-                                </div>
-                                {statusRow?.failure_code ? (
-                                  <div className="border-t border-white/[0.06] bg-neutral-900/40 px-4 py-2.5 text-[11px] text-neutral-300">
-                                    <span className="font-medium text-neutral-200">Issue:</span>{' '}
-                                    {statusRow.failure_code}
-                                    {statusRow?.failure_stage ? ` (${statusRow.failure_stage})` : ''}
-                                  </div>
-                                ) : null}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2523,14 +2557,12 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </div>
                       <div
                         onClick={handleAutoStartToggle}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-colors ${
-                          (pendingAutoStart !== null ? pendingAutoStart : autoStartEnabled) ? 'bg-emerald-500' : 'bg-neutral-700'
-                        }`}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-colors ${(pendingAutoStart !== null ? pendingAutoStart : autoStartEnabled) ? 'bg-emerald-500' : 'bg-neutral-700'
+                          }`}
                       >
                         <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                            (pendingAutoStart !== null ? pendingAutoStart : autoStartEnabled) ? 'translate-x-6' : 'translate-x-1'
-                          }`}
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(pendingAutoStart !== null ? pendingAutoStart : autoStartEnabled) ? 'translate-x-6' : 'translate-x-1'
+                            }`}
                         />
                       </div>
                     </div>
@@ -2950,133 +2982,133 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </div>
                   <SubTabBar tabs={DIAGNOSTICS_SUB_TABS} activeId={diagnosticsSubTab} onChange={setDiagnosticsSubTab} />
 
-              {diagnosticsSubTab === 'logs' && (
-                <div className="space-y-4 flex flex-col max-h-[520px]">
-                  <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
-                    <div>
-                      <h3 className="text-sm font-medium text-neutral-100">Local logs</h3>
-                      <p className={SL.pageDesc}>Backend debug output on this machine.</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleCopyLogs}
-                        disabled={!logs}
-                        className="p-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition-all flex items-center gap-2 text-xs border border-neutral-700/50"
-                      >
-                        {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-                        {copied ? 'Copied' : 'Copy Logs'}
-                      </button>
-                      <button
-                        onClick={fetchLogs}
-                        disabled={loadingLogs}
-                        className="p-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition-all flex items-center gap-2 text-xs border border-neutral-700/50"
-                      >
-                        <RefreshCw size={14} className={loadingLogs ? "animate-spin" : ""} />
-                        Refresh
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 bg-black/40 rounded-xl border border-neutral-800 font-mono text-[11px] p-4 overflow-y-auto custom-scrollbar whitespace-normal backdrop-blur-sm max-h-[480px]">
-                    {loadingLogs && !logs ? (
-                      <div className="flex flex-col justify-center items-center h-full gap-3">
-                        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
-                        <span className="text-neutral-500 text-xs animate-pulse">Fetching latest logs...</span>
-                      </div>
-                    ) : (
-                      <div className="min-w-fit">
-                        {logs ? logs.split('\n').map((line, i) => renderLogLine(line, i)) : (
-                          <div className="text-neutral-600 italic text-center py-20">No logs available.</div>
-                        )}
-                        <div ref={logsEndRef} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] text-neutral-600 italic">
-                      Showing the last 1000 lines of <code className="text-neutral-500">backend_debug.log</code>
-                    </p>
-                    <div className="flex gap-4">
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-tight">Info</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2 h-2 rounded-full bg-red-500" />
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-tight">Error</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2 h-2 rounded-full bg-amber-500" />
-                        <span className="text-[10px] text-neutral-500 uppercase tracking-tight">Warning</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {diagnosticsSubTab === 'tracing' && (
-                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className={SL.pageHeader}>
-                    <h3 className={SL.pageTitle}>Tracing (LangSmith)</h3>
-                    <p className={SL.pageDesc}>Optional LangSmith tracing—not the same as local logs.</p>
-                  </div>
-
-                  <div className="premium-card rounded-xl p-5 space-y-4">
-                    <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className={SL.cardHeaderIcon}>
-                          <Activity size={16} />
+                  {diagnosticsSubTab === 'logs' && (
+                    <div className="space-y-4 flex flex-col max-h-[520px]">
+                      <div className="flex items-center justify-between pb-4 border-b border-neutral-800">
+                        <div>
+                          <h3 className="text-sm font-medium text-neutral-100">Local logs</h3>
+                          <p className={SL.pageDesc}>Backend debug output on this machine.</p>
                         </div>
-                        <h4 className={SL.sectionTitle}>LangSmith Tracing</h4>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleCopyLogs}
+                            disabled={!logs}
+                            className="p-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition-all flex items-center gap-2 text-xs border border-neutral-700/50"
+                          >
+                            {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                            {copied ? 'Copied' : 'Copy Logs'}
+                          </button>
+                          <button
+                            onClick={fetchLogs}
+                            disabled={loadingLogs}
+                            className="p-2.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition-all flex items-center gap-2 text-xs border border-neutral-700/50"
+                          >
+                            <RefreshCw size={14} className={loadingLogs ? "animate-spin" : ""} />
+                            Refresh
+                          </button>
+                        </div>
                       </div>
-                      <div
-                        onClick={() => handleLocalSettingChange('LANGSMITH_TRACING', String(!(settings.langsmith_tracing)))}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-all duration-300 ${settings.langsmith_tracing ? 'bg-emerald-500' : 'bg-neutral-800 border border-white/10'
-                          }`}
-                      >
-                        <motion.span
-                          animate={{ x: settings.langsmith_tracing ? 24 : 4 }}
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-lg`}
-                        />
+
+                      <div className="flex-1 bg-black/40 rounded-xl border border-neutral-800 font-mono text-[11px] p-4 overflow-y-auto custom-scrollbar whitespace-normal backdrop-blur-sm max-h-[480px]">
+                        {loadingLogs && !logs ? (
+                          <div className="flex flex-col justify-center items-center h-full gap-3">
+                            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-emerald-500"></div>
+                            <span className="text-neutral-500 text-xs animate-pulse">Fetching latest logs...</span>
+                          </div>
+                        ) : (
+                          <div className="min-w-fit">
+                            {logs ? logs.split('\n').map((line, i) => renderLogLine(line, i)) : (
+                              <div className="text-neutral-600 italic text-center py-20">No logs available.</div>
+                            )}
+                            <div ref={logsEndRef} />
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] text-neutral-600 italic">
+                          Showing the last 1000 lines of <code className="text-neutral-500">backend_debug.log</code>
+                        </p>
+                        <div className="flex gap-4">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                            <span className="text-[10px] text-neutral-500 uppercase tracking-tight">Info</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-red-500" />
+                            <span className="text-[10px] text-neutral-500 uppercase tracking-tight">Error</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-amber-500" />
+                            <span className="text-[10px] text-neutral-500 uppercase tracking-tight">Warning</span>
+                          </div>
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                    <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
-                      Detailed execution traces, tool call history, and LLM input/output logs. Helps in debugging and performance tuning.
-                    </p>
+                  {diagnosticsSubTab === 'tracing' && (
+                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                      <div className={SL.pageHeader}>
+                        <h3 className={SL.pageTitle}>Tracing (LangSmith)</h3>
+                        <p className={SL.pageDesc}>Optional LangSmith tracing—not the same as local logs.</p>
+                      </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-white/5">
-                      <SettingInput
-                        label="LangSmith API Key"
-                        dbKey="LANGSMITH_API_KEY"
-                        value={settings.langsmith_api_key}
-                        onSave={handleLocalSettingChange}
-                        isSaving={isSavingAll}
-                        isSecret
-                        placeholder="ls__..."
-                      />
-                      <SettingInput
-                        label="Project Name"
-                        dbKey="LANGSMITH_PROJECT"
-                        value={settings.langsmith_project}
-                        onSave={handleLocalSettingChange}
-                        isSaving={isSavingAll}
-                        placeholder="Rie-AI"
-                      />
-                      <div className="md:col-span-2">
-                        <SettingInput
-                          label="API Endpoint"
-                          dbKey="LANGSMITH_ENDPOINT"
-                          value={settings.langsmith_endpoint}
-                          onSave={handleLocalSettingChange}
-                          isSaving={isSavingAll}
-                          placeholder="https://api.smith.langchain.com"
-                        />
+                      <div className="premium-card rounded-xl p-5 space-y-4">
+                        <div className="flex items-center justify-between pb-3 border-b border-white/5 mb-4">
+                          <div className="flex items-center gap-2.5">
+                            <div className={SL.cardHeaderIcon}>
+                              <Activity size={16} />
+                            </div>
+                            <h4 className={SL.sectionTitle}>LangSmith Tracing</h4>
+                          </div>
+                          <div
+                            onClick={() => handleLocalSettingChange('LANGSMITH_TRACING', String(!(settings.langsmith_tracing)))}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-all duration-300 ${settings.langsmith_tracing ? 'bg-emerald-500' : 'bg-neutral-800 border border-white/10'
+                              }`}
+                          >
+                            <motion.span
+                              animate={{ x: settings.langsmith_tracing ? 24 : 4 }}
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-lg`}
+                            />
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
+                          Detailed execution traces, tool call history, and LLM input/output logs. Helps in debugging and performance tuning.
+                        </p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-white/5">
+                          <SettingInput
+                            label="LangSmith API Key"
+                            dbKey="LANGSMITH_API_KEY"
+                            value={settings.langsmith_api_key}
+                            onSave={handleLocalSettingChange}
+                            isSaving={isSavingAll}
+                            isSecret
+                            placeholder="ls__..."
+                          />
+                          <SettingInput
+                            label="Project Name"
+                            dbKey="LANGSMITH_PROJECT"
+                            value={settings.langsmith_project}
+                            onSave={handleLocalSettingChange}
+                            isSaving={isSavingAll}
+                            placeholder="Rie-AI"
+                          />
+                          <div className="md:col-span-2">
+                            <SettingInput
+                              label="API Endpoint"
+                              dbKey="LANGSMITH_ENDPOINT"
+                              value={settings.langsmith_endpoint}
+                              onSave={handleLocalSettingChange}
+                              isSaving={isSavingAll}
+                              placeholder="https://api.smith.langchain.com"
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              )}
+                  )}
                 </div>
               )}
 
@@ -3290,11 +3322,10 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       placeholder='Paste payload JSON from Device B, then click "Confirm Pairing"'
                     />
                     {pairConfirmResult && (
-                      <div className={`rounded-lg border px-3 py-2 text-xs ${
-                        pairConfirmResult.reciprocal_synced
+                      <div className={`rounded-lg border px-3 py-2 text-xs ${pairConfirmResult.reciprocal_synced
                           ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
                           : 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-                      }`}>
+                        }`}>
                         <div className="font-semibold">
                           {pairConfirmResult.reciprocal_synced ? 'Paired on both devices' : 'Only local pairing saved'}
                         </div>
@@ -3431,22 +3462,20 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     <button
                       type="button"
                       onClick={() => handlePeerProfileChange('chat')}
-                      className={`flex-1 rounded-[10px] px-3 py-2 text-xs font-medium transition-colors ${
-                        peerAccessProfile === 'chat'
+                      className={`flex-1 rounded-[10px] px-3 py-2 text-xs font-medium transition-colors ${peerAccessProfile === 'chat'
                           ? 'border border-emerald-500/30 bg-emerald-950/55 text-emerald-100'
                           : 'border border-transparent bg-transparent text-neutral-400 hover:text-neutral-200'
-                      }`}
+                        }`}
                     >
                       Chat (safer)
                     </button>
                     <button
                       type="button"
                       onClick={() => handlePeerProfileChange('agent')}
-                      className={`flex-1 rounded-[10px] px-3 py-2 text-xs font-medium transition-colors ${
-                        peerAccessProfile === 'agent'
+                      className={`flex-1 rounded-[10px] px-3 py-2 text-xs font-medium transition-colors ${peerAccessProfile === 'agent'
                           ? 'border border-white/12 bg-neutral-800/90 text-white'
                           : 'border border-transparent bg-transparent text-neutral-400 hover:text-neutral-200'
-                      }`}
+                        }`}
                     >
                       Agent (full tools)
                     </button>
@@ -3497,9 +3526,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         return (
                           <li key={toolId}>
                             <label
-                              className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] ${
-                                disabled ? 'opacity-50' : 'hover:bg-neutral-800/80'
-                              }`}
+                              className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] ${disabled ? 'opacity-50' : 'hover:bg-neutral-800/80'
+                                }`}
                             >
                               <input
                                 type="checkbox"
@@ -3578,7 +3606,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </button>
                 </div>
               </div>
-              
+
               <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
                 <div className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-3 mb-2">
                   <div className="flex gap-2">
@@ -3712,11 +3740,11 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   </button>
                 </div>
               </div>
-              
+
               <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
                 {!importData ? (
-                  <div 
-                    className="flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 hover:border-neutral-500 rounded-xl p-8 cursor-pointer transition-colors bg-neutral-900/10" 
+                  <div
+                    className="flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 hover:border-neutral-500 rounded-xl p-8 cursor-pointer transition-colors bg-neutral-900/10"
                     onClick={() => fileInputRef.current?.click()}
                   >
                     <FileText className="w-8 h-8 text-neutral-500 mb-2" />

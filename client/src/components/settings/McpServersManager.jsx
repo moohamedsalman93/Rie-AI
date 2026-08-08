@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Plus, Shield, Wrench, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { getMcpStatus } from '../../services/chatApi';
@@ -37,12 +37,7 @@ export function McpServersManager({ servers, onSave, isSaving }) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
-  // Fetch MCP status on component mount
-  useEffect(() => {
-    fetchMcpStatus();
-  }, []);
-
-  const fetchMcpStatus = async () => {
+  const fetchMcpStatus = useCallback(async () => {
     try {
       setLoadingStatus(true);
       setStatusError(null);
@@ -54,7 +49,12 @@ export function McpServersManager({ servers, onSave, isSaving }) {
     } finally {
       setLoadingStatus(false);
     }
-  };
+  }, []);
+
+  // Fetch MCP status on component mount
+  useEffect(() => {
+    fetchMcpStatus();
+  }, [fetchMcpStatus]);
 
   const toggleServerExpand = (index) => {
     const newExpanded = new Set(expandedServers);

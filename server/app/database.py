@@ -343,37 +343,18 @@ def init_db():
     from datetime import datetime
     now = datetime.utcnow().isoformat()
     
+    # Clean up unwanted developer skills if previously seeded
+    unwanted = [
+        "React & TS Guidelines",
+        "Python Style Guide",
+        "No Code Placeholders",
+        "Semantic Git Commits",
+        "Security Hardening",
+    ]
+    for u in unwanted:
+        cursor.execute("DELETE FROM skills WHERE name = ?", (u,))
+
     defaults = [
-        (
-            "⚛️",
-            "React & TS Guidelines",
-            "React components and TypeScript style rules.",
-            "Use functional components and React Hooks only.\nAlways use strict type definitions; avoid using `any` at all costs.\nPrefer Tailwind CSS classes for styling unless customized.\nKeep components clean, modular, and focused (usually under 200 lines).\nExport interfaces and types cleanly at the top of files."
-        ),
-        (
-            "📝",
-            "Python Style Guide",
-            "Python coding conventions and guidelines.",
-            "Always write type hints for all function arguments and return types.\nPrefer Python 3.10+ syntax (e.g. use `x | y` instead of `Union[x, y]`).\nWrite clean docstrings following Google Style style guide.\nUse pytest for tests and place them in `tests/` directory.\nPrefer pathlib over os.path for all filesystem operations."
-        ),
-        (
-            "🚀",
-            "No Code Placeholders",
-            "Enforces complete, self-contained, working implementations.",
-            "Never use placeholder comments like `// TODO`, `// implement later`, or `...`.\nAlways write the complete logic so the code can build and execute immediately.\nWhen modifying files, write the full modified segments cleanly, including necessary imports.\nDouble-check edge cases, error handling, and parameter validations before completing tasks."
-        ),
-        (
-            "🎯",
-            "Semantic Git Commits",
-            "Enforces standard semantic commit message formats.",
-            "Use the semantic commit message prefix format:\n- `feat:` for new features\n- `fix:` for bug fixes\n- `docs:` for documentation updates\n- `style:` for formatting/styling changes\n- `refactor:` for refactoring code structure\n- `test:` for adding or updating unit tests\nWrite commit messages in the imperative mood (e.g. \"add endpoint\" instead of \"added endpoint\").\nKeep commit messages concise (under 72 characters)."
-        ),
-        (
-            "🛡️",
-            "Security Hardening",
-            "Strict rules for credentials and inputs.",
-            "Never hardcode secrets, API keys, private keys, or passwords.\nAlways read credentials from environment variables or secure configuration stores.\nSanitize all user inputs before querying databases or running shell commands.\nUse parameterization/prepared statements for all SQL commands to prevent SQL injection.\nKeep package dependencies updated to avoid known security advisories."
-        ),
         (
             "📄",
             "PDF Generation Expert",
@@ -383,8 +364,8 @@ def init_db():
         (
             "💻",
             "Computer Use Guide",
-            "Instructions for controlling and automating the Windows OS using mouse, keyboard, and terminal tools.",
-            "Guidelines for using computer control tools (desktop state, click, type, scroll, drag, shortcuts, wait, scrape):\n1. **Always Check State First**: Before clicking, typing, or performing actions, call `get_desktop_state` to see the currently open applications, focused window, and interactive elements.\n2. **Visual Verification**: If you are unsure of an element's location, or a text description is insufficient, call `get_desktop_state` with `use_vision=True` to receive a visual screenshot.\n3. **Coordinate Accuracy**: The coordinates returned by `get_desktop_state` are in `[x, y]` format. Always click or type exactly on the identified interactive element's coordinates.\n4. **App Launch & Control**: Use `app_control` to launch or switch to windows. If an app is already running, switch to it instead of starting a new instance.\n5. **Typing Best Practices**: When using `keyboard_type`, click on the input field first. Use `clear=True` if you need to replace existing content, and `press_enter=True` to submit forms or search boxes.\n6. **Wait for UI Transitions**: UI updates are not instantaneous. After launching a program or clicking a button that changes the screen, use the `wait` tool (typically 1-3 seconds) to allow the interface to settle before querying the new state.\n7. **Verify Actions**: After executing clicks or keystrokes, call `get_desktop_state` again to verify that your action was successful and the UI changed as expected. Make sure to verify each step and do not proceed blindly.\n8. **Keyboard Shortcuts**: Use `press_keys` (shortcut tool) for common actions: 'ctrl+c' to copy, 'ctrl+v' to paste, 'alt+tab' to switch active windows, 'win' or 'win+s' to open search."
+            "Instructions for controlling and automating the Windows OS using mouse, keyboard, and terminal tools. NOTE: If Browser MCP tools are available, prioritize Browser MCP tools for browser/web tasks.",
+            "Guidelines for using computer control tools (desktop state, click, type, scroll, drag, shortcuts, wait, scrape):\n1. **Web vs Desktop Priority**: For web browsing, page navigation, or web tasks, if Browser MCP tools are available in your toolset, ALWAYS prioritize Browser MCP tools over desktop GUI tools. Use this Computer Use Guide only for native desktop applications or when no Browser MCP tool is available for the web task.\n2. **Always Check State First**: Before clicking, typing, or performing desktop actions, call `get_desktop_state` to see the currently open applications, focused window, and interactive elements.\n3. **Visual Verification**: If you are unsure of an element's location, or a text description is insufficient, call `get_desktop_state` with `use_vision=True` to receive a visual screenshot.\n4. **Coordinate Accuracy**: The coordinates returned by `get_desktop_state` are in `[x, y]` format. Always click or type exactly on the identified interactive element's coordinates.\n5. **App Launch & Control**: Use `app_control` to launch or switch to windows. If an app is already running, switch to it instead of starting a new instance.\n6. **Typing Best Practices**: When using `keyboard_type`, click on the input field first. Use `clear=True` if you need to replace existing content, and `press_enter=True` to submit forms or search boxes.\n7. **Wait for UI Transitions**: UI updates are not instantaneous. After launching a program or clicking a button that changes the screen, use the `wait` tool (typically 1-3 seconds) to allow the interface to settle before querying the new state.\n8. **Verify Actions**: After executing clicks or keystrokes, call `get_desktop_state` again to verify that your action was successful and the UI changed as expected. Make sure to verify each step and do not proceed blindly.\n9. **Keyboard Shortcuts**: Use `press_keys` (shortcut tool) for common actions: 'ctrl+c' to copy, 'ctrl+v' to paste, 'alt+tab' to switch active windows, 'win' or 'win+s' to open search."
         ),
         (
             "🐚",
@@ -660,6 +641,100 @@ Set-Content -Path "$env:TEMP\rie_task.ps1" -Value @'
 - For downloading and setting images (e.g. wallpaper), verify the file exists after download with `Test-Path` before applying.
 - Use `Invoke-WebRequest` with `-UseBasicParsing` to avoid dependency on IE's COM engine.
 - On failure, check: DNS (`Resolve-DnsName`), port reachability (`Test-NetConnection -Port`), proxy settings."""
+        ),
+        (
+            "🦊",
+            "CamoFox Browser",
+            "Instructions for using Rie's embedded stealth browser (CamoFox/Camoufox) — session lifecycle, snapshot-driven interaction, profile management, and error recovery.",
+            r"""# CamoFox Browser Skill
+
+You have access to a stealth browser powered by CamoFox (embedded Camoufox/Firefox via Playwright).
+It runs in-process — no external server required. Follow these rules precisely.
+
+## Session Lifecycle
+1. **Open**: Call `browser_open(url=..., profile=...)` to start a session. Optional profile: 'default', 'work', 'personal'.
+2. **Interact**: Use snapshot → click/type/scroll cycle (see below).
+3. **Close**: Call `browser_close()` when done.
+
+A session MUST be open before any other browser tool can be used. If you get a "No active browser session" error, call `browser_open()` first.
+
+## Core Interaction Pattern: Snapshot → Act → Snapshot
+This is the MANDATORY workflow for all browser interactions:
+
+1. **Take a snapshot** (`browser_snapshot`) to see the page's interactive elements with `ref-N` IDs.
+2. **Act** using the ref ID from the snapshot: `browser_click(target='ref-3')` or `browser_type(target='ref-5', text='query')`.
+3. **Take another snapshot** after the action to see the updated page state.
+
+⚠️ CRITICAL: Element refs (`ref-0`, `ref-1`, etc.) are INVALIDATED after every action (click, type, scroll, navigate). You MUST take a fresh snapshot before interacting again. Using stale refs will raise a `StaleTargetError`.
+
+## Available Tools
+| Tool | Purpose |
+|------|---------|
+| `browser_open` | Open session, optionally navigate to URL |
+| `browser_navigate` | Navigate to a new URL |
+| `browser_snapshot` | Get interactive elements with ref IDs |
+| `browser_click` | Click element by ref ID or visible text |
+| `browser_type` | Type text into input fields |
+| `browser_scroll` | Scroll page (up/down/top/bottom) |
+| `browser_tabs` | List, switch, or close tabs |
+| `browser_extract` | Extract clean page text content |
+| `browser_close` | Close the browser session |
+
+## Error Handling
+- **StaleTargetError**: You used an old ref. Take a new `browser_snapshot()` and retry.
+- **TargetNotFoundError**: Element doesn't exist. Take a snapshot to verify page state.
+- **SessionLostError**: Browser crashed. Call `browser_open()` to restart. Do NOT replay previous actions automatically.
+- **NavigationTimeoutError**: Page load timed out. Try again or check the URL.
+
+## Profiles
+Profiles persist cookies, localStorage, and browsing state across sessions:
+- `'default'` — ephemeral, no persistence
+- `'work'` / `'personal'` — persistent profiles stored on disk
+
+Use profiles when you need to maintain login state: `browser_open(url='https://...', profile='work')`
+
+## Media & Music Playback (YouTube / Audio)
+- By default, `browser_open()` opens a **visible GUI window on the desktop** with full audio/video playback support (`headless=False`).
+- Media autoplay with sound is automatically configured for Firefox.
+- When asked to play music or video (e.g. YouTube):
+  1. Call `browser_open(url="https://www.youtube.com")`
+  2. Take `browser_snapshot()` to get the search box reference ID.
+  3. Type query using `browser_type(target="ref-N", text="Tamil songs\n")`.
+  4. Take `browser_snapshot()` after results load.
+  5. Click the top video result via `browser_click(target="ref-M")`.
+  6. The visible browser window will open and play the song with full sound through speakers/headphones.
+
+## Best Practices
+- Start with `browser_open`.
+- ⚠️ **DO NOT call `browser_close`** if the user asked to play music, watch a video, or keep the browser window open. Leave the browser window active on the user's desktop so media continues playing. Only call `browser_close` if the user explicitly asks to close the browser or for silent web extraction tasks.
+- Never skip the snapshot step — blind clicking leads to errors.
+- When searching, type into the search box ref and press Enter via `browser_click` on the submit button or use `browser_type(target='ref-N', text='query\n')`.
+- For long pages, use `browser_scroll(direction='down')` then snapshot again to see new elements.
+- Use `browser_extract()` to get clean text content instead of parsing snapshot elements.
+- If a click opens a new tab, the browser auto-switches to it. Use `browser_tabs(action='list')` to see all open tabs."""
+        ),
+        (
+            "💼",
+            "Job Application Assistant",
+            "Specialized skill for navigating job portals (LinkedIn, Greenhouse, Lever, Workday, Indeed, etc.), extracting form fields, and bulk-injecting applicant details via DOM.",
+            r"""# Job Application Assistant Skill (Fast DOM Injection Mode)
+
+Use this skill when navigating job search platforms, filling application forms, and applying for positions on company career portals (LinkedIn, Greenhouse, Lever, Workday, Indeed, Naukri, Wellfound).
+
+## Single-Pass DOM Injection Workflow (Fast Job Mode)
+
+Instead of typing field-by-field with individual clicks:
+
+1. **Open Session**: Start with `browser_open(url="https://...")` (`headless=False`).
+2. **Extract Form Fields**: Call `browser_job_extract_form()` to scan all input fields, labels, input types, and dropdown options across the active document and shadow roots in a single pass.
+3. **Single-Pass Bulk DOM Injection**:
+   Call `browser_job_bulk_autofill(field_data={...})` with a dictionary of applicant data e.g.:
+   `{"first_name": "...", "last_name": "...", "email": "...", "phone": "...", "linkedin": "...", "work_authorization": "Yes"}`
+   This injects all field values directly into the DOM in a single pass and dispatches HTML input/change/blur events.
+4. **Re-Verification for Missing Fields**:
+   Inspect the re-verification output returned by `browser_job_bulk_autofill()`. If any required fields remain unfilled (e.g. custom checkboxes or file inputs), use `browser_snapshot()` and targeted `browser_click` / `browser_type` to fill remaining gaps.
+5. **Review Before Submission**:
+   Take a final `browser_snapshot()` before submitting so the user can verify all details. **DO NOT** call `browser_close`."""
         )
     ]
     
@@ -667,7 +742,7 @@ Set-Content -Path "$env:TEMP\rie_task.ps1" -Value @'
         cursor.execute("SELECT COUNT(*) FROM skills WHERE name = ?", (name,))
         if cursor.fetchone()[0] == 0:
             skill_id = str(uuid.uuid4())
-            is_enabled = 1 if name in ("File & Directory Operations", "Network & Downloads", "Windows System Tasks") else 0
+            is_enabled = 1 if name in ("File & Directory Operations", "Network & Downloads", "Windows System Tasks", "CamoFox Browser", "Job Application Assistant") else 0
             cursor.execute(
                 """
                 INSERT INTO skills (id, name, description, content, icon, tool_ids, enabled, created_at, updated_at)
@@ -1713,6 +1788,37 @@ def update_knowledge_asset_summary(asset_id: str, summary: str) -> None:
     conn.close()
 
 
+def update_knowledge_asset(asset_id: str, summary: Optional[str] = None, filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_assets WHERE id = ?", (asset_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    fields = []
+    values = []
+    if summary is not None:
+        fields.append("summary = ?")
+        values.append(summary)
+    if filename is not None and filename.strip():
+        fields.append("filename = ?")
+        values.append(filename.strip())
+    if fields:
+        values.append(asset_id)
+        cursor.execute(f"UPDATE knowledge_assets SET {', '.join(fields)} WHERE id = ?", tuple(values))
+        now = datetime.utcnow().isoformat()
+        cursor.execute("UPDATE knowledge_packs SET updated_at = ? WHERE id = ?", (now, row["pack_id"]))
+        conn.commit()
+    cursor.execute("SELECT * FROM knowledge_assets WHERE id = ?", (asset_id,))
+    updated = cursor.fetchone()
+    conn.close()
+    return dict(updated) if updated else None
+
+
+
 def delete_knowledge_asset(asset_id: str) -> Optional[Dict[str, Any]]:
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
@@ -1815,6 +1921,18 @@ def lock_thread_knowledge(thread_id: str, snapshots: Optional[Dict[str, str]] = 
 # Skills CRUD
 # ---------------------------------------------------------------------------
 
+SYSTEM_SKILL_NAMES = {
+    "File & Directory Operations",
+    "Network & Downloads",
+    "Windows System Tasks",
+    "PowerShell Style & Scripting",
+    "Computer Use Guide",
+    "PDF Generation Expert",
+    "CamoFox Browser",
+    "Job Application Assistant",
+}
+
+
 def _skill_row_to_dict(row) -> Dict[str, Any]:
     """Convert a skills DB row to a plain dict with tool_ids as a list."""
     d = dict(row)
@@ -1823,6 +1941,7 @@ def _skill_row_to_dict(row) -> Dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         d["tool_ids"] = []
     d["enabled"] = bool(d.get("enabled", 1))
+    d["is_system"] = d.get("name") in SYSTEM_SKILL_NAMES
     return d
 
 
@@ -1840,19 +1959,18 @@ def create_skill(
     cursor = conn.cursor()
     skill_id = str(uuid.uuid4())
     now = datetime.utcnow().isoformat()
-    tool_ids_json = json.dumps(tool_ids or [])
     cursor.execute(
         """
         INSERT INTO skills (id, name, description, content, icon, tool_ids, enabled, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
         """,
-        (skill_id, name.strip(), description.strip(), content, icon, tool_ids_json, now, now),
+        (skill_id, name, description, content, icon, json.dumps(tool_ids or []), now, now),
     )
     conn.commit()
     cursor.execute("SELECT * FROM skills WHERE id = ?", (skill_id,))
     row = cursor.fetchone()
     conn.close()
-    return _skill_row_to_dict(row) if row else {}
+    return _skill_row_to_dict(row)
 
 
 def update_skill(
@@ -1864,7 +1982,7 @@ def update_skill(
     tool_ids: Optional[List[str]] = None,
     enabled: Optional[bool] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Update a skill by ID. Only provided fields are changed."""
+    """Update a skill's fields."""
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -1934,11 +2052,16 @@ def delete_skill(skill_id: str) -> bool:
     """Delete a skill and its thread attachments. Returns True if deleted."""
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM skills WHERE id = ?", (skill_id,))
-    if not cursor.fetchone():
+    cursor.execute("SELECT id, name FROM skills WHERE id = ?", (skill_id,))
+    row = cursor.fetchone()
+    if not row:
         conn.close()
         return False
+    if row["name"] in SYSTEM_SKILL_NAMES:
+        conn.close()
+        raise ValueError(f"System skill '{row['name']}' is protected and cannot be deleted.")
     cursor.execute("DELETE FROM thread_skills WHERE skill_id = ?", (skill_id,))
     cursor.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
     conn.commit()

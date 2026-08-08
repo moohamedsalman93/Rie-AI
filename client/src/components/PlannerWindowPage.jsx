@@ -31,7 +31,7 @@ function defaultGraphFromSubagents(subagents = []) {
   };
 }
 
-export function PlannerWindowPage({ onClose = () => {} }) {
+export function PlannerWindowPage({ onClose = () => { } }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -55,6 +55,15 @@ export function PlannerWindowPage({ onClose = () => {} }) {
   const availableTools = useMemo(() => {
     const builtIns = [
       { id: "internet_search", label: "Internet Search", source: "built-in" },
+      { id: "browser_open", label: "Browser Open", source: "built-in" },
+      { id: "browser_snapshot", label: "Browser Snapshot", source: "built-in" },
+      { id: "browser_click", label: "Browser Click", source: "built-in" },
+      { id: "browser_type", label: "Browser Type", source: "built-in" },
+      { id: "browser_navigate", label: "Browser Navigate", source: "built-in" },
+      { id: "browser_scroll", label: "Browser Scroll", source: "built-in" },
+      { id: "browser_tabs", label: "Browser Tabs", source: "built-in" },
+      { id: "browser_extract", label: "Browser Extract", source: "built-in" },
+      { id: "browser_close", label: "Browser Close", source: "built-in" },
       { id: "run_terminal_command", label: "System Terminal", source: "built-in" },
       { id: "get_desktop_state", label: "Desktop State", source: "built-in" },
       { id: "app_control", label: "App Control", source: "built-in" },
@@ -64,7 +73,6 @@ export function PlannerWindowPage({ onClose = () => {} }) {
       { id: "scroll_mouse", label: "Scroll Mouse", source: "built-in" },
       { id: "drag_mouse", label: "Drag Mouse", source: "built-in" },
       { id: "press_keys", label: "Press Keys", source: "built-in" },
-      { id: "scrape_web", label: "Scrape Web", source: "built-in" },
       { id: "wait", label: "Wait", source: "built-in" },
     ];
     const external = (settings.external_apis || []).map((api) => ({
@@ -229,7 +237,7 @@ export function PlannerWindowPage({ onClose = () => {} }) {
     return (
       <div
         data-tauri-drag-region
-        className="h-screen w-screen bg-neutral-950 text-neutral-300 p-6 cursor-move"
+        className="h-screen w-screen bg-neutral-950 text-neutral-300 p-6  "
       >
         Loading team planner...
       </div>
@@ -240,7 +248,7 @@ export function PlannerWindowPage({ onClose = () => {} }) {
     <div className="h-screen w-screen bg-neutral-950 text-neutral-200 flex flex-col">
       <div
         data-tauri-drag-region
-        className="flex items-center justify-between px-4 py-3 border-b border-neutral-800 cursor-move shrink-0"
+        className="flex items-center justify-between px-4 py-3 border-b border-neutral-800   shrink-0"
       >
         <div className="flex items-center gap-2">
           <h1 className="text-sm font-semibold tracking-wide">Planner</h1>
@@ -313,11 +321,10 @@ export function PlannerWindowPage({ onClose = () => {} }) {
             onMouseDown={() => setSelectedNodeId(MAIN_NODE_ID)}
           >
             <div
-              className={`w-12 h-12 rounded-full overflow-hidden bg-neutral-900 flex items-center justify-center transition-all ${
-                isMainSelected
+              className={`w-12 h-12 rounded-full overflow-hidden bg-neutral-900 flex items-center justify-center transition-all ${isMainSelected
                   ? "border-2 border-green-300 shadow-[0_0_22px_rgba(47,129,8,0.6)]"
                   : "border border-green-400/60 shadow-[0_0_18px_rgba(47,129,8,0.35)]"
-              }`}
+                }`}
             >
               <img src={graph.main_logo_url || rieLogo} alt="rie-logo" className="w-full h-full object-cover" />
             </div>
@@ -329,7 +336,7 @@ export function PlannerWindowPage({ onClose = () => {} }) {
           {graph.nodes.map((node) => (
             <div
               key={node.id}
-              className="absolute cursor-move"
+              className="absolute  "
               style={{ left: `${node.position.x}px`, top: `${node.position.y}px` }}
               onMouseDown={() => {
                 setDraggingNodeId(node.id);
@@ -338,11 +345,10 @@ export function PlannerWindowPage({ onClose = () => {} }) {
             >
               <div className="flex items-center gap-2 px-1 py-1 rounded-md">
                 <div
-                  className={`w-11 h-11 rounded-full overflow-hidden bg-neutral-950 flex items-center justify-center transition-all ${
-                    selectedNodeId === node.id
+                  className={`w-11 h-11 rounded-full overflow-hidden bg-neutral-950 flex items-center justify-center transition-all ${selectedNodeId === node.id
                       ? "border-2 border-emerald-400 shadow-[0_0_16px_rgba(16,185,129,0.45)]"
                       : "border border-neutral-600"
-                  }`}
+                    }`}
                 >
                   {node.logo_url ? (
                     <img src={node.logo_url} alt={`${node.name}-logo`} className="w-full h-full object-cover" />

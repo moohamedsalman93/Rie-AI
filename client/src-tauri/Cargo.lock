@@ -3478,7 +3478,7 @@ dependencies = [
 
 [[package]]
 name = "rie-ai"
-version = "0.2.1"
+version = "0.3.7"
 dependencies = [
  "cpal",
  "hound",

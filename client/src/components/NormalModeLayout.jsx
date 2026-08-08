@@ -1,6 +1,30 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GitBranch, Info, RotateCw, ChevronDown, ChevronRight, Users, Trash2 } from 'lucide-react';
+import {
+    GitBranch,
+    Info,
+    RotateCw,
+    ChevronDown,
+    ChevronRight,
+    Users,
+    Trash2,
+    RefreshCw,
+    Mic,
+    Plus,
+    Folder,
+    ArrowUp,
+    Sparkles,
+    ShieldCheck,
+    Square,
+    Globe,
+    CalendarDays,
+    PenLine,
+    Search,
+    Target,
+    Compass,
+    Hammer,
+    FlaskConical,
+} from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
@@ -12,6 +36,7 @@ import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
 import { KnowledgeAttachmentChips, KnowledgeHistoryBadge, KnowledgeChatBanner } from './KnowledgeAttachmentChips';
 import { KnowledgePickerModal } from './KnowledgePickerModal';
+import { LiveCamoufoxPanel } from './LiveCamoufoxPanel';
 import { fetchActiveSkills } from '../services/skillsApi';
 import logo from '../assets/logo.png';
 
@@ -25,7 +50,7 @@ export function NormalModeLayout({
     onSend,
     onCancel,
     onSelectThread,
-    onDeleteThread = () => {},
+    onDeleteThread = () => { },
     onNewChat,
     currentThreadId,
     onOpenSettings,
@@ -54,6 +79,9 @@ export function NormalModeLayout({
     onPickProjectPath,
     isCapturing,
     isRecording,
+    onStartRecording,
+    onStopRecording,
+    onToggleRecording,
     isAttachmentPopoverOpen,
     setIsAttachmentPopoverOpen,
     attachedClipboardText,
@@ -61,8 +89,6 @@ export function NormalModeLayout({
     onAttachClipboard,
     onDeleteMessage,
     onOpenMessageInNewChat,
-    typesWrite,
-    setTypesWrite,
     isWindowDraggingFile,
     pendingAction,
     onActionDecision,
@@ -73,17 +99,17 @@ export function NormalModeLayout({
     onClearTerminal,
     scheduleNotifications = [],
     scheduleUnreadCount = 0,
-    onScheduleMarkRead = () => {},
-    onScheduleMarkAllRead = () => {},
-    onScheduleOpenChat = () => {},
+    onScheduleMarkRead = () => { },
+    onScheduleMarkAllRead = () => { },
+    onScheduleOpenChat = () => { },
     friends = [],
     friendThreadMeta = {},
     activeFriendMeta = null,
-    onSelectFriendChat = () => {},
-    onStartFriendChat = () => {},
+    onSelectFriendChat = () => { },
+    onStartFriendChat = () => { },
     attachedKnowledge = [],
-    onAttachKnowledge = () => {},
-    onDetachKnowledge = () => {},
+    onAttachKnowledge = () => { },
+    onDetachKnowledge = () => { },
     provider,
 }) {
     // Sidebar state
@@ -97,10 +123,78 @@ export function NormalModeLayout({
     const [showExitConfirm, setShowExitConfirm] = useState(false);
     const [friendsOpen, setFriendsOpen] = useState(true);
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
+    const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
+    const [browserPanelWidth, setBrowserPanelWidth] = useState(65);
+    const [isResizingPanel, setIsResizingPanel] = useState(false);
     const [activeSkillsList, setActiveSkillsList] = useState([]);
+    const [isFullWindow, setIsFullWindow] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1200);
     const isDragging = dragCounter > 0;
     const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
     const isNewChat = !messages || messages.length === 0;
+
+    const chatContainerRef = useRef(null);
+    const [chatPanelWidthPx, setChatPanelWidthPx] = useState(800);
+
+    useEffect(() => {
+        if (!chatContainerRef.current) return;
+        const observer = new ResizeObserver((entries) => {
+            for (let entry of entries) {
+                if (entry.contentRect) {
+                    setChatPanelWidthPx(entry.contentRect.width);
+                }
+            }
+        });
+        observer.observe(chatContainerRef.current);
+        return () => observer.disconnect();
+    }, []);
+
+    const isCompactChat = chatPanelWidthPx < 380;
+
+    const handleStartResize = (e) => {
+        e.preventDefault();
+        setIsResizingPanel(true);
+    };
+
+    useEffect(() => {
+        if (!isResizingPanel) return;
+
+        const handleMouseMove = (e) => {
+            const windowWidth = window.innerWidth;
+            const mouseX = e.clientX;
+            const minChatWidthPx = 380;
+            const minBrowserWidthPx = 320;
+
+            let maxBrowserPercent = Math.max(20, ((windowWidth - minChatWidthPx) / windowWidth) * 100);
+            let minBrowserPercent = Math.min(80, (minBrowserWidthPx / windowWidth) * 100);
+
+            let newPercent = ((windowWidth - mouseX) / windowWidth) * 100;
+            if (newPercent < minBrowserPercent) newPercent = minBrowserPercent;
+            if (newPercent > maxBrowserPercent) newPercent = maxBrowserPercent;
+            setBrowserPanelWidth(newPercent);
+        };
+
+        const handleMouseUp = () => {
+            setIsResizingPanel(false);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isResizingPanel]);
+
+    useEffect(() => {
+        const handleResize = () => {
+            setIsFullWindow(window.innerWidth >= 1200);
+        };
+        handleResize();
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    const sidebarWidth = isFullWindow ? 300 : 240;
 
     useEffect(() => {
         if (!currentThreadId) {
@@ -109,7 +203,7 @@ export function NormalModeLayout({
         }
         fetchActiveSkills(currentThreadId, projectRoot)
             .then((data) => setActiveSkillsList(data))
-            .catch(() => {});
+            .catch(() => { });
     }, [currentThreadId, projectRoot]);
 
     const attachImageFile = (file) => {
@@ -286,7 +380,7 @@ export function NormalModeLayout({
             {/* Title Bar */}
             <header
                 data-tauri-drag-region
-                className="h-11 flex items-center justify-between px-3 bg-neutral-900 border-b border-neutral-800 shrink-0 cursor-move"
+                className="h-11 flex items-center justify-between px-3 bg-neutral-900 border-b border-neutral-800 shrink-0  "
             >
                 {/* Left: Logo + Title */}
                 <div data-tauri-drag-region className="flex items-center gap-2 w-[33.3%]">
@@ -298,19 +392,7 @@ export function NormalModeLayout({
                 </div>
 
                 {/* Center: Action Icons */}
-                <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-center">
-
-
-                    <div className="px-1 scale-[0.85] origin-center translate-y-[1px]">
-                        <ModeToggle
-                            chatMode={chatMode}
-                            setChatMode={setChatMode}
-                            speedMode={speedMode}
-                            setSpeedMode={setSpeedMode}
-                            provider={provider}
-                        />
-                    </div>
-                </div>
+                <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-center" />
 
                 {/* Right: Window Controls */}
                 <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-end">
@@ -350,6 +432,14 @@ export function NormalModeLayout({
                             <polyline points="4 17 10 11 4 5"></polyline>
                             <line x1="12" y1="19" x2="20" y2="19"></line>
                         </svg>
+                    </button>
+                    <button
+                        onClick={() => setIsBrowserPanelOpen(prev => !prev)}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className={`p-2 rounded-lg transition-colors ${isBrowserPanelOpen ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
+                        title="Live Camoufox Stealth Browser Workspace"
+                    >
+                        <Globe size={16} />
                     </button>
                     <button
                         onClick={onToggleFloating}
@@ -420,8 +510,8 @@ export function NormalModeLayout({
                     {isHistoryVisible && (
                         <motion.aside
                             initial={{ width: 0, opacity: 0 }}
-                            animate={{ width: 240, opacity: 1 }}
-                            exit={{ width: 0, opacity: 0 }}
+                            animate={{ width: sidebarWidth, opacity: 1 }}
+                            exit={{ opacity: 0, width: 0 }}
                             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                             className="bg-neutral-900 border-r border-neutral-800 flex flex-col shrink-0 overflow-hidden"
                         >
@@ -551,162 +641,169 @@ export function NormalModeLayout({
                 </AnimatePresence>
 
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col min-w-0 bg-neutral-950 relative">
+                <div
+                    ref={chatContainerRef}
+                    style={isBrowserPanelOpen ? { width: `${100 - browserPanelWidth}%` } : undefined}
+                    className={`flex flex-col min-w-[380px] bg-neutral-950 relative ${isBrowserPanelOpen ? "shrink-0 border-r border-neutral-800/80" : "flex-1"}`}
+                >
                     {/* Messages */}
                     {!isNewChat ? (
-                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 space-y-3 ${isHistoryVisible ? "px-6" : "px-24"} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
-                            {activeFriendMeta?.isFriendChat && (
-                                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-                                    <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
-                                    <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
-                                </div>
-                            )}
-                            <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
-                            <SkillsChatBanner activeSkills={activeSkillsList} />
-                            <AnimatePresence>
-                                {messages.map((m) => {
-                                    if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
-                                        return null;
-                                    }
-                                    return (
-                                        <motion.div
-                                            key={m.id}
-                                            initial={{ opacity: 0, y: 10 }}
-                                            animate={{ opacity: 1, y: 0 }}
-                                            className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
-                                        >
-                                            <div className={`flex items-end gap-2 min-w-0  ${m.from === 'user' ? 'justify-end' : ''}`}>
-
-                                                {m.from === 'user' && m.error && (
-                                                    <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                onOpenMessageInNewChat?.(m);
-                                                            }}
-                                                            className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
-                                                            title="Branch to new chat with history"
-                                                        >
-                                                            <GitBranch size={14} />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                onDeleteMessage(m.id);
-                                                                onSend(m.text, false, m.image_url);
-                                                            }}
-                                                            className="p-1.5 rounded-lg text-red-400 hover:bg-neutral-800 transition-colors"
-                                                            title="Retry"
-                                                        >
-                                                            <RotateCw size={14} />
-                                                        </button>
-                                                        <div className="relative group/info">
-                                                            <div className="p-1.5 text-red-500 cursor-help">
-                                                                <Info size={14} />
-                                                            </div>
-                                                            <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
-                                                                {m.errorMessage}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                                {m.from === 'user' && !m.error && (
-                                                    <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                onOpenMessageInNewChat?.(m);
-                                                            }}
-                                                            className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
-                                                            title="Branch to new chat with history"
-                                                        >
-                                                            <GitBranch size={14} />
-                                                        </button>
-                                                    </div>
-                                                )}
-
-                                                <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
-                                                    ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
-                                                    : 'bg-neutral-900 text-neutral-100 border border-neutral-800'
-                                                    }`}>
-                                                    {m.image_url && (
-                                                        <div className="mb-2 overflow-hidden rounded-lg">
-                                                            <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
-                                                        </div>
-                                                    )}
-                                                    {m.url_previews?.length > 0 && (
-                                                        <LinkPreview previews={m.url_previews} />
-                                                    )}
-                                                    {m.clipboard && (
-                                                        <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
-                                                            <div className="flex items-center gap-2 mb-1.5 opacity-80">
-                                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
-                                                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                                </svg>
-                                                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Clipboard Content</span>
-                                                            </div>
-                                                            <p className="text-[11px] text-neutral-300 line-clamp-4 leading-relaxed font-mono italic">
-                                                                {m.clipboard}
-                                                            </p>
-                                                        </div>
-                                                    )}
-                                                    {m.from === 'bot' ? (
-                                                        <div className="flex flex-col gap-2">
-                                                            {(m.blocks || [{ type: 'text', text: m.text }]).map((block, idx) => (
-                                                                <div key={idx}>
-                                                                    {block.type === 'text' ? (
-                                                                        <MarkdownMessage
-                                                                            content={block.text}
-                                                                            isStreaming={m.id === streamingBotMessageId}
-                                                                            typesWrite={typesWrite}
-                                                                            setTypesWrite={setTypesWrite}
-                                                                        />
-                                                                    ) : (
-                                                                        <ToolChip
-                                                                            name={block.name}
-                                                                            content={block.text}
-                                                                            tooltipPlacement={toolTooltipPlacement}
-                                                                        />
-                                                                    )}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    ) : (
-                                                        m.text
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
-                                                {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
-                                            </span>
-                                        </motion.div>
-                                    );
-                                })}
-                            </AnimatePresence>
-                            {shouldShowThinkingShimmer && (
-                                <motion.div
-                                    initial={{ opacity: 0, y: 6 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className="flex flex-col items-start w-full"
-                                >
-                                    <div className="w-full max-w-[85%] rounded-xl border border-neutral-700/60 bg-neutral-900 px-3.5 py-2.5">
-                                        <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
-                                        <div className="space-y-1.5">
-                                            <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
-                                            <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
-                                        </div>
+                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-4" : "px-12")} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+                            <div className="max-w-3xl mx-auto w-full space-y-3">
+                                {activeFriendMeta?.isFriendChat && (
+                                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                                        <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
+                                        <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
                                     </div>
-                                    <span className="mt-1 text-[10px] font-medium text-neutral-600">Assistant is thinking...</span>
-                                </motion.div>
-                            )}
-                            {pendingAction && (
-                                <HITLApproval
-                                    hitl={pendingAction}
-                                    onDecision={onActionDecision}
-                                />
-                            )}
-                            <div ref={messagesEndRef} />
+                                )}
+                                <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
+                                <SkillsChatBanner activeSkills={activeSkillsList} />
+                                <AnimatePresence>
+                                    {messages.map((m) => {
+                                        if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
+                                            return null;
+                                        }
+                                        return (
+                                            <motion.div
+                                                key={m.id}
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className={`flex flex-col ${m.from === 'user' ? 'items-end' : 'items-start'} w-full group`}
+                                            >
+                                                <div className={`flex items-end gap-2 min-w-0 w-full ${m.from === 'user' ? 'justify-end' : ''}`}>
+
+                                                    {m.from === 'user' && m.error && (
+                                                        <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onOpenMessageInNewChat?.(m);
+                                                                }}
+                                                                className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                                title="Branch to new chat with history"
+                                                            >
+                                                                <GitBranch size={14} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onDeleteMessage(m.id);
+                                                                    onSend(m.text, false, m.image_url);
+                                                                }}
+                                                                className="p-1.5 rounded-lg text-red-400 hover:bg-neutral-800 transition-colors"
+                                                                title="Retry"
+                                                            >
+                                                                <RotateCw size={14} />
+                                                            </button>
+                                                            <div className="relative group/info">
+                                                                <div className="p-1.5 text-red-500 cursor-help">
+                                                                    <Info size={14} />
+                                                                </div>
+                                                                <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 w-48 p-2.5 bg-neutral-900 border border-red-500/30 rounded-lg text-xs text-red-200 opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl backdrop-blur-sm break-all">
+                                                                    {m.errorMessage}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {m.from === 'user' && !m.error && (
+                                                        <div className="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity mb-2">
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onOpenMessageInNewChat?.(m);
+                                                                }}
+                                                                className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 transition-colors"
+                                                                title="Branch to new chat with history"
+                                                            >
+                                                                <GitBranch size={14} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+
+                                                    <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
+                                                        ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
+                                                        : ' text-neutral-100  '
+                                                        }`}>
+                                                        {m.image_url && (
+                                                            <div className="mb-2 overflow-hidden rounded-lg">
+                                                                <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
+                                                            </div>
+                                                        )}
+                                                        {m.url_previews?.length > 0 && (
+                                                            <LinkPreview previews={m.url_previews} />
+                                                        )}
+                                                        {m.clipboard && (
+                                                            <div className="mb-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
+                                                                <div className="flex items-center gap-2 mb-1.5 opacity-80">
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400">
+                                                                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                                    </svg>
+                                                                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">Clipboard Content</span>
+                                                                </div>
+                                                                <p className="text-[11px] text-neutral-300 line-clamp-4 leading-relaxed font-mono italic">
+                                                                    {m.clipboard}
+                                                                </p>
+                                                            </div>
+                                                        )}
+                                                        {m.from === 'bot' ? (
+                                                            <div className="flex flex-col gap-2">
+                                                                {(m.blocks || [{ type: 'text', text: m.text }]).map((block, idx) => (
+                                                                    <div key={idx}>
+                                                                        {block.type === 'text' ? (
+                                                                            <MarkdownMessage
+                                                                                content={block.text}
+                                                                                isStreaming={m.id === streamingBotMessageId}
+                                                                            />
+                                                                        ) : (
+                                                                            <ToolChip
+                                                                                name={block.name}
+                                                                                content={block.text}
+                                                                                tooltipPlacement={toolTooltipPlacement}
+                                                                            />
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            m.text
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
+                                                    {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
+                                                </span>
+                                            </motion.div>
+                                        );
+                                    })}
+                                    <div className='h-28 w-2'>
+
+                                    </div>
+                                </AnimatePresence>
+                                {shouldShowThinkingShimmer && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 6 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="flex flex-col items-start w-full"
+                                    >
+                                        <div className="w-full max-w-[85%] rounded-xl border border-neutral-700/60 bg-neutral-900 px-3.5 py-2.5">
+                                            <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
+                                            <div className="space-y-1.5">
+                                                <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+                                                <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
+                                            </div>
+                                        </div>
+                                        <span className="mt-1 text-[10px] font-medium text-neutral-600">Assistant is thinking...</span>
+                                    </motion.div>
+                                )}
+                                {pendingAction && (
+                                    <HITLApproval
+                                        hitl={pendingAction}
+                                        onDecision={onActionDecision}
+                                    />
+                                )}
+                                <div ref={messagesEndRef} />
+                            </div>
                         </main>
                     ) : (
                         <div className="flex-1" />
@@ -742,237 +839,346 @@ export function NormalModeLayout({
                             }
                         }}
                         className={isNewChat
-                            ? "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-[60%] w-full max-w-2xl px-6 z-10 flex flex-col justify-center"
-                            : `px-4 py-2 relative ${isHistoryVisible ? "px-6" : "px-24"}`
+                            ? "absolute -bottom-16 left-1/2 -translate-x-1/2 -translate-y-[60%] w-full max-w-2xl px-6 z-10 flex flex-col justify-center"
+                            : `px-4 py-2 absolute bottom-0 w-full ${isCompactChat ? "px-3" : (isHistoryVisible ? "px-6" : "px-24")}`
                         }
-                    >
-                        {isNewChat && (
+                    >                        {isNewChat ? (
+                        <div className="w-full max-w-3xl mx-auto flex flex-col justify-center py-4">
                             <motion.div
                                 initial={{ opacity: 0, y: -10 }}
                                 animate={{ opacity: 1, y: 0 }}
-                                className="flex flex-col items-center text-center mb-8 space-y-4 pointer-events-none select-none"
+                                className="flex flex-col items-center text-center mb-6 space-y-2 select-none"
                             >
-                                <h1 className="text-3xl font-bold text-white font-sans tracking-wide">
-                                    How can I help you today?
-                                </h1>
-                                <p className="text-sm text-neutral-400 max-w-md">
-                                    Ask questions, run terminal commands, or attach project context to get started.
-                                </p>
-                            </motion.div>
-                        )}
-                        <AnimatePresence>
-                            {(isDragging || isWindowDraggingFile) && (
-                                <motion.div
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0 }}
-                                    className="absolute inset-x-4 inset-y-2 z-[100] flex items-center justify-center rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/10 backdrop-blur-sm pointer-events-none"
-                                >
-                                    <div className="flex items-center gap-3 text-emerald-400">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                            <polyline points="17 8 12 3 7 8" />
-                                            <line x1="12" y1="3" x2="12" y2="15" />
-                                        </svg>
-                                        <span className="text-xs font-bold  tracking-wider">Drop image to attach</span>
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-                        <div className="flex flex-col gap-2">
-                            {/* Attachment previews (Moved Above) */}
-                            {(attachedImage || isScreenAttached || projectRoot || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
-                                <div className={`flex flex-wrap gap-2 ${isNewChat ? 'w-[80%]' : 'w-[70%]'} mx-auto overflow-x-auto justify-center mb-2`}>
-                                    <AnimatePresence>
-                                        {attachedImage && (
-                                            <motion.div
-                                                initial={{ opacity: 0, scale: 0.9 }}
-                                                animate={{ opacity: 1, scale: 1 }}
-                                                exit={{ opacity: 0, scale: 0.9 }}
-                                                className="relative self-start"
-                                            >
-                                                <div className="h-16 w-16 overflow-hidden rounded-lg border border-neutral-700">
-                                                    <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
-                                                </div>
-                                                <button
-                                                    onClick={() => setAttachedImage(null)}
-                                                    className="absolute -right-1.5 -top-1.5 rounded-full bg-red-500 p-0.5 text-white"
-                                                >
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                                    </svg>
-                                                </button>
-                                            </motion.div>
-                                        )}
-                                        {isScreenAttached && (
-                                            <motion.div
-                                                initial={{ opacity: 0, scale: 0.9 }}
-                                                animate={{ opacity: 1, scale: 1 }}
-                                                exit={{ opacity: 0, scale: 0.9 }}
-                                                className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 self-start"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                    <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                    <path d="M8 21h8" />
-                                                    <path d="M12 17v4" />
-                                                </svg>
-                                                <span className="text-xs text-emerald-400">@current_screen</span>
-                                                <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                                    </svg>
-                                                </button>
-                                            </motion.div>
-                                        )}
-                                        {projectRoot && (
-                                            <motion.div
-                                                initial={{ opacity: 0, scale: 0.9 }}
-                                                animate={{ opacity: 1, scale: 1 }}
-                                                exit={{ opacity: 0, scale: 0.9 }}
-                                                className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 self-start"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                                </svg>
-                                                <span className="text-xs text-amber-400">@{projectRootChip}</span>
-                                                <button onClick={() => { setProjectRoot(null); setProjectRootChip(null); }} className="text-amber-400/60 hover:text-amber-400">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                                    </svg>
-                                                </button>
-                                            </motion.div>
-                                        )}
-                                        {attachedClipboardText && (
-                                            <motion.div
-                                                initial={{ opacity: 0, scale: 0.9 }}
-                                                animate={{ opacity: 1, scale: 1 }}
-                                                exit={{ opacity: 0, scale: 0.9 }}
-                                                className="flex items-center gap-2 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-1 self-start"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                    <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                </svg>
-                                                <span className="text-xs text-pink-400">@clipboard</span>
-                                                <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                                    </svg>
-                                                </button>
-                                            </motion.div>
-                                        )}
-                                        {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
-                                            <motion.div
-                                                key={`file-${file.name}-${idx}`}
-                                                initial={{ opacity: 0, scale: 0.9 }}
-                                                animate={{ opacity: 1, scale: 1 }}
-                                                exit={{ opacity: 0, scale: 0.9 }}
-                                                className="flex items-center gap-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 px-2 py-1 self-start"
-                                            >
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-cyan-400">
-                                                    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-                                                    <polyline points="14 2 14 8 20 8" />
-                                                </svg>
-                                                <span className="text-xs text-cyan-400 max-w-[100px] truncate" title={file.name}>@{file.name}</span>
-                                                <button onClick={() => onRemoveAttachedFile?.(idx)} className="text-cyan-400/60 hover:text-cyan-400">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                                    </svg>
-                                                </button>
-                                            </motion.div>
-                                        ))}
-                                        <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
-                                    </AnimatePresence>
-                                </div>
-                            )}
 
-                            <div className="flex items-end justify-center gap-2">
-                                {/* Attachment button (Restore for active chat) */}
-                                {!isNewChat && (
-                                    <div className="relative">
-                                        <button
-                                            onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-                                            disabled={isLoading || isCapturing}
-                                            className={`p-[10px] rounded-lg border transition-colors ${isAttachmentPopoverOpen ? 'bg-neutral-700 border-neutral-600' : 'bg-neutral-800 border-neutral-700 hover:bg-neutral-700'} disabled:opacity-50`}
-                                        >
-                                            {isCapturing ? (
-                                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
-                                            ) : (
-                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-neutral-400">
-                                                    <path d="m18 15-6-6-6 6" />
-                                                </svg>
-                                            )}
-                                        </button>
+                                <h1 className={`font-bold text-white font-sans tracking-tight ${isCompactChat ? 'text-xl' : 'text-3xl'}`}>
+                                    What should we build?
+                                </h1>
+
+                                <p className="text-sm text-neutral-400 max-w-md">
+                                    Select a scenario below or ask Rie-AI to build, analyze, or fix code.
+                                </p>
+
+                            </motion.div>
+
+                            {/* 4 Scenario Cards */}
+                            <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.05 }}
+                                className={`grid gap-3 w-full mb-6 ${isCompactChat ? 'grid-cols-2' : 'grid-cols-4'}`}
+                            >
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInput("Explore and understand code");
+                                        textareaRef?.current?.focus();
+                                    }}
+                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                        } shadow-lg hover:shadow-teal-500/5 hover:-translate-y-0.5`}
+                                >
+                                    <div className="w-8 h-8 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <Compass size={18} />
+                                    </div>
+                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        Explore and understand code
+                                    </span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInput("Build a new feature, app, or tool");
+                                        textareaRef?.current?.focus();
+                                    }}
+                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                        } shadow-lg hover:shadow-purple-500/5 hover:-translate-y-0.5`}
+                                >
+                                    <div className="w-8 h-8 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <Hammer size={18} />
+                                    </div>
+                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        Build a new feature, app, or tool
+                                    </span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInput("Review code and suggest changes");
+                                        textareaRef?.current?.focus();
+                                    }}
+                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                        } shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5`}
+                                >
+                                    <div className="w-8 h-8 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <RotateCw size={18} />
+                                    </div>
+                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        Review code and suggest changes
+                                    </span>
+                                </button>
+
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setInput("Fix issues and failures");
+                                        textareaRef?.current?.focus();
+                                    }}
+                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                        } shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5`}
+                                >
+                                    <div className="w-8 h-8 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <FlaskConical size={18} />
+                                    </div>
+                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        Fix issues and failures
+                                    </span>
+                                </button>
+                            </motion.div>
+
+                            {/* Integrated Floating Input Box */}
+                            <div className="w-full rounded-2xl bg-neutral-900/90 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl p-3.5 flex flex-col gap-2.5 transition-all">
+                                {/* Inline Attachments (if any attached) */}
+                                {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
+                                    <div className="flex items-center gap-2 flex-wrap px-1">
+
                                         <AnimatePresence>
-                                            {isAttachmentPopoverOpen && (
-                                                <motion.div
-                                                    initial={{ opacity: 0, y: 10 }}
-                                                    animate={{ opacity: 1, y: 0 }}
-                                                    exit={{ opacity: 0, y: 10 }}
-                                                    className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
-                                                >
-                                                    <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-                                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                                            <circle cx="9" cy="9" r="2" />
-                                                            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                                                        </svg>
-                                                        Upload File
-                                                    </button>
-                                                    <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                            <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                            <path d="M8 21h8" />
-                                                            <path d="M12 17v4" />
-                                                        </svg>
-                                                        Current Screen
-                                                    </button>
-                                                    <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                                        </svg>
-                                                        Project Path
-                                                    </button>
-                                                    <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                            <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                        </svg>
-                                                        Read Clipboard
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setIsAttachmentPopoverOpen(false);
-                                                            setIsKnowledgePickerOpen(true);
-                                                        }}
-                                                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                                                    >
-                                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
-                                                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-                                                        </svg>
-                                                        Custom Knowledge
-                                                    </button>
+                                            {attachedImage && (
+                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative flex items-center gap-1 shrink-0">
+                                                    <div className="h-6 w-6 overflow-hidden rounded border border-neutral-700">
+                                                        <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
+                                                    </div>
+                                                    <button onClick={() => setAttachedImage(null)} className="text-neutral-400 hover:text-red-400 text-xs">×</button>
                                                 </motion.div>
                                             )}
+                                            {isScreenAttached && (
+                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-400 shrink-0">
+                                                    <span>@screen</span>
+                                                    <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">×</button>
+                                                </motion.div>
+                                            )}
+                                            {attachedClipboardText && (
+                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-0.5 text-[11px] text-pink-400 shrink-0">
+                                                    <span>@clipboard</span>
+                                                    <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">×</button>
+                                                </motion.div>
+                                            )}
+                                            {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
+                                                <motion.div key={`file-${file.name}-${idx}`} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 text-[11px] text-cyan-400 max-w-[120px] truncate shrink-0">
+                                                    <span>@{file.name}</span>
+                                                    <button onClick={() => onRemoveAttachedFile?.(idx)} className="text-cyan-400/60 hover:text-cyan-400">×</button>
+                                                </motion.div>
+                                            ))}
+                                            <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
                                         </AnimatePresence>
                                     </div>
                                 )}
 
-                                {/* Text input */}
-                                <div className={`${isNewChat ? 'w-[80%]' : 'w-[70%]'} max-h-fit relative flex items-center justify-center`}>
+                                {/* Textarea */}
+                                <div className="relative flex items-center">
+                                    <textarea
+                                        ref={textareaRef}
+                                        rows={2}
+                                        value={input}
+                                        onChange={(e) => setInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                onSend();
+                                            }
+                                        }}
+                                        onPaste={(e) => {
+                                            if (isLoading) return;
+                                            const items = e.clipboardData?.items || [];
+                                            for (const item of items) {
+                                                if (item.kind === "file" && item.type.startsWith("image/")) {
+                                                    const file = item.getAsFile();
+                                                    if (file) {
+                                                        e.preventDefault();
+                                                        attachImageFile(file);
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }}
+                                        placeholder={isRecording ? 'Listening...' : 'Do anything'}
+                                        className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
+                                        disabled={isLoading}
+                                    />
+                                    {isRecording && (
+                                        <div className="absolute right-2 top-2 flex items-center gap-1.5">
+                                            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                                            <span className="text-[10px] font-bold text-emerald-500 uppercase">Live</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Bottom bar */}
+                                <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60">
+                                    <div className="flex items-center gap-2">
+                                        <div className="relative">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
+                                                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                                                title="Add attachment"
+                                            >
+                                                <Plus size={16} />
+                                            </button>
+                                            <AnimatePresence>
+                                                {isAttachmentPopoverOpen && (
+                                                    <motion.div
+                                                        initial={{ opacity: 0, y: 10 }}
+                                                        animate={{ opacity: 1, y: 0 }}
+                                                        exit={{ opacity: 0, y: 10 }}
+                                                        className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
+                                                    >
+                                                        <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
+                                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                                <circle cx="9" cy="9" r="2" />
+                                                                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                                            </svg>
+                                                            Upload File
+                                                        </button>
+                                                        <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                                                                <rect width="20" height="14" x="2" y="3" rx="2" />
+                                                                <path d="M8 21h8" />
+                                                                <path d="M12 17v4" />
+                                                            </svg>
+                                                            Current Screen
+                                                        </button>
+                                                        <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+                                                                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                                            </svg>
+                                                            Project Path
+                                                        </button>
+                                                        <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
+                                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                            </svg>
+                                                            Read Clipboard
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setIsAttachmentPopoverOpen(false);
+                                                                setIsKnowledgePickerOpen(true);
+                                                            }}
+                                                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
+                                                                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                                                            </svg>
+                                                            Custom Knowledge
+                                                        </button>
+                                                    </motion.div>
+                                                )}
+                                            </AnimatePresence>
+                                        </div>
+
+                                        <div className="scale-90 origin-left">
+                                            <ModeToggle
+                                                chatMode={chatMode}
+                                                setChatMode={setChatMode}
+                                                speedMode={speedMode}
+                                                setSpeedMode={setSpeedMode}
+                                                provider={provider}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                        {!isCompactChat && (
+                                            <button
+                                                type="button"
+                                                onClick={onOpenSettings}
+                                                className="flex items-center gap-1.5 rounded-lg bg-neutral-800/80 hover:bg-neutral-800 border border-neutral-700/60 px-2.5 py-1 text-xs text-neutral-300 hover:text-white transition-colors"
+                                            >
+                                                <span className="font-medium text-[11px]">{provider ? provider : '5.6 Terra Medium'}</span>
+                                                <ChevronDown size={12} className="text-neutral-400" />
+                                            </button>
+                                        )}
+
+                                        <button
+                                            type="button"
+                                            onClick={() => (onToggleRecording ? onToggleRecording() : isRecording ? onStopRecording?.() : onStartRecording?.())}
+                                            className={`p-1.5 rounded-lg transition-colors ${isRecording ? 'text-red-400 bg-red-500/10 animate-pulse ring-1 ring-red-500/30' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                                                }`}
+                                            title={isRecording ? "Listening... Click to stop" : "Voice input"}
+                                        >
+                                            <Mic size={15} />
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={isLoading ? () => onCancel() : onSend}
+                                            disabled={!isLoading && !hasContent}
+                                            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${isLoading
+                                                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                                                    : hasContent
+                                                        ? 'bg-white text-neutral-900 hover:bg-neutral-200'
+                                                        : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
+                                                }`}
+                                        >
+                                            {isLoading ? (
+                                                <Square size={12} fill="currentColor" />
+                                            ) : (
+                                                <ArrowUp size={15} strokeWidth={2.5} />
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="w-full max-w-xl mx-auto">
+                            <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1 flex flex-col gap-2.5 transition-all">
+                                {/* Inline Attachments (if any attached) */}
+                                {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
+                                    <div className="flex items-center gap-2 flex-wrap px-1">
+                                        <AnimatePresence>
+                                            {attachedImage && (
+                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative flex items-center gap-1 shrink-0">
+                                                    <div className="h-6 w-6 overflow-hidden rounded border border-neutral-700">
+                                                        <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
+                                                    </div>
+                                                    <button onClick={() => setAttachedImage(null)} className="text-neutral-400 hover:text-red-400 text-xs">×</button>
+                                                </motion.div>
+                                            )}
+                                            {isScreenAttached && (
+                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-400 shrink-0">
+                                                    <span>@screen</span>
+                                                    <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">×</button>
+                                                </motion.div>
+                                            )}
+                                            {attachedClipboardText && (
+                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-0.5 text-[11px] text-pink-400 shrink-0">
+                                                    <span>@clipboard</span>
+                                                    <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">×</button>
+                                                </motion.div>
+                                            )}
+                                            {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
+                                                <motion.div key={`file-${file.name}-${idx}`} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 text-[11px] text-cyan-400 max-w-[120px] truncate shrink-0">
+                                                    <span>@{file.name}</span>
+                                                    <button onClick={() => onRemoveAttachedFile?.(idx)} className="text-cyan-400/60 hover:text-cyan-400">×</button>
+                                                </motion.div>
+                                            ))}
+                                            <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
+                                        </AnimatePresence>
+                                    </div>
+                                )}
+
+                                {/* Textarea */}
+                                <div className="relative flex items-center">
                                     <textarea
                                         ref={textareaRef}
                                         rows={1}
                                         value={input}
-                                        onChange={(e) => {
-                                            setInput(e.target.value);
-                                        }}
+                                        onChange={(e) => setInput(e.target.value)}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter' && !e.shiftKey) {
                                                 e.preventDefault();
@@ -994,82 +1200,137 @@ export function NormalModeLayout({
                                             }
                                         }}
                                         placeholder={isRecording ? 'Listening...' : 'Type a message...'}
-                                        className={`w-full resize-none rounded-xl border bg-neutral-800 px-4 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none transition-all max-h-[280px] custom-scrollbar ${isRecording ? 'border-emerald-500 ring-1 ring-emerald-500/20' : `border-neutral-700/50 focus:bg-neutral-800/50 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'}`} disabled:opacity-50`}
+                                        className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
                                         disabled={isLoading}
                                     />
                                     {isRecording && (
-                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                                        <div className="absolute right-2 top-2 flex items-center gap-1.5">
                                             <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                                             <span className="text-[10px] font-bold text-emerald-500 uppercase">Live</span>
                                         </div>
                                     )}
                                 </div>
-                                {/* Send/Cancel button */}
-                                <button
-                                    onClick={isLoading ? () => onCancel() : onSend}
-                                    disabled={!isLoading && !hasContent}
-                                    className={`p-2.5 rounded-xl border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isLoading
-                                        ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
-                                        : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
-                                        }`}
-                                >
-                                    {isLoading ? (
-                                        <div className="relative flex items-center justify-center">
-                                            <div className="absolute h-5 w-5 animate-spin rounded-full border-2 border-red-500/30 border-t-red-500" />
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                                                <rect x="6" y="6" width="12" height="12" rx="1" />
-                                            </svg>
-                                        </div>
-                                    ) : (
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="m22 2-7 20-4-9-9-4Z" />
-                                            <path d="M22 2 11 13" />
-                                        </svg>
-                                    )}
-                                </button>
-                            </div>
 
-                            {/* Attachment options grid (Only shown in empty chat) */}
-                            {isNewChat && (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4 max-w-lg mx-auto w-full">
-                                    <button onClick={onFileUpload} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400 shrink-0">
-                                            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                            <circle cx="9" cy="9" r="2" />
-                                            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                                        </svg>
-                                        <span>Upload File</span>
-                                    </button>
-                                    <button onClick={onCaptureScreen} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400 shrink-0">
-                                            <rect width="20" height="14" x="2" y="3" rx="2" />
-                                            <path d="M8 21h8" />
-                                            <path d="M12 17v4" />
-                                        </svg>
-                                        <span>Current Screen</span>
-                                    </button>
-                                    <button onClick={onPickProjectPath} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400 shrink-0">
-                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                        </svg>
-                                        <span>Project Path</span>
-                                    </button>
-                                    <button onClick={onAttachClipboard} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400 shrink-0">
-                                            <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                        </svg>
-                                        <span>Read Clipboard</span>
-                                    </button>
-                                    <button onClick={() => setIsKnowledgePickerOpen(true)} className="flex items-center gap-2 rounded-xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-neutral-800 hover:border-neutral-700 p-2.5 text-xs text-neutral-300 transition-all text-left col-span-2 sm:col-span-1">
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400 shrink-0">
-                                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-                                        </svg>
-                                        <span>Custom Knowledge</span>
-                                    </button>
+                                {/* Bottom bar */}
+                                <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60">
+                                    <div className="flex items-center gap-2">
+                                        <div className="relative">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
+                                                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                                                title="Add attachment"
+                                            >
+                                                <Plus size={16} />
+                                            </button>
+                                            <AnimatePresence>
+                                                {isAttachmentPopoverOpen && (
+                                                    <motion.div
+                                                        initial={{ opacity: 0, y: 10 }}
+                                                        animate={{ opacity: 1, y: 0 }}
+                                                        exit={{ opacity: 0, y: 10 }}
+                                                        className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
+                                                    >
+                                                        <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
+                                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                                                                <circle cx="9" cy="9" r="2" />
+                                                                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                                                            </svg>
+                                                            Upload File
+                                                        </button>
+                                                        <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
+                                                                <rect width="20" height="14" x="2" y="3" rx="2" />
+                                                                <path d="M8 21h8" />
+                                                                <path d="M12 17v4" />
+                                                            </svg>
+                                                            Current Screen
+                                                        </button>
+                                                        <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+                                                                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                                            </svg>
+                                                            Project Path
+                                                        </button>
+                                                        <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
+                                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                                                            </svg>
+                                                            Read Clipboard
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setIsAttachmentPopoverOpen(false);
+                                                                setIsKnowledgePickerOpen(true);
+                                                            }}
+                                                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                                                        >
+                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
+                                                                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                                                            </svg>
+                                                            Custom Knowledge
+                                                        </button>
+                                                    </motion.div>
+                                                )}
+                                            </AnimatePresence>
+                                        </div>
+
+                                        <div className="scale-90 origin-left">
+                                            <ModeToggle
+                                                chatMode={chatMode}
+                                                setChatMode={setChatMode}
+                                                speedMode={speedMode}
+                                                setSpeedMode={setSpeedMode}
+                                                provider={provider}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={onOpenSettings}
+                                            className="flex items-center gap-1.5 rounded-lg bg-neutral-800/80 hover:bg-neutral-800 border border-neutral-700/60 px-2.5 py-1 text-xs text-neutral-300 hover:text-white transition-colors"
+                                        >
+                                            <span className="font-medium text-[11px]">{provider ? provider : '5.6 Terra Medium'}</span>
+                                            <ChevronDown size={12} className="text-neutral-400" />
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={() => (onToggleRecording ? onToggleRecording() : isRecording ? onStopRecording?.() : onStartRecording?.())}
+                                            className={`p-1.5 rounded-lg transition-colors ${isRecording ? 'text-red-400 bg-red-500/10 animate-pulse ring-1 ring-red-500/30' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                                                }`}
+                                            title={isRecording ? "Listening... Click to stop" : "Voice input"}
+                                        >
+                                            <Mic size={15} />
+                                        </button>
+
+                                        <button
+                                            type="button"
+                                            onClick={isLoading ? () => onCancel() : onSend}
+                                            disabled={!isLoading && !hasContent}
+                                            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${isLoading
+                                                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                                                    : hasContent
+                                                        ? 'bg-white text-neutral-900 hover:bg-neutral-200'
+                                                        : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
+                                                }`}
+                                        >
+                                            {isLoading ? (
+                                                <Square size={12} fill="currentColor" />
+                                            ) : (
+                                                <ArrowUp size={15} strokeWidth={2.5} />
+                                            )}
+                                        </button>
+                                    </div>
                                 </div>
-                            )}
+                            </div>
                         </div>
+                    )}
                     </footer>
 
                 </div>
@@ -1161,6 +1422,33 @@ export function NormalModeLayout({
                                     </>
                                 )}
                             </div>
+                        </motion.aside>
+                    )}
+                </AnimatePresence>
+
+                {/* Draggable Divider Handle */}
+                {isBrowserPanelOpen && (
+                    <div
+                        onMouseDown={handleStartResize}
+                        className="w-1.5 hover:w-2 bg-neutral-800/80 hover:bg-cyan-500/80 cursor-col-resize h-full shrink-0 transition-colors z-30 flex items-center justify-center group"
+                        title="Drag to resize browser panel"
+                    >
+                        <div className="h-8 w-0.5 bg-neutral-600 group-hover:bg-cyan-200 rounded-full" />
+                    </div>
+                )}
+
+                {/* Embedded Camoufox Browser Workspace Panel */}
+                <AnimatePresence>
+                    {isBrowserPanelOpen && (
+                        <motion.aside
+                            initial={{ width: 0, opacity: 0 }}
+                            animate={{ width: `${browserPanelWidth}%`, opacity: 1 }}
+                            exit={{ width: 0, opacity: 0 }}
+                            transition={isResizingPanel ? { duration: 0 } : { type: 'spring', stiffness: 300, damping: 30 }}
+                            style={{ width: `${browserPanelWidth}%` }}
+                            className="h-full bg-neutral-950 flex flex-col overflow-hidden shrink-0"
+                        >
+                            <LiveCamoufoxPanel onClose={() => setIsBrowserPanelOpen(false)} />
                         </motion.aside>
                     )}
                 </AnimatePresence>

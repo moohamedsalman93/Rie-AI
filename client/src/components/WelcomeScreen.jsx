@@ -128,7 +128,7 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
             <div
                 onMouseDown={(e) => onMouseDown?.(e)}
                 data-tauri-drag-region
-                className="relative z-20 h-10 px-3 border-b border-neutral-800/60 bg-neutral-950/70 backdrop-blur-md flex items-center justify-between cursor-move"
+                className="relative z-20 h-10 px-3 border-b border-neutral-800/60 bg-neutral-950/70 backdrop-blur-md flex items-center justify-between  "
             >
                 <div className="flex-1 h-full flex items-center text-xs text-neutral-500 font-medium tracking-wide">
                     Onboarding

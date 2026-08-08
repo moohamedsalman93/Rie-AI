@@ -27,6 +27,17 @@ export const PROVIDERS = {
 
 export const AVAILABLE_TOOLS = [
   { id: 'internet_search', label: 'Internet Search', desc: 'Allows searching the web for information.' },
+  { id: 'browser_open', label: 'Browser Open', desc: 'Opens a stealth CamoFox browser session with profile support.' },
+  { id: 'browser_snapshot', label: 'Browser Snapshot', desc: 'Captures accessibility DOM tree and element references.' },
+  { id: 'browser_click', label: 'Browser Click', desc: 'Clicks an element on the active browser page.' },
+  { id: 'browser_type', label: 'Browser Type', desc: 'Types text into an element on the active browser page.' },
+  { id: 'browser_navigate', label: 'Browser Navigate', desc: 'Navigates the browser to a target URL.' },
+  { id: 'browser_scroll', label: 'Browser Scroll', desc: 'Scrolls the active browser page.' },
+  { id: 'browser_tabs', label: 'Browser Tabs', desc: 'Lists, switches, or closes browser tabs.' },
+  { id: 'browser_extract', label: 'Browser Extract', desc: 'Extracts clean readability text content from the browser page.' },
+  { id: 'browser_job_extract_form', label: 'Job Extract Form', desc: 'Extracts form fields, labels, input types, and options in a single pass.' },
+  { id: 'browser_job_bulk_autofill', label: 'Job Bulk Autofill', desc: 'Bulk injects applicant details into form fields via DOM in a single pass.' },
+  { id: 'browser_close', label: 'Browser Close', desc: 'Closes the active browser session.' },
   { id: 'run_terminal_command', label: 'System Terminal', desc: 'Execute commands on the Windows system.' },
   { id: 'get_desktop_state', label: 'Desktop State', desc: 'Captures current desktop state and interactive elements.' },
   { id: 'app_control', label: 'App Control', desc: 'Launch, resize, or switch Windows applications.' },
@@ -36,7 +47,6 @@ export const AVAILABLE_TOOLS = [
   { id: 'scroll_mouse', label: 'Scroll Mouse', desc: 'Scrolls vertically or horizontally.' },
   { id: 'drag_mouse', label: 'Drag Mouse', desc: 'Drags from current position to target coordinates.' },
   { id: 'press_keys', label: 'Press Keys', desc: 'Presses keyboard shortcuts or keys.' },
-  { id: 'scrape_web', label: 'Scrape Web', desc: 'Scrapes content from a URL or active browser tab.' },
   { id: 'wait', label: 'Wait', desc: 'Pauses execution for a specified duration.' },
 ];
 

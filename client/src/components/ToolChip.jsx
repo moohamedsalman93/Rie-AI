@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -38,9 +38,9 @@ function parseTodoContent(raw) {
         // Python-style: 'content': '...', 'status': '...' (content can contain escaped or simple quotes)
         const re = /'content':\s*'((?:[^'\\]|\\.)*)'\s*,\s*'status':\s*'([^']*)'/g;
         const items = [];
-        let m;
-        while ((m = re.exec(listStr)) !== null) {
-            items.push({ content: m[1].replace(/\\./g, (c) => (c === "\\'" ? "'" : c)), status: m[2] || "pending" });
+        let match;
+        while ((match = re.exec(listStr)) !== null) {
+            items.push({ content: match[1], status: match[2] });
         }
         if (items.length) return items;
     }
@@ -48,7 +48,30 @@ function parseTodoContent(raw) {
     return null;
 }
 
-export const ToolChip = ({ name, content, tooltipPlacement = "bottom" }) => {
+function formatToolName(name) {
+    if (!name) return "tool";
+    const raw = String(name);
+
+    if (raw === "run_terminal_command") return "Ran terminal command";
+    if (raw === "list_directory") return "Listed directory";
+    if (raw === "view_file") return "Viewed file";
+    if (raw === "write_file") return "Wrote to file";
+    if (raw === "delete_file") return "Deleted file";
+    if (raw === "grep_search") return "Searched codebase";
+    if (raw === "web_search") return "Searched the web";
+    if (raw === "fetch_web_page") return "Fetched web page";
+    if (raw === "python_eval") return "Executed Python script";
+    if (raw === "take_screenshot") return "Took screenshot";
+    if (raw === "view_screen") return "Captured screen content";
+    if (raw === "write_todos") return "Updated plan todos";
+    if (raw === "browser_subagent") return "Ran browser subagent";
+    if (raw === "add_knowledge") return "Saved to knowledge base";
+    if (raw === "search_knowledge") return "Searched knowledge base";
+
+    return raw.replace(/_/g, " ");
+}
+
+export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) => {
     const [showPopup, setShowPopup] = useState(false);
     const hideTimeoutRef = useRef(null);
     const triggerRef = useRef(null);
@@ -60,53 +83,60 @@ export const ToolChip = ({ name, content, tooltipPlacement = "bottom" }) => {
         if (!el) return;
         const r = el.getBoundingClientRect();
         const isTop = tooltipPlacement === "top";
-        const popupHeight = popupRef.current?.offsetHeight || 0;
-        setPopupPos({
-            top: isTop ? r.top - popupHeight - 8 : r.bottom + 4,
-            left: r.left,
+        const popupHeight = popupRef.current?.offsetHeight || 180;
+        const newTop = Math.round(isTop ? Math.max(10, r.top - popupHeight - 8) : Math.min(window.innerHeight - popupHeight - 10, r.bottom + 4));
+        const newLeft = Math.round(Math.max(10, Math.min(r.left, window.innerWidth - 340)));
+
+        setPopupPos((prev) => {
+            if (prev.top === newTop && prev.left === newLeft) return prev;
+            return { top: newTop, left: newLeft };
         });
     }, [tooltipPlacement]);
 
-    const show = () => {
+    const show = useCallback(() => {
         if (hideTimeoutRef.current) {
             clearTimeout(hideTimeoutRef.current);
             hideTimeoutRef.current = null;
         }
+        if (triggerRef.current) {
+            const r = triggerRef.current.getBoundingClientRect();
+            const isTop = tooltipPlacement === "top";
+            const initialTop = Math.round(isTop ? Math.max(10, r.top - 180) : Math.min(window.innerHeight - 190, r.bottom + 4));
+            const initialLeft = Math.round(Math.max(10, Math.min(r.left, window.innerWidth - 340)));
+            setPopupPos({ top: initialTop, left: initialLeft });
+        }
         setShowPopup(true);
-    };
+    }, [tooltipPlacement]);
 
-    const hide = () => {
-        hideTimeoutRef.current = setTimeout(() => setShowPopup(false), HOVER_DELAY_MS);
-    };
-
-    useLayoutEffect(() => {
-        if (!showPopup) return;
-        updatePopupPosition();
-    }, [showPopup, updatePopupPosition]);
+    const hide = useCallback(() => {
+        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+        hideTimeoutRef.current = setTimeout(() => {
+            setShowPopup(false);
+        }, HOVER_DELAY_MS);
+    }, []);
 
     useEffect(() => {
         if (!showPopup) return;
-        const onScrollOrResize = () => updatePopupPosition();
-        window.addEventListener("scroll", onScrollOrResize, true);
-        window.addEventListener("resize", onScrollOrResize);
+        updatePopupPosition();
+        const handleScrollOrResize = () => updatePopupPosition();
+        window.addEventListener("scroll", handleScrollOrResize, true);
+        window.addEventListener("resize", handleScrollOrResize);
         return () => {
-            window.removeEventListener("scroll", onScrollOrResize, true);
-            window.removeEventListener("resize", onScrollOrResize);
+            window.removeEventListener("scroll", handleScrollOrResize, true);
+            window.removeEventListener("resize", handleScrollOrResize);
         };
     }, [showPopup, updatePopupPosition]);
 
-    // Helper to format the tool name
-    const formatToolName = (name) => {
-        if (!name) return "SYSTEM OPERATION";
-        return name
-            .split('_')
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ')
-            .toUpperCase();
-    };
-
     const isWriteTodos = name && (name.toLowerCase() === "write_todos" || name.toLowerCase() === "write todos");
     const todoItems = isWriteTodos ? parseTodoContent(content) : null;
+
+    const displayContent = useMemo(() => {
+        if (!content || typeof content !== "string") return "";
+        if (content.length > 2500) {
+            return content.slice(0, 2500) + "\n\n... *(output truncated for tooltip preview)*";
+        }
+        return content;
+    }, [content]);
 
     const popupNode = (
         <AnimatePresence>
@@ -116,12 +146,12 @@ export const ToolChip = ({ name, content, tooltipPlacement = "bottom" }) => {
                     initial={{ opacity: 0, y: tooltipPlacement === "top" ? 4 : -4, scale: 0.96 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: tooltipPlacement === "top" ? 4 : -4, scale: 0.96 }}
-                    transition={{ duration: 0.15 }}
+                    transition={{ duration: 0.12 }}
                     style={{
                         top: popupPos.top,
                         left: popupPos.left,
                     }}
-                    className="fixed z-[1000] min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-64 overflow-y-auto"
+                    className="fixed z-[1000] min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-64 overflow-y-auto pointer-events-auto"
                     onMouseEnter={show}
                     onMouseLeave={hide}
                 >
@@ -161,7 +191,7 @@ export const ToolChip = ({ name, content, tooltipPlacement = "bottom" }) => {
                             </ul>
                         </div>
                     ) : (
-                        <MarkdownMessage content={content} />
+                        <MarkdownMessage content={displayContent} />
                     )}
                 </motion.div>
             )}
@@ -198,7 +228,10 @@ export const ToolChip = ({ name, content, tooltipPlacement = "bottom" }) => {
                 </span>
             </span>
 
-            {typeof document !== "undefined" ? createPortal(popupNode, document.body) : null}
+            {showPopup && typeof document !== "undefined" ? createPortal(popupNode, document.body) : null}
         </div>
     );
-};
+});
+
+ToolChip.displayName = "ToolChip";
+

@@ -40,7 +40,7 @@ export function normalizeSubTab(tab, subTab) {
     return subTab || 'orchestration';
   }
   if (tab === 'capabilities') {
-    if (subTab === 'builtin' || subTab === 'mcp' || subTab === 'external' || subTab === 'skills') return subTab;
+    if (subTab === 'builtin' || subTab === 'browser' || subTab === 'mcp' || subTab === 'external' || subTab === 'skills') return subTab;
     return subTab || 'builtin';
   }
   return subTab || null;
@@ -84,6 +84,7 @@ export const ADVANCED_SUB_TABS = [
 
 export const CAPABILITY_SUB_TABS = [
   { id: 'builtin', label: 'Built-in Tools' },
+  { id: 'browser', label: 'Browser Engine' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'external', label: 'External APIs' },
   { id: 'skills', label: 'Skill Library' },

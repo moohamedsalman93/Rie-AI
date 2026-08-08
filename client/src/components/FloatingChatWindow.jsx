@@ -37,8 +37,6 @@ export function FloatingChatWindow({
   sessionsByThread = {},
   isLoading,
   streamingBotMessageId,
-  typesWrite,
-  setTypesWrite,
   messagesEndRef,
   input,
   setInput,
@@ -203,8 +201,6 @@ export function FloatingChatWindow({
                 messages={messages}
                 isLoading={isLoading}
                 streamingBotMessageId={streamingBotMessageId}
-                typesWrite={typesWrite}
-                setTypesWrite={setTypesWrite}
                 messagesEndRef={messagesEndRef}
                 pendingAction={pendingAction}
                 onActionDecision={onActionDecision}
