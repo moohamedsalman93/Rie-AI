@@ -36,6 +36,10 @@ class BrowserRuntimeStatus(BaseModel):
     headless_mode: str = Field("auto", description="Configured headless mode (headless, normal, auto)")
     browser_binary: Optional[BrowserBinaryInfo] = Field(None, description="Browser binary status")
     is_fetching: bool = Field(False, description="Whether binary is currently downloading")
+    download_percentage: float = Field(0.0, description="Download progress percentage")
+    download_bytes: int = Field(0, description="Downloaded bytes count")
+    total_bytes: int = Field(0, description="Total binary size in bytes")
+    download_stage: str = Field("idle", description="Download stage")
     fetch_error: Optional[str] = Field(None, description="Error from fetching binary")
     error: Optional[str] = Field(None, description="Error details if unhealthy")
 
@@ -69,6 +73,10 @@ async def get_browser_status() -> BrowserRuntimeStatus:
             headless_mode=settings.CAMOFOX_HEADLESS_MODE,
             browser_binary=binary_info,
             is_fetching=status.get("is_fetching", False),
+            download_percentage=status.get("download_percentage", 0.0),
+            download_bytes=status.get("download_bytes", 0),
+            total_bytes=status.get("total_bytes", 0),
+            download_stage=status.get("download_stage", "idle"),
             fetch_error=status.get("fetch_error"),
             error=status.get("error"),
         )

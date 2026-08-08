@@ -138,11 +138,12 @@ class BrowserRuntimeManager:
                         self._download_percentage = pct
                         self._download_bytes = downloaded
                         self._total_bytes = total
-                return webdl(url, buffer=file, progress_callback=cb)
+                res = webdl(url, buffer=file, progress_callback=cb)
+                self._download_stage = "extracting"
+                return res
 
             fetcher.download_file = progress_download
 
-            self._download_stage = "extracting"
             install_versioned(fetcher, replace=True)
 
             self._download_percentage = 100.0
