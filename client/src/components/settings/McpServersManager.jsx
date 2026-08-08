@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, Plus, Shield, Wrench, ChevronDown, Pencil, Trash2 } from 'lucide-react';
 import { getMcpStatus } from '../../services/chatApi';
@@ -37,28 +37,24 @@ export function McpServersManager({ servers, onSave, isSaving }) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [indexToDelete, setIndexToDelete] = useState(null);
 
+  const fetchMcpStatus = useCallback(async () => {
+    try {
+      setLoadingStatus(true);
+      setStatusError(null);
+      const status = await getMcpStatus();
+      setMcpStatus(status);
+    } catch (err) {
+      console.error('Failed to fetch MCP status:', err);
+      setStatusError(err.message);
+    } finally {
+      setLoadingStatus(false);
+    }
+  }, []);
+
   // Fetch MCP status on component mount
   useEffect(() => {
-    let mounted = true;
-    const fetchMcpStatus = async () => {
-      try {
-        setLoadingStatus(true);
-        setStatusError(null);
-        const status = await getMcpStatus();
-        if (mounted) setMcpStatus(status);
-      } catch (err) {
-        console.error('Failed to fetch MCP status:', err);
-        if (mounted) setStatusError(err.message);
-      } finally {
-        if (mounted) setLoadingStatus(false);
-      }
-    };
-
     fetchMcpStatus();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  }, [fetchMcpStatus]);
 
   const toggleServerExpand = (index) => {
     const newExpanded = new Set(expandedServers);

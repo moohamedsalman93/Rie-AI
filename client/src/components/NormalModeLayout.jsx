@@ -21,6 +21,9 @@ import {
     PenLine,
     Search,
     Target,
+    Compass,
+    Hammer,
+    FlaskConical,
 } from 'lucide-react';
 import { getHistory } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -848,11 +851,11 @@ export function NormalModeLayout({
                             >
 
                                 <h1 className={`font-bold text-white font-sans tracking-tight ${isCompactChat ? 'text-xl' : 'text-3xl'}`}>
-                                    How can I help you today?
+                                    What should we build?
                                 </h1>
 
                                 <p className="text-sm text-neutral-400 max-w-md">
-                                    Pick a quick action below or just ask Rie-AI anything.
+                                    Select a scenario below or ask Rie-AI to build, analyze, or fix code.
                                 </p>
 
                             </motion.div>
@@ -867,68 +870,68 @@ export function NormalModeLayout({
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setInput("Help me plan my day");
+                                        setInput("Explore and understand code");
                                         textareaRef?.current?.focus();
                                     }}
                                     className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                        } shadow-lg hover:shadow-cyan-500/5 hover:-translate-y-0.5`}
+                                        } shadow-lg hover:shadow-teal-500/5 hover:-translate-y-0.5`}
                                 >
-                                    <div className="w-8 h-8 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <CalendarDays size={18} />
+                                    <div className="w-8 h-8 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <Compass size={18} />
                                     </div>
                                     <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Help me plan my day
+                                        Explore and understand code
                                     </span>
                                 </button>
 
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setInput("Write or draft something for me");
+                                        setInput("Build a new feature, app, or tool");
                                         textareaRef?.current?.focus();
                                     }}
                                     className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
                                         } shadow-lg hover:shadow-purple-500/5 hover:-translate-y-0.5`}
                                 >
-                                    <div className="w-8 h-8 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <PenLine size={18} />
+                                    <div className="w-8 h-8 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <Hammer size={18} />
                                     </div>
                                     <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Write or draft something
+                                        Build a new feature, app, or tool
                                     </span>
                                 </button>
 
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setInput("Research a topic for me");
+                                        setInput("Review code and suggest changes");
                                         textareaRef?.current?.focus();
                                     }}
                                     className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
                                         } shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5`}
                                 >
-                                    <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <Search size={18} />
+                                    <div className="w-8 h-8 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <RotateCw size={18} />
                                     </div>
                                     <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Research a topic
+                                        Review code and suggest changes
                                     </span>
                                 </button>
 
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setInput("Help me set a goal or track progress");
+                                        setInput("Fix issues and failures");
                                         textareaRef?.current?.focus();
                                     }}
                                     className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
                                         } shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5`}
                                 >
-                                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <Target size={18} />
+                                    <div className="w-8 h-8 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                        <FlaskConical size={18} />
                                     </div>
                                     <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Set a goal or track progress
+                                        Fix issues and failures
                                     </span>
                                 </button>
                             </motion.div>

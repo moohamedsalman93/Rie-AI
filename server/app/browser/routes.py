@@ -24,6 +24,7 @@ class BrowserBinaryInfo(BaseModel):
     available: bool = False
     version: Optional[str] = None
     path: Optional[str] = None
+    error: Optional[str] = None
 
 
 class BrowserRuntimeStatus(BaseModel):
@@ -48,21 +49,32 @@ class CreateProfileRequest(BaseModel):
 @router.get("/status", response_model=BrowserRuntimeStatus)
 async def get_browser_status() -> BrowserRuntimeStatus:
     """Get current browser runtime status and health metrics."""
-    settings.reload()
-    status = await runtime_manager.get_status()
-    binary = status.get("browser_binary", {})
+    try:
+        settings.reload()
+        status = await runtime_manager.get_status()
+        binary = status.get("browser_binary", {}) or {}
 
-    return BrowserRuntimeStatus(
-        provider=status.get("provider", "camofox"),
-        mode=status.get("mode", "embedded"),
-        state=status.get("state", "stopped"),
-        camoufox_version=status.get("camoufox_version"),
-        headless_mode=settings.CAMOFOX_HEADLESS_MODE,
-        browser_binary=BrowserBinaryInfo(**binary) if binary else None,
-        is_fetching=status.get("is_fetching", False),
-        fetch_error=status.get("fetch_error"),
-        error=status.get("error"),
-    )
+        binary_info = BrowserBinaryInfo(
+            available=binary.get("available", False),
+            version=binary.get("version"),
+            path=binary.get("path"),
+            error=binary.get("error"),
+        ) if binary else None
+
+        return BrowserRuntimeStatus(
+            provider=status.get("provider", "camofox"),
+            mode=status.get("mode", "embedded"),
+            state=status.get("state", "stopped"),
+            camoufox_version=status.get("camoufox_version"),
+            headless_mode=settings.CAMOFOX_HEADLESS_MODE,
+            browser_binary=binary_info,
+            is_fetching=status.get("is_fetching", False),
+            fetch_error=status.get("fetch_error"),
+            error=status.get("error"),
+        )
+    except Exception as e:
+        logger.exception("Failed to get browser status")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/runtime/initialize", response_model=BrowserRuntimeStatus)
