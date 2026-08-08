@@ -1,7 +1,7 @@
 {
   "name": "rie-ai",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.4.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,8 @@
     "tauri:dev": "cross-env SKIP_SIDECAR=true tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:staging": "tauri dev",
     "tauri:build": "tauri build",
-    "release": "node scripts/build-and-release.js",
+    "release": "node scripts/bump-version.js --git",
+    "release:local": "node scripts/build-and-release.js",
     "bump": "node scripts/bump-version.js"
   },
   "dependencies": {

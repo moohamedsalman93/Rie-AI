@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Globe,
   RefreshCw,
@@ -40,41 +40,36 @@ export default function BrowserSettingsSection() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    let mounted = true;
-    const fetchBrowserData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const [statusData, profilesData] = await Promise.all([
-          getBrowserStatus(),
-          getBrowserProfiles(),
-        ]);
-        if (!mounted) return;
-        setStatus(statusData);
-        setProfiles(profilesData);
-        if (statusData?.headless_mode) {
-          setHeadlessMode(statusData.headless_mode);
-          localStorage.setItem("rie_camofox_headless_mode", statusData.headless_mode);
-        }
-        if (statusData?.is_fetching) {
-          setFetchingBinary(true);
-        } else {
-          setFetchingBinary(false);
-        }
-      } catch (err) {
-        console.error("Error fetching browser subsystem data:", err);
-        if (mounted) setError(err.message || "Failed to connect to browser engine service.");
-      } finally {
-        if (mounted) setLoading(false);
+  const fetchBrowserData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const [statusData, profilesData] = await Promise.all([
+        getBrowserStatus(),
+        getBrowserProfiles(),
+      ]);
+      setStatus(statusData);
+      setProfiles(profilesData);
+      if (statusData?.headless_mode) {
+        setHeadlessMode(statusData.headless_mode);
+        localStorage.setItem("rie_camofox_headless_mode", statusData.headless_mode);
       }
-    };
-
-    fetchBrowserData();
-    return () => {
-      mounted = false;
-    };
+      if (statusData?.is_fetching) {
+        setFetchingBinary(true);
+      } else {
+        setFetchingBinary(false);
+      }
+    } catch (err) {
+      console.error("Error fetching browser subsystem data:", err);
+      setError(err.message || "Failed to connect to browser engine service.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchBrowserData();
+  }, [fetchBrowserData]);
 
   const handleSelectEngine = (choice) => {
     setEngineChoice(choice);
