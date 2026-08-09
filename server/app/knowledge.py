@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
+
 
 from app.database import (
     create_knowledge_asset,
@@ -20,7 +22,6 @@ from app.database import (
     upsert_thread_knowledge,
     update_knowledge_asset_summary,
 )
-from app.agent import agent_manager
 
 TEXT_EXTENSIONS = {
     ".txt", ".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".html", ".htm",
@@ -47,10 +48,12 @@ def _resolve_storage_path(relative_path: str) -> Path:
 
 
 async def _ensure_llm():
+    from app.agent import agent_manager
     if not agent_manager._llm:
         await agent_manager._initialize_agent_async(chat_mode="chat", speed_mode="flash")
     if not agent_manager._llm:
         raise RuntimeError("LLM is not initialized. Please verify provider settings.")
+
 
 
 def _extract_text_content(response: Any) -> str:
@@ -63,6 +66,7 @@ def _extract_text_content(response: Any) -> str:
 
 async def summarize_text_content(text: str, filename: str) -> str:
     await _ensure_llm()
+    from app.agent import agent_manager
     truncated = text[:8000]
     system_text = (
         "Summarize this document concisely for use as AI context. "
@@ -81,6 +85,7 @@ async def summarize_text_content(text: str, filename: str) -> str:
 
 async def summarize_image_file(storage_path: Path, filename: str) -> str:
     await _ensure_llm()
+    from app.agent import agent_manager
     if not storage_path.exists():
         raise RuntimeError(f"Image file not found: {storage_path}")
     raw = storage_path.read_bytes()
@@ -106,24 +111,142 @@ async def summarize_image_file(storage_path: Path, filename: str) -> str:
     return summary[:SUMMARY_MAX_CHARS]
 
 
-def compile_pack_context(pack_id: str) -> str:
+
+def compile_pack_manifest(pack_id: str) -> str:
+    """Generate a lightweight manifest index of a knowledge pack for LLM on-demand context."""
     pack = get_knowledge_pack(pack_id)
     if not pack:
         return ""
     assets = get_knowledge_assets(pack_id)
-    lines = [f"[Custom Knowledge: {pack['name']}]"]
+    lines = [f"[Knowledge Pack: {pack['name']}] (ID: {pack_id})"]
     instructions = (pack.get("instructions") or "").strip()
     if instructions:
-        lines.append("Instructions:")
-        lines.append(instructions)
+        lines.append(f"Pack Instructions: {instructions}")
+    lines.append("Attached Files & Assets (use `read_knowledge_asset` tool with asset filename or ID to view full content):")
     for asset in assets:
         summary = (asset.get("summary") or "").strip()
-        if not summary:
-            continue
-        lines.append("")
-        lines.append(f"--- {asset['filename']} ---")
-        lines.append(summary)
+        preview = summary.replace("\n", " ")[:150]
+        if len(summary) > 150:
+            preview += "..."
+        lines.append(
+            f"- ID: {asset['id']} | Filename: {asset['filename']} | Type: {asset['asset_type']} | Summary: {preview or 'No description'}"
+        )
     return "\n".join(lines).strip()
+
+
+def compile_pack_context(pack_id: str) -> str:
+    return compile_pack_manifest(pack_id)
+
+
+def read_knowledge_asset_content(asset_id_or_filename: str, pack_id: Optional[str] = None) -> str:
+    """
+    Find knowledge asset by ID or filename and return its full content / raw text / summary.
+    """
+    target_asset = None
+    target_pack = None
+
+    if pack_id:
+        p = get_knowledge_pack(pack_id)
+        packs = [p] if p else []
+    else:
+        packs = list_knowledge_packs()
+
+    query_clean = asset_id_or_filename.strip().lower()
+
+    for p in packs:
+        if not p:
+            continue
+        assets = get_knowledge_assets(p["id"])
+        for a in assets:
+            if (
+                a["id"].lower() == query_clean
+                or a["filename"].lower() == query_clean
+                or query_clean in a["filename"].lower()
+            ):
+                target_asset = a
+                target_pack = p
+                break
+        if target_asset:
+            break
+
+    if not target_asset:
+        return f"Error: Knowledge asset '{asset_id_or_filename}' not found."
+
+    rel_path = target_asset.get("storage_path")
+    abs_path = _resolve_storage_path(rel_path) if rel_path else None
+
+    header = f"=== Knowledge Asset: {target_asset['filename']} (Pack: {target_pack['name']}) ==="
+    content_parts = [header]
+
+    if abs_path and abs_path.exists() and target_asset["asset_type"] == "text":
+        try:
+            raw_text = abs_path.read_text(encoding="utf-8", errors="replace")
+            content_parts.append(raw_text)
+        except Exception as e:
+            content_parts.append(f"[Error reading raw text file: {e}]")
+            if target_asset.get("summary"):
+                content_parts.append(f"Summary: {target_asset['summary']}")
+    else:
+        summary = target_asset.get("summary") or "No detailed content available."
+        content_parts.append(summary)
+
+    return "\n\n".join(content_parts)
+
+
+@tool
+def read_knowledge_asset(asset_id_or_filename: str, pack_id: Optional[str] = None) -> str:
+    """Read the full text, raw content, or detailed description of an attached knowledge asset.
+    Use this tool when you need specific details from an asset listed in the Custom Knowledge Pack Index.
+
+    Args:
+        asset_id_or_filename: The ID or filename of the knowledge asset to read.
+        pack_id: Optional knowledge pack ID if known.
+    """
+    return read_knowledge_asset_content(asset_id_or_filename, pack_id=pack_id)
+
+
+
+async def save_raw_text_asset(
+    pack_id: str,
+    filename: str,
+    text: str,
+    description: Optional[str] = None,
+) -> Dict[str, Any]:
+    pack = get_knowledge_pack(pack_id)
+    if not pack:
+        raise ValueError("Knowledge pack not found")
+
+    safe_name = Path(filename).name if filename.strip() else "note.txt"
+    if not safe_name.endswith(tuple(TEXT_EXTENSIONS)):
+        safe_name += ".txt"
+
+    pack_dir = get_knowledge_storage_dir() / pack_id
+    pack_dir.mkdir(parents=True, exist_ok=True)
+
+    from uuid import uuid4
+    asset_id = str(uuid4())
+    rel_path = f"{pack_id}/{asset_id}_{safe_name}"
+    abs_path = get_knowledge_storage_dir() / rel_path
+    abs_path.write_text(text, encoding="utf-8")
+
+    # Generate short description for the manifest index if not provided
+    final_summary = (description or "").strip()
+    if not final_summary:
+        if len(text) <= 300:
+            final_summary = text.strip()
+        else:
+            # Extract first 250 characters as instant description preview
+            final_summary = text[:250].strip() + "..."
+
+    asset = create_knowledge_asset(
+        pack_id=pack_id,
+        filename=safe_name,
+        asset_type="text",
+        storage_path=rel_path,
+        summary=final_summary,
+    )
+    return asset
+
 
 
 def build_thread_knowledge_context(

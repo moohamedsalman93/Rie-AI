@@ -363,9 +363,18 @@ class CamoFoxProvider(BrowserProvider):
 
                         # Build a Playwright locator for this element
                         try:
-                            locator = self._page.get_by_role(role, name=name, exact=False)
-                            count = await locator.count()
-                            if count > 0:
+                            if role in INTERACTIVE_ROLES:
+                                locator = self._page.get_by_role(role, name=name, exact=False)
+                                if await locator.count() == 0:
+                                    locator = self._page.get_by_placeholder(name, exact=False)
+                                    if await locator.count() == 0:
+                                        locator = self._page.get_by_text(name, exact=False)
+                            else:
+                                locator = self._page.get_by_placeholder(name, exact=False)
+                                if await locator.count() == 0:
+                                    locator = self._page.get_by_text(name, exact=False)
+
+                            if locator and await locator.count() > 0:
                                 locator = locator.first
                             else:
                                 locator = None
@@ -489,7 +498,27 @@ class CamoFoxProvider(BrowserProvider):
                     elif href:
                         locator = self._page.locator(f"a[href='{href}']").first
                     elif name:
-                        locator = self._page.get_by_role(role, name=name, exact=False).first if role in INTERACTIVE_ROLES else self._page.get_by_text(name, exact=False).first
+                        if role in INTERACTIVE_ROLES:
+                            try:
+                                candidate = self._page.get_by_role(role, name=name, exact=False)
+                                if await candidate.count() > 0:
+                                    locator = candidate.first
+                            except Exception:
+                                pass
+                        if not locator:
+                            try:
+                                candidate = self._page.get_by_placeholder(name, exact=False)
+                                if await candidate.count() > 0:
+                                    locator = candidate.first
+                            except Exception:
+                                pass
+                        if not locator:
+                            try:
+                                candidate = self._page.get_by_text(name, exact=False)
+                                if await candidate.count() > 0:
+                                    locator = candidate.first
+                            except Exception:
+                                pass
                     else:
                         locator = self._page.locator(tag).first
                 except Exception:
@@ -627,13 +656,48 @@ class CamoFoxProvider(BrowserProvider):
             except Exception:
                 pass
 
-            if clear_first:
-                await target_input.fill(clean_text, timeout=10000)
+            if not clean_text and should_press_enter:
+                try:
+                    await target_input.press("Enter", timeout=4000)
+                except Exception:
+                    await target_input.evaluate("""el => {
+                        const evt = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+                        el.dispatchEvent(evt);
+                    }""")
             else:
-                await target_input.press_sequentially(clean_text, timeout=10000)
+                try:
+                    if clear_first:
+                        await target_input.fill(clean_text, timeout=4000)
+                    else:
+                        await target_input.press_sequentially(clean_text, timeout=4000)
 
-            if should_press_enter:
-                await target_input.press("Enter", timeout=5000)
+                    if should_press_enter:
+                        await target_input.press("Enter", timeout=4000)
+                except Exception as fill_err:
+                    logger.warning(f"Standard fill failed on '{target}': {fill_err}, attempting focus & press fallback...")
+                    try:
+                        await target_input.focus(timeout=2000)
+                        if clear_first:
+                            await target_input.evaluate("el => { if ('value' in el) el.value = ''; }")
+                        await target_input.press_sequentially(clean_text, timeout=3000)
+                        if should_press_enter:
+                            await target_input.press("Enter", timeout=3000)
+                    except Exception as seq_err:
+                        logger.warning(f"Sequential typing fallback failed on '{target}': {seq_err}, attempting JS value dispatch...")
+                        await target_input.evaluate("""(el, text) => {
+                            if ('value' in el) el.value = text;
+                            else el.textContent = text;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        }""", clean_text)
+                        if should_press_enter:
+                            try:
+                                await target_input.press("Enter", timeout=2000)
+                            except Exception:
+                                await target_input.evaluate("""el => {
+                                    const evt = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
+                                    el.dispatchEvent(evt);
+                                }""")
         except Exception as e:
             return ActionResult(
                 success=False,

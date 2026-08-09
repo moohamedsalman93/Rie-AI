@@ -13,13 +13,18 @@ import {
   Monitor,
   Eye,
   EyeOff,
-  Sparkles
+  Sparkles,
+  Trash2,
+  Play
 } from "lucide-react";
 import {
   getBrowserStatus,
   getBrowserProfiles,
   createBrowserProfile,
+  deleteBrowserProfile,
   fetchBrowserBinary,
+  deleteBrowserBinary,
+  performBrowserAction,
   updateSetting
 } from "../../services/chatApi";
 
@@ -38,6 +43,9 @@ export default function BrowserSettingsSection() {
   const [newProfileId, setNewProfileId] = useState("");
   const [newProfileName, setNewProfileName] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [deletingProfileId, setDeletingProfileId] = useState(null);
+  const [launchingProfileId, setLaunchingProfileId] = useState(null);
+  const [deletingBinary, setDeletingBinary] = useState(false);
   const [error, setError] = useState(null);
 
   const fetchBrowserData = useCallback(async () => {
@@ -123,6 +131,22 @@ export default function BrowserSettingsSection() {
     }
   };
 
+  const handleDeleteBinary = async () => {
+    if (!window.confirm("Are you sure you want to delete the downloaded Camoufox stealth browser binary (~150MB)? You can re-download it anytime.")) {
+      return;
+    }
+    try {
+      setDeletingBinary(true);
+      setError(null);
+      await deleteBrowserBinary();
+      await fetchBrowserData();
+    } catch (err) {
+      setError(err.message || "Failed to delete browser binary.");
+    } finally {
+      setDeletingBinary(false);
+    }
+  };
+
   const handleCreateProfile = async (e) => {
     e.preventDefault();
     if (!newProfileId.trim()) return;
@@ -138,6 +162,37 @@ export default function BrowserSettingsSection() {
       setError(err.message || "Failed to create profile.");
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleDeleteProfile = async (profileId) => {
+    if (!profileId || profileId === "default") return;
+    if (!window.confirm(`Are you sure you want to delete profile '${profileId}'? This will permanently remove its saved cookies, session data, and directory.`)) {
+      return;
+    }
+    try {
+      setDeletingProfileId(profileId);
+      setError(null);
+      await deleteBrowserProfile(profileId);
+      await fetchBrowserData();
+    } catch (err) {
+      setError(err.message || `Failed to delete profile '${profileId}'.`);
+    } finally {
+      setDeletingProfileId(null);
+    }
+  };
+
+  const handleLaunchProfile = async (profileId) => {
+    try {
+      setLaunchingProfileId(profileId);
+      setError(null);
+      await performBrowserAction("open", { url: "https://google.com", profile: profileId, headless: false });
+      window.dispatchEvent(new CustomEvent("rie_open_browser_panel", { detail: { profile: profileId } }));
+      await fetchBrowserData();
+    } catch (err) {
+      setError(err.message || `Failed to launch profile '${profileId}'.`);
+    } finally {
+      setLaunchingProfileId(null);
     }
   };
 
@@ -374,7 +429,7 @@ export default function BrowserSettingsSection() {
 
             {/* Binary Info */}
             {status?.browser_binary && (
-              <div className="pt-2 border-t border-neutral-800/80">
+              <div className="pt-2 border-t border-neutral-800/80 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs">
                   <Package className="w-3.5 h-3.5 text-neutral-400" />
                   <span className="text-neutral-400 text-[11px]">Browser Binary:</span>
@@ -387,6 +442,21 @@ export default function BrowserSettingsSection() {
                     <span className="text-neutral-400 font-mono text-[11px]">Not downloaded</span>
                   )}
                 </div>
+                {status.browser_binary.available && (
+                  <button
+                    onClick={handleDeleteBinary}
+                    disabled={deletingBinary || isFetching}
+                    className="px-2.5 py-1 text-[11px] rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1.5 transition-colors disabled:opacity-50 font-medium"
+                    title="Delete downloaded browser binary (~150MB)"
+                  >
+                    {deletingBinary ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-rose-400" />
+                    ) : (
+                      <Trash2 className="w-3 h-3" />
+                    )}
+                    Delete Binary
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -506,9 +576,38 @@ export default function BrowserSettingsSection() {
                         Last used: {prof.last_used_at ? new Date(prof.last_used_at).toLocaleString() : "Never"}
                       </div>
                     </div>
-                    <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-neutral-800 text-neutral-300 border border-neutral-700">
-                      {prof.provider}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleLaunchProfile(prof.id)}
+                        disabled={launchingProfileId === prof.id || !isBinaryAvailable}
+                        className="px-2.5 py-1 text-[11px] font-medium rounded-lg bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        title={isBinaryAvailable ? `Launch browser session with profile '${prof.id}'` : "Download browser binary first"}
+                      >
+                        {launchingProfileId === prof.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin text-sky-400" />
+                        ) : (
+                          <Play className="w-3 h-3 text-emerald-400" />
+                        )}
+                        Launch
+                      </button>
+                      <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-neutral-800 text-neutral-300 border border-neutral-700">
+                        {prof.provider}
+                      </span>
+                      {prof.id !== "default" && (
+                        <button
+                          onClick={() => handleDeleteProfile(prof.id)}
+                          disabled={deletingProfileId === prof.id}
+                          className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors border border-transparent hover:border-rose-500/20 disabled:opacity-50"
+                          title={`Delete profile '${prof.id}'`}
+                        >
+                          {deletingProfileId === prof.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))
               )}

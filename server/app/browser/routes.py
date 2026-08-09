@@ -98,6 +98,15 @@ async def fetch_browser_binary():
     return res
 
 
+@router.delete("/runtime/binary")
+async def delete_browser_binary():
+    """Delete/uninstall the downloaded Camoufox browser binary."""
+    res = await runtime_manager.delete_browser_binary()
+    if res.get("status") == "error":
+        raise HTTPException(status_code=500, detail=res.get("message", "Failed to delete browser binary."))
+    return res
+
+
 
 @router.get("/profiles", response_model=List[BrowserProfile])
 async def list_browser_profiles() -> List[BrowserProfile]:
@@ -112,6 +121,23 @@ async def create_browser_profile(req: CreateProfileRequest) -> BrowserProfile:
         return profile_manager.create_profile(profile_id=req.id, name=req.name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/profiles/{profile_id}")
+async def delete_browser_profile(profile_id: str):
+    """Delete a persistent browser profile."""
+    try:
+        success = profile_manager.delete_profile(profile_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found.")
+        return {"success": True, "message": f"Profile '{profile_id}' deleted."}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed deleting profile '{profile_id}'")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 import base64

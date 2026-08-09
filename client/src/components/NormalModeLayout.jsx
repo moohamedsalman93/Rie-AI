@@ -25,7 +25,7 @@ import {
     Hammer,
     FlaskConical,
 } from 'lucide-react';
-import { getHistory } from '../services/chatApi';
+import { getHistory, getBrowserStatus } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
 import { LinkPreview } from './LinkPreview';
@@ -124,6 +124,37 @@ export function NormalModeLayout({
     const [friendsOpen, setFriendsOpen] = useState(true);
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
     const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
+    const [browserEngine, setBrowserEngine] = useState(() => localStorage.getItem("rie_browser_engine") || "default");
+    const [isBrowserBinaryAvailable, setIsBrowserBinaryAvailable] = useState(false);
+
+    useEffect(() => {
+        const checkBrowserStatus = async () => {
+            try {
+                const currentEngine = localStorage.getItem("rie_browser_engine") || "default";
+                setBrowserEngine(currentEngine);
+                const status = await getBrowserStatus();
+                setIsBrowserBinaryAvailable(!!status?.browser_binary?.available);
+            } catch (e) {
+                console.error("Failed checking browser status in header layout:", e);
+            }
+        };
+        checkBrowserStatus();
+
+        const handleEngineChange = () => checkBrowserStatus();
+        const handleOpenPanelEvent = () => {
+            setIsBrowserPanelOpen(true);
+        };
+
+        window.addEventListener("rie_browser_engine_change", handleEngineChange);
+        window.addEventListener("rie_open_browser_panel", handleOpenPanelEvent);
+        window.addEventListener("focus", checkBrowserStatus);
+        return () => {
+            window.removeEventListener("rie_browser_engine_change", handleEngineChange);
+            window.removeEventListener("rie_open_browser_panel", handleOpenPanelEvent);
+            window.removeEventListener("focus", checkBrowserStatus);
+        };
+    }, []);
+
     const [browserPanelWidth, setBrowserPanelWidth] = useState(65);
     const [isResizingPanel, setIsResizingPanel] = useState(false);
     const [activeSkillsList, setActiveSkillsList] = useState([]);
@@ -433,14 +464,33 @@ export function NormalModeLayout({
                             <line x1="12" y1="19" x2="20" y2="19"></line>
                         </svg>
                     </button>
-                    <button
-                        onClick={() => setIsBrowserPanelOpen(prev => !prev)}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className={`p-2 rounded-lg transition-colors ${isBrowserPanelOpen ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
-                        title="Live Camoufox Stealth Browser Workspace"
-                    >
-                        <Globe size={16} />
-                    </button>
+                    {(() => {
+                        const isBrowserDisabled = browserEngine !== "camoufox" || !isBrowserBinaryAvailable;
+                        const browserTitle = browserEngine !== "camoufox"
+                            ? "Camoufox workspace disabled (Default Windows engine selected in Settings)"
+                            : !isBrowserBinaryAvailable
+                            ? "Camoufox workspace disabled (Browser binary not downloaded yet)"
+                            : "Live Camoufox Stealth Browser Workspace";
+                        return (
+                            <button
+                                onClick={() => {
+                                    if (!isBrowserDisabled) setIsBrowserPanelOpen(prev => !prev);
+                                }}
+                                disabled={isBrowserDisabled}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className={`p-2 rounded-lg transition-colors ${
+                                    isBrowserDisabled
+                                        ? 'text-neutral-600 opacity-35 cursor-not-allowed border border-transparent'
+                                        : isBrowserPanelOpen
+                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
+                                }`}
+                                title={browserTitle}
+                            >
+                                <Globe size={16} />
+                            </button>
+                        );
+                    })()}
                     <button
                         onClick={onToggleFloating}
                         onMouseDown={(e) => e.stopPropagation()}
@@ -806,7 +856,99 @@ export function NormalModeLayout({
                             </div>
                         </main>
                     ) : (
-                        <div className="flex-1" />
+                        <main className={`flex-1 min-h-0 flex flex-col items-center justify-center p-6 overflow-y-auto custom-scrollbar pb-28 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-4" : "px-12")}`}>
+                            <div className="w-full max-w-3xl mx-auto flex flex-col justify-center py-4">
+                                <motion.div
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="flex flex-col items-center text-center mb-6 space-y-2 select-none"
+                                >
+                                    <h1 className={`font-bold text-white font-sans tracking-tight ${isCompactChat ? 'text-xl' : 'text-3xl'}`}>
+                                        What should we build?
+                                    </h1>
+
+                                    <p className="text-sm text-neutral-400 max-w-md">
+                                        Select a scenario below or ask Rie-AI to build, analyze, or fix code.
+                                    </p>
+                                </motion.div>
+
+                                {/* 4 Scenario Cards */}
+                                <motion.div
+                                    initial={{ opacity: 0, y: 10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ delay: 0.05 }}
+                                    className={`grid gap-3 w-full mb-6 ${isCompactChat ? 'grid-cols-2' : 'grid-cols-4'}`}
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setInput("Explore and understand code");
+                                            textareaRef?.current?.focus();
+                                        }}
+                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                            } shadow-lg hover:shadow-teal-500/5 hover:-translate-y-0.5`}
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <Compass size={18} />
+                                        </div>
+                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                            Explore and understand code
+                                        </span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setInput("Build a new feature, app, or tool");
+                                            textareaRef?.current?.focus();
+                                        }}
+                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                            } shadow-lg hover:shadow-purple-500/5 hover:-translate-y-0.5`}
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <Hammer size={18} />
+                                        </div>
+                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                            Build a new feature, app, or tool
+                                        </span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setInput("Review code and suggest changes");
+                                            textareaRef?.current?.focus();
+                                        }}
+                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                            } shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5`}
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <RotateCw size={18} />
+                                        </div>
+                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                            Review code and suggest changes
+                                        </span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setInput("Fix issues and failures");
+                                            textareaRef?.current?.focus();
+                                        }}
+                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
+                                            } shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5`}
+                                    >
+                                        <div className="w-8 h-8 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <FlaskConical size={18} />
+                                        </div>
+                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                            Fix issues and failures
+                                        </span>
+                                    </button>
+                                </motion.div>
+                            </div>
+                        </main>
                     )}
 
                     {/* Input Area */}
@@ -838,305 +980,10 @@ export function NormalModeLayout({
                                 }
                             }
                         }}
-                        className={isNewChat
-                            ? "absolute -bottom-16 left-1/2 -translate-x-1/2 -translate-y-[60%] w-full max-w-2xl px-6 z-10 flex flex-col justify-center"
-                            : `px-4 py-2 absolute bottom-0 w-full ${isCompactChat ? "px-3" : (isHistoryVisible ? "px-6" : "px-24")}`
-                        }
-                    >                        {isNewChat ? (
-                        <div className="w-full max-w-3xl mx-auto flex flex-col justify-center py-4">
-                            <motion.div
-                                initial={{ opacity: 0, y: -10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                className="flex flex-col items-center text-center mb-6 space-y-2 select-none"
-                            >
-
-                                <h1 className={`font-bold text-white font-sans tracking-tight ${isCompactChat ? 'text-xl' : 'text-3xl'}`}>
-                                    What should we build?
-                                </h1>
-
-                                <p className="text-sm text-neutral-400 max-w-md">
-                                    Select a scenario below or ask Rie-AI to build, analyze, or fix code.
-                                </p>
-
-                            </motion.div>
-
-                            {/* 4 Scenario Cards */}
-                            <motion.div
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.05 }}
-                                className={`grid gap-3 w-full mb-6 ${isCompactChat ? 'grid-cols-2' : 'grid-cols-4'}`}
-                            >
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setInput("Explore and understand code");
-                                        textareaRef?.current?.focus();
-                                    }}
-                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                        } shadow-lg hover:shadow-teal-500/5 hover:-translate-y-0.5`}
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <Compass size={18} />
-                                    </div>
-                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Explore and understand code
-                                    </span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setInput("Build a new feature, app, or tool");
-                                        textareaRef?.current?.focus();
-                                    }}
-                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                        } shadow-lg hover:shadow-purple-500/5 hover:-translate-y-0.5`}
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <Hammer size={18} />
-                                    </div>
-                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Build a new feature, app, or tool
-                                    </span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setInput("Review code and suggest changes");
-                                        textareaRef?.current?.focus();
-                                    }}
-                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                        } shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5`}
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <RotateCw size={18} />
-                                    </div>
-                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Review code and suggest changes
-                                    </span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setInput("Fix issues and failures");
-                                        textareaRef?.current?.focus();
-                                    }}
-                                    className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                        } shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5`}
-                                >
-                                    <div className="w-8 h-8 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                        <FlaskConical size={18} />
-                                    </div>
-                                    <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                        Fix issues and failures
-                                    </span>
-                                </button>
-                            </motion.div>
-
-                            {/* Integrated Floating Input Box */}
-                            <div className="w-full rounded-2xl bg-neutral-900/90 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl p-3.5 flex flex-col gap-2.5 transition-all">
-                                {/* Inline Attachments (if any attached) */}
-                                {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
-                                    <div className="flex items-center gap-2 flex-wrap px-1">
-
-                                        <AnimatePresence>
-                                            {attachedImage && (
-                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="relative flex items-center gap-1 shrink-0">
-                                                    <div className="h-6 w-6 overflow-hidden rounded border border-neutral-700">
-                                                        <img src={attachedImage} alt="Preview" className="h-full w-full object-cover" />
-                                                    </div>
-                                                    <button onClick={() => setAttachedImage(null)} className="text-neutral-400 hover:text-red-400 text-xs">×</button>
-                                                </motion.div>
-                                            )}
-                                            {isScreenAttached && (
-                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-400 shrink-0">
-                                                    <span>@screen</span>
-                                                    <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">×</button>
-                                                </motion.div>
-                                            )}
-                                            {attachedClipboardText && (
-                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-pink-500/10 border border-pink-500/20 px-2 py-0.5 text-[11px] text-pink-400 shrink-0">
-                                                    <span>@clipboard</span>
-                                                    <button onClick={() => setAttachedClipboardText(null)} className="text-pink-400/60 hover:text-pink-400">×</button>
-                                                </motion.div>
-                                            )}
-                                            {attachedFiles.length > 0 && attachedFiles.map((file, idx) => (
-                                                <motion.div key={`file-${file.name}-${idx}`} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 text-[11px] text-cyan-400 max-w-[120px] truncate shrink-0">
-                                                    <span>@{file.name}</span>
-                                                    <button onClick={() => onRemoveAttachedFile?.(idx)} className="text-cyan-400/60 hover:text-cyan-400">×</button>
-                                                </motion.div>
-                                            ))}
-                                            <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} variant="compact" />
-                                        </AnimatePresence>
-                                    </div>
-                                )}
-
-                                {/* Textarea */}
-                                <div className="relative flex items-center">
-                                    <textarea
-                                        ref={textareaRef}
-                                        rows={2}
-                                        value={input}
-                                        onChange={(e) => setInput(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && !e.shiftKey) {
-                                                e.preventDefault();
-                                                onSend();
-                                            }
-                                        }}
-                                        onPaste={(e) => {
-                                            if (isLoading) return;
-                                            const items = e.clipboardData?.items || [];
-                                            for (const item of items) {
-                                                if (item.kind === "file" && item.type.startsWith("image/")) {
-                                                    const file = item.getAsFile();
-                                                    if (file) {
-                                                        e.preventDefault();
-                                                        attachImageFile(file);
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                        }}
-                                        placeholder={isRecording ? 'Listening...' : 'Do anything'}
-                                        className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
-                                        disabled={isLoading}
-                                    />
-                                    {isRecording && (
-                                        <div className="absolute right-2 top-2 flex items-center gap-1.5">
-                                            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                                            <span className="text-[10px] font-bold text-emerald-500 uppercase">Live</span>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Bottom bar */}
-                                <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60">
-                                    <div className="flex items-center gap-2">
-                                        <div className="relative">
-                                            <button
-                                                type="button"
-                                                onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-                                                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-                                                title="Add attachment"
-                                            >
-                                                <Plus size={16} />
-                                            </button>
-                                            <AnimatePresence>
-                                                {isAttachmentPopoverOpen && (
-                                                    <motion.div
-                                                        initial={{ opacity: 0, y: 10 }}
-                                                        animate={{ opacity: 1, y: 0 }}
-                                                        exit={{ opacity: 0, y: 10 }}
-                                                        className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
-                                                    >
-                                                        <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-                                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                                                <circle cx="9" cy="9" r="2" />
-                                                                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                                                            </svg>
-                                                            Upload File
-                                                        </button>
-                                                        <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                                <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                                <path d="M8 21h8" />
-                                                                <path d="M12 17v4" />
-                                                            </svg>
-                                                            Current Screen
-                                                        </button>
-                                                        <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                                            </svg>
-                                                            Project Path
-                                                        </button>
-                                                        <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                            </svg>
-                                                            Read Clipboard
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setIsAttachmentPopoverOpen(false);
-                                                                setIsKnowledgePickerOpen(true);
-                                                            }}
-                                                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                                                        >
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
-                                                                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-                                                            </svg>
-                                                            Custom Knowledge
-                                                        </button>
-                                                    </motion.div>
-                                                )}
-                                            </AnimatePresence>
-                                        </div>
-
-                                        <div className="scale-90 origin-left">
-                                            <ModeToggle
-                                                chatMode={chatMode}
-                                                setChatMode={setChatMode}
-                                                speedMode={speedMode}
-                                                setSpeedMode={setSpeedMode}
-                                                provider={provider}
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div className="flex items-center gap-2">
-                                        {!isCompactChat && (
-                                            <button
-                                                type="button"
-                                                onClick={onOpenSettings}
-                                                className="flex items-center gap-1.5 rounded-lg bg-neutral-800/80 hover:bg-neutral-800 border border-neutral-700/60 px-2.5 py-1 text-xs text-neutral-300 hover:text-white transition-colors"
-                                            >
-                                                <span className="font-medium text-[11px]">{provider ? provider : '5.6 Terra Medium'}</span>
-                                                <ChevronDown size={12} className="text-neutral-400" />
-                                            </button>
-                                        )}
-
-                                        <button
-                                            type="button"
-                                            onClick={() => (onToggleRecording ? onToggleRecording() : isRecording ? onStopRecording?.() : onStartRecording?.())}
-                                            className={`p-1.5 rounded-lg transition-colors ${isRecording ? 'text-red-400 bg-red-500/10 animate-pulse ring-1 ring-red-500/30' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
-                                                }`}
-                                            title={isRecording ? "Listening... Click to stop" : "Voice input"}
-                                        >
-                                            <Mic size={15} />
-                                        </button>
-
-                                        <button
-                                            type="button"
-                                            onClick={isLoading ? () => onCancel() : onSend}
-                                            disabled={!isLoading && !hasContent}
-                                            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${isLoading
-                                                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                                                    : hasContent
-                                                        ? 'bg-white text-neutral-900 hover:bg-neutral-200'
-                                                        : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
-                                                }`}
-                                        >
-                                            {isLoading ? (
-                                                <Square size={12} fill="currentColor" />
-                                            ) : (
-                                                <ArrowUp size={15} strokeWidth={2.5} />
-                                            )}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="w-full max-w-xl mx-auto">
-                            <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1 flex flex-col gap-2.5 transition-all">
+                        className={`px-4 py-3 absolute bottom-0 left-0 w-full z-10 ${isCompactChat ? "px-3" : (isHistoryVisible ? "px-6" : "px-24")}`}
+                    >
+                        <div className="w-full max-w-3xl mx-auto">
+                            <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all">
                                 {/* Inline Attachments (if any attached) */}
                                 {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
                                     <div className="flex items-center gap-2 flex-wrap px-1">
@@ -1199,7 +1046,7 @@ export function NormalModeLayout({
                                                 }
                                             }
                                         }}
-                                        placeholder={isRecording ? 'Listening...' : 'Type a message...'}
+                                        placeholder={isRecording ? 'Listening...' : (isNewChat ? 'Do anything' : 'Type a message...')}
                                         className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
                                         disabled={isLoading}
                                     />
@@ -1330,7 +1177,7 @@ export function NormalModeLayout({
                                 </div>
                             </div>
                         </div>
-                    )}
+
                     </footer>
 
                 </div>

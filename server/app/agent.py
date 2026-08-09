@@ -55,6 +55,8 @@ from app.scheduler_tools import schedule_chat_task_tool
 from app.remote_friend_tools import remote_friend_ask_tool
 from app.browser import LANGGRAPH_BROWSER_TOOLS, browser_service, InteractionMode
 from app.runtime_context import set_agent_context, reset_agent_context
+from app.knowledge import read_knowledge_asset
+
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +183,8 @@ Rules:
 - Prioritize using specialized skills/instructions. Before starting any task, check the "Available Skills" section. If any available skill matches or relates to the task, you MUST first call the `load_skill` tool to retrieve and follow its instructions.
 - Web & Browser Tasks: When performing web browsing, page navigation, web searching, or web interactions, if browser tools (such as `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_close`) are available in your toolset, you MUST prioritize `browser_*` tools over desktop GUI tools (`windows_mouse_click`, `windows_key_press`, `get_desktop_state`, `app_control`). Use `browser_*` tools for all web interactions.
 - Prefer verified information and reasoning over assumptions.
-- Select and invoke the single most specific and efficient tool for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
+- Select and invoke the most specific and efficient tools for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
+- Parallel Execution: When multiple independent information-gathering or tool actions are needed (e.g. searching for multiple items, checking LTM context alongside web search, reading multiple files), invoke all relevant tools in parallel within a single turn rather than executing them one-by-one sequentially.
 - When executing terminal commands on Windows, you MUST write correct and native Windows/PowerShell commands. Never use Linux commands (e.g. do not use `cat`, `touch`, `rm`, `cp`, `mv`, or `/` slash path separators; instead use `Get-Content`/`type`, `New-Item`/`echo`, `Remove-Item`, `Copy-Item`, `Move-Item`, and use backslashes `\\` for file paths).
 - NEVER wrap PowerShell commands inside `powershell -Command "..."` or `powershell -NoProfile -Command "..."`. You are already inside a PowerShell terminal. Wrapping creates nested-quote parser errors (`TerminatorExpectedAtEndOfString`) because backslash (`\\`) is NOT a valid PowerShell escape character. Always run commands directly as bare statements. If a command is complex (hashtables, nested quotes, loops), write it to a temp .ps1 script file first, then execute it with `& "$env:TEMP\\script.ps1"` — this completely avoids quoting issues.
 - Use the coding_specialist sub agent for any code-related tasks and do not use the your tool for coding tasks, like codebase analysis, code review, etc.
@@ -222,7 +225,7 @@ class RotatingChatGroq(BaseChatModel):
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
-        # Create a dummy ChatGroq to handle tool formatting correctly
+        kwargs.setdefault("parallel_tool_calls", True)
         dummy = ChatGroq(
             api_key=self.api_keys[0],
             model=self.model_name,
@@ -307,6 +310,7 @@ class RotatingChatOpenAI(BaseChatModel):
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
+        kwargs.setdefault("parallel_tool_calls", True)
         dummy = ChatOpenAI(
             openai_api_key=self.api_keys[0],
             model_name=self.model_name,
@@ -381,6 +385,7 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
+        kwargs.setdefault("parallel_tool_calls", True)
         dummy = ChatGoogleGenerativeAI(
             google_api_key=self.api_keys[0],
             model=self.model_name,
@@ -682,6 +687,7 @@ class AgentManager:
             "internet_search": internet_search,
             "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
+            "read_knowledge_asset": read_knowledge_asset,
             **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
@@ -1292,6 +1298,7 @@ class AgentManager:
             "internet_search": internet_search,
             "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
+            "read_knowledge_asset": read_knowledge_asset,
             **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
@@ -1405,7 +1412,7 @@ class AgentManager:
 
         # Filter tools based on chat_mode + orchestration mode.
         if effective_chat_mode == "chat":
-            # Chat mode: internet_search + LTM + scheduling (reminders / timed tasks)
+            # Chat mode: internet_search + LTM + scheduling + knowledge tool
             tools_to_use = []
             if "internet_search" in all_tools_map:
                 tools_to_use.append(all_tools_map["internet_search"])
@@ -1413,6 +1420,8 @@ class AgentManager:
                 tools_to_use.append(all_tools_map["schedule_chat_task"])
             if "remote_friend_ask" in all_tools_map:
                 tools_to_use.append(all_tools_map["remote_friend_ask"])
+            if "read_knowledge_asset" in all_tools_map:
+                tools_to_use.append(all_tools_map["read_knowledge_asset"])
             tools_to_use.extend(LTM_TOOLS)
             print(f"DEBUG: Chat mode active - using limited tools: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
         elif orchestration_mode == "team":
@@ -1451,7 +1460,7 @@ class AgentManager:
             if effective_speed_mode != "flash":
                 middleware_stack.append(
                     TodoListMiddleware(
-                        system_prompt="Use the write_todos tool to plan your tasks"
+                        system_prompt="Use the write_todos tool to plan your tasks. Group independent tasks so relevant tools can be executed in parallel."
                     )
                 )
                 print(f"DEBUG: Thinking mode - TodoListMiddleware enabled")

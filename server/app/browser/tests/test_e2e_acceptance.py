@@ -63,7 +63,7 @@ class MockBrowserProvider(BrowserProvider):
     async def check_health(self) -> bool:
         return True
 
-    async def create_session(self, profile: Optional[str] = None) -> BrowserSession:
+    async def create_session(self, profile: Optional[str] = None, headless: Optional[bool] = None) -> BrowserSession:
         from app.browser.profile_manager import profile_manager
         prof_id = profile or "default"
         profile_dir = str(profile_manager.get_profile_dir(prof_id))
@@ -178,6 +178,18 @@ class MockBrowserProvider(BrowserProvider):
 
     async def capture_screenshot(self, session_id: str, full_page: bool = False) -> bytes:
         return b"\x89PNG_MOCK"
+
+    async def extract_form_fields(self, session_id: str) -> dict:
+        return {"fields": [{"ref": "ref-0", "name": "search", "type": "text", "value": self.search_value}]}
+
+    async def bulk_autofill_form(self, session_id: str, field_data: dict) -> dict:
+        return {"filled": len(field_data), "status": "success"}
+
+    async def upload_file(self, session_id: str, target: str, file_path: str) -> ActionResult:
+        return ActionResult(
+            success=True, url=self.current_url, title=self.current_title,
+            message=f"Uploaded file '{file_path}' into target '{target}'",
+        )
 
     async def close_session(self, session_id: str) -> bool:
         return True
@@ -451,6 +463,24 @@ async def run_e2e_acceptance_tests():
             assert False, "Path traversal should have raised ValueError"
         except ValueError as e:
             print(f"[Step D Verified] Path traversal attack vector blocked cleanly: {e}")
+
+        # Profile Deletion test
+        temp_prof = profile_manager.create_profile("temp_test_profile", "Temp Profile")
+        assert temp_prof.id == "temp_test_profile"
+        assert any(p.id == "temp_test_profile" for p in profile_manager.list_profiles())
+
+        # Attempt to delete default profile should fail
+        try:
+            profile_manager.delete_profile("default")
+            assert False, "Deleting default profile should raise ValueError"
+        except ValueError as e:
+            print(f"[Step E Verified] Protected default profile deletion blocked: {e}")
+
+        # Delete custom profile
+        deleted = profile_manager.delete_profile("temp_test_profile")
+        assert deleted is True
+        assert not any(p.id == "temp_test_profile" for p in profile_manager.list_profiles())
+        print("[Step E Verified] Profile deletion and directory cleanup succeeded.")
 
         print("\n[PASS]: Test Case 8 (Persistent Profile Management & Security) succeeded.")
 

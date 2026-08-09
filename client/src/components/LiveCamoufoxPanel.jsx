@@ -9,9 +9,10 @@ import {
   Play,
   MousePointer,
   ArrowRight,
-  Monitor
+  Monitor,
+  User
 } from 'lucide-react';
-import { performBrowserAction, getBrowserActiveSession } from '../services/chatApi';
+import { performBrowserAction, getBrowserActiveSession, getBrowserProfiles } from '../services/chatApi';
 
 export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
   const [frameData, setFrameData] = useState(null);
@@ -24,6 +25,8 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
   const [statusMessage, setStatusMessage] = useState('');
   const [interactionMode, setInteractionMode] = useState('interactive');
   const [isNativeMode, setIsNativeMode] = useState(false);
+  const [profiles, setProfiles] = useState([{ id: 'default', name: 'Default Profile' }]);
+  const [selectedProfile, setSelectedProfile] = useState('default');
   
   const imgRef = useRef(null);
   const wsRef = useRef(null);
@@ -32,8 +35,16 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
   const currentUrlRef = useRef(currentUrl);
   currentUrlRef.current = currentUrl;
 
-  // Check initial active session state on mount
+  // Fetch registered browser profiles and check active session status
   useEffect(() => {
+    getBrowserProfiles()
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setProfiles(data);
+        }
+      })
+      .catch((err) => console.error('Failed to load profiles:', err));
+
     getBrowserActiveSession()
       .then((data) => {
         if (data?.active) {
@@ -43,6 +54,7 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
             setUrlInput(data.url);
           }
           if (data.title) setCurrentTitle(data.title);
+          if (data.profile) setSelectedProfile(data.profile);
         }
       })
       .catch((err) => console.error('Failed to check active session status:', err));
@@ -188,13 +200,14 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
     }
   };
 
-  const handleOpenSession = async (headless = true) => {
+  const handleOpenSession = async (headless = true, overrideProfile = null) => {
+    const profToUse = overrideProfile || selectedProfile;
     setIsNavigating(true);
     setIsNativeMode(!headless);
-    setStatusMessage(headless ? 'Launching Camoufox in-app engine...' : 'Opening 60 FPS native Firefox window...');
+    setStatusMessage(headless ? `Launching Camoufox (${profToUse})...` : `Opening 60 FPS window (${profToUse})...`);
     try {
       const targetUrl = urlInput || 'https://google.com';
-      await performBrowserAction('open', { url: targetUrl, headless });
+      await performBrowserAction('open', { url: targetUrl, profile: profToUse, headless });
       setIsActive(true);
     } catch (err) {
       console.error('Failed to open browser session:', err);
@@ -204,13 +217,14 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
     }
   };
 
-  const handleToggleMode = async (headless) => {
+  const handleToggleMode = async (headless, overrideProfile = null) => {
+    const profToUse = overrideProfile || selectedProfile;
     setIsNavigating(true);
     setIsNativeMode(!headless);
     setStatusMessage(headless ? 'Docking into in-app workspace...' : 'Opening 60 FPS native Firefox desktop window...');
     try {
       const targetUrl = urlInput || currentUrl || 'https://google.com';
-      await performBrowserAction('open', { url: targetUrl, headless });
+      await performBrowserAction('open', { url: targetUrl, profile: profToUse, headless });
       setIsActive(true);
     } catch (err) {
       console.error('Failed to switch browser mode:', err);
@@ -276,8 +290,28 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
       {/* Sleek Minimal Dark Header Toolbar */}
       <div className="flex items-center gap-2 px-3 py-2 bg-neutral-900/90 border-b border-neutral-800/80">
         <div className="flex items-center gap-1.5 text-xs text-neutral-300 font-medium bg-neutral-800/80 px-2 py-1 rounded-lg border border-neutral-700/60">
-          <ShieldCheck size={13} className="text-neutral-400" />
+          <ShieldCheck size={13} className="text-neutral-400 shrink-0" />
           <span className="hidden md:inline text-neutral-300">Camoufox</span>
+          <span className="text-neutral-600 font-normal">|</span>
+          <User size={12} className="text-emerald-400 shrink-0" />
+          <select
+            value={selectedProfile}
+            onChange={(e) => {
+              const newProf = e.target.value;
+              setSelectedProfile(newProf);
+              if (isActive) {
+                handleOpenSession(!isNativeMode, newProf);
+              }
+            }}
+            className="bg-transparent text-neutral-200 text-xs font-mono outline-none cursor-pointer border-none py-0 pl-0 pr-1"
+            title="Active Persistent Browser Profile"
+          >
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id} className="bg-neutral-900 text-neutral-200">
+                {p.name || p.id}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* Address Bar */}
@@ -417,6 +451,26 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
                   {statusMessage}
                 </p>
               )}
+            </div>
+
+            <div className="w-full bg-neutral-900/80 border border-neutral-800 rounded-xl p-3 text-left space-y-1.5">
+              <label className="text-[11px] font-medium text-neutral-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <User size={12} className="text-emerald-400" /> Choose Profile:
+                </span>
+                <span className="text-[10px] font-mono text-neutral-500">({selectedProfile})</span>
+              </label>
+              <select
+                value={selectedProfile}
+                onChange={(e) => setSelectedProfile(e.target.value)}
+                className="w-full px-3 py-1.5 bg-neutral-950 border border-neutral-800 rounded-lg text-xs text-neutral-200 focus:outline-none focus:border-neutral-700 font-medium cursor-pointer"
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id} className="bg-neutral-900 text-neutral-200">
+                    {p.name || p.id} ({p.id})
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2.5 w-full">

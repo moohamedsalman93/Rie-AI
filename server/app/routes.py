@@ -27,7 +27,7 @@ from app.models import (
     FriendPeerAccessPatch, PeerAccessCatalogResponse,
     PeerQueryEventItem,
     PeerStreamCancelRequest,
-    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, UpdateKnowledgeAssetRequest, ThreadKnowledgeItem,
+    KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, UpdateKnowledgeAssetRequest, ThreadKnowledgeItem, RawTextAssetCreate,
     SkillCreate, SkillUpdate, SkillResponse,
     ImportBackupRequest,
 )
@@ -96,6 +96,7 @@ from app.knowledge import (
     list_packs_summary,
     get_pack_detail,
     save_and_summarize_asset,
+    save_raw_text_asset,
     remove_asset_file,
     prepare_thread_knowledge_for_stream,
     lock_thread_knowledge_after_stream,
@@ -2579,6 +2580,28 @@ async def upload_knowledge_asset(pack_id: str, file: UploadFile = File(...)):
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return asset
+
+
+@router.post("/knowledge/{pack_id}/raw-text")
+async def create_raw_text_asset_route(pack_id: str, payload: RawTextAssetCreate):
+    pack = await run_in_threadpool(get_knowledge_pack, pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Knowledge pack not found")
+    if not payload.text.strip():
+        raise HTTPException(status_code=400, detail="Text content cannot be empty")
+    try:
+        asset = await save_raw_text_asset(
+            pack_id,
+            payload.filename,
+            payload.text,
+            description=payload.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return asset
+
 
 
 @router.delete("/knowledge/{pack_id}/assets/{asset_id}")

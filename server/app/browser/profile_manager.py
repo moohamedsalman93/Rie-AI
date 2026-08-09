@@ -4,6 +4,7 @@ Manages persistent browser profiles (identities, cookies, localStorage) separate
 """
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict
@@ -142,6 +143,28 @@ class BrowserProfileManager:
         if clean_id in registry:
             registry[clean_id]["last_used_at"] = datetime.now(timezone.utc).isoformat()
             self._save_registry(registry)
+
+    def delete_profile(self, profile_id: str) -> bool:
+        """Delete a persistent browser profile and remove its data directory."""
+        clean_id = self._sanitize_profile_id(profile_id)
+        if clean_id == "default":
+            raise ValueError("Cannot delete the default browser profile.")
+
+        registry = self._load_registry()
+        if clean_id not in registry:
+            return False
+
+        del registry[clean_id]
+        self._save_registry(registry)
+
+        profile_dir = self.profiles_dir / clean_id
+        if profile_dir.exists():
+            try:
+                shutil.rmtree(profile_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning(f"Failed deleting profile directory '{profile_dir}': {e}")
+
+        return True
 
 
 # Global singleton instance

@@ -98,6 +98,17 @@ export async function uploadKnowledgeAsset(packId, file) {
   return response.json();
 }
 
+export async function createRawTextAsset(packId, { filename, text, description }) {
+  const response = await fetch(`${API_BASE_URL}/knowledge/${encodeURIComponent(packId)}/raw-text`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ filename, text, description }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to create raw text asset");
+  return response.json();
+}
+
+
 export async function deleteKnowledgeAsset(packId, assetId) {
   const response = await fetch(
     `${API_BASE_URL}/knowledge/${encodeURIComponent(packId)}/assets/${encodeURIComponent(assetId)}`,

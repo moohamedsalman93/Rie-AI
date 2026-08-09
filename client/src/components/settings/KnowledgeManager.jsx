@@ -16,6 +16,7 @@ import {
   Sparkles,
   Maximize2,
   Save,
+  FileCode,
 } from 'lucide-react';
 import { ConfirmationModal } from '../ConfirmationModal';
 import {
@@ -25,6 +26,7 @@ import {
   deleteKnowledge,
   getKnowledge,
   uploadKnowledgeAsset,
+  createRawTextAsset,
   deleteKnowledgeAsset,
   updateKnowledgeAsset,
 } from '../../services/knowledgeApi';
@@ -47,7 +49,54 @@ export function KnowledgeManager() {
   const [editAssetForm, setEditAssetForm] = useState({ filename: '', summary: '' });
   const [isSavingAsset, setIsSavingAsset] = useState(false);
   const [copiedAssetId, setCopiedAssetId] = useState(false);
+  const [rawTextModal, setRawTextModal] = useState({ isOpen: false, packId: null, packName: '' });
+  const [rawTextForm, setRawTextForm] = useState({ filename: '', text: '', description: '' });
+  const [isSavingRawText, setIsSavingRawText] = useState(false);
   const fileInputRef = useRef(null);
+
+  const refreshList = async () => {
+    setLoading(true);
+    try {
+      const rows = await listKnowledge();
+      setPacks(rows || []);
+    } catch (e) {
+      setError(e.message || 'Failed to load knowledge packs');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOpenRawTextModal = (packId, packName) => {
+    setExpandedId(packId);
+    setRawTextModal({ isOpen: true, packId, packName });
+    setRawTextForm({ filename: '', text: '', description: '' });
+    setError(null);
+  };
+
+  const handleSaveRawText = async () => {
+    if (!rawTextForm.filename.trim() || !rawTextForm.text.trim()) {
+      setError('Filename and raw text content are required');
+      return;
+    }
+    setIsSavingRawText(true);
+    setError(null);
+    try {
+      await createRawTextAsset(rawTextModal.packId, {
+        filename: rawTextForm.filename.trim(),
+        text: rawTextForm.text,
+        description: rawTextForm.description.trim(),
+      });
+      setRawTextModal({ isOpen: false, packId: null, packName: '' });
+      setRawTextForm({ filename: '', text: '', description: '' });
+      await loadDetail(rawTextModal.packId);
+      await refreshList();
+    } catch (err) {
+      setError(err.message || 'Failed to save raw text asset');
+    } finally {
+      setIsSavingRawText(false);
+    }
+  };
+
 
   useEffect(() => {
     let mounted = true;
@@ -317,14 +366,30 @@ export function KnowledgeManager() {
                   <p className="text-[11px] text-neutral-500">{pack.asset_count || 0} file{(pack.asset_count || 0) !== 1 ? 's' : ''}</p>
                 </div>
               </button>
-              <div className="flex items-center gap-1 shrink-0">
-                <button type="button" onClick={() => handleUploadClick(pack.id)} disabled={uploadingAsset} className="p-2 text-neutral-500 hover:text-emerald-400 transition-colors disabled:opacity-50" title="Upload file">
-                  {uploadingAsset && expandedId === pack.id ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleOpenRawTextModal(pack.id, pack.name)}
+                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 rounded-lg transition-colors"
+                  title="Add Raw Text / Note"
+                >
+                  <FileCode size={13} />
+                  <span>Raw Text</span>
                 </button>
-                <button type="button" onClick={() => handleEdit(pack)} className="p-2 text-neutral-500 hover:text-neutral-200 transition-colors" title="Edit">
+                <button
+                  type="button"
+                  onClick={() => handleUploadClick(pack.id)}
+                  disabled={uploadingAsset}
+                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors disabled:opacity-50"
+                  title="Upload File"
+                >
+                  {uploadingAsset && expandedId === pack.id ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+                  <span>Upload File</span>
+                </button>
+                <button type="button" onClick={() => handleEdit(pack)} className="p-1.5 text-neutral-500 hover:text-neutral-200 transition-colors" title="Edit pack">
                   <Pencil size={15} />
                 </button>
-                <button type="button" onClick={() => setDeleteTarget(pack.id)} className="p-2 text-neutral-500 hover:text-red-400 transition-colors" title="Delete">
+                <button type="button" onClick={() => setDeleteTarget(pack.id)} className="p-1.5 text-neutral-500 hover:text-red-400 transition-colors" title="Delete pack">
                   <Trash2 size={16} />
                 </button>
               </div>
@@ -338,7 +403,28 @@ export function KnowledgeManager() {
                   </div>
                 )}
                 {(expandedDetail.assets || []).length === 0 ? (
-                  <p className="text-xs text-neutral-600 italic py-2">No files uploaded yet.</p>
+                  <div className="flex flex-col items-center justify-center py-6 border border-dashed border-neutral-800 rounded-xl space-y-3">
+                    <p className="text-xs text-neutral-500 italic">No files or raw text added yet.</p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenRawTextModal(pack.id, pack.name)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 rounded-lg transition-colors"
+                      >
+                        <FileCode size={13} />
+                        <span>Add Raw Text</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUploadClick(pack.id)}
+                        disabled={uploadingAsset}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        <Upload size={13} />
+                        <span>Upload File</span>
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     {expandedDetail.assets.map((asset) => {
@@ -639,6 +725,121 @@ export function KnowledgeManager() {
                     Close
                   </button>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Raw Text Asset Creation Modal */}
+      <AnimatePresence>
+        {rawTextModal.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => {
+                if (!isSavingRawText) setRawTextModal({ isOpen: false, packId: null, packName: '' });
+              }}
+              className="absolute inset-0 bg-black/70 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="relative w-full max-w-xl bg-neutral-900 border border-neutral-700/80 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-xl flex flex-col max-h-[85vh]"
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 bg-neutral-900/90 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl border bg-cyan-500/10 border-cyan-500/20 text-cyan-400">
+                    <FileCode size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-neutral-100">Add Raw Text Note</h3>
+                    <p className="text-xs text-neutral-400">Add raw text to <span className="text-cyan-400 font-medium">{rawTextModal.packName}</span> without LLM summarization</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRawTextModal({ isOpen: false, packId: null, packName: '' })}
+                  className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto custom-scrollbar space-y-4 flex-1">
+                {error && (
+                  <div className="text-xs text-red-400 bg-red-950/30 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>
+                )}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider block">
+                    Document Title / Filename <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={rawTextForm.filename}
+                    onChange={(e) => setRawTextForm((p) => ({ ...p, filename: e.target.value }))}
+                    placeholder="e.g. resume_raw.txt or job_notes.txt"
+                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider block">
+                    Short Description / Title Hint <span className="text-neutral-500 text-[10px] font-normal lowercase">(For on-demand LLM index)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={rawTextForm.description}
+                    onChange={(e) => setRawTextForm((p) => ({ ...p, description: e.target.value }))}
+                    placeholder="Brief 1-sentence description for index overview..."
+                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-neutral-300 uppercase tracking-wider block">
+                    Raw Text Content <span className="text-red-400">*</span>
+                  </label>
+                  <textarea
+                    value={rawTextForm.text}
+                    onChange={(e) => setRawTextForm((p) => ({ ...p, text: e.target.value }))}
+                    rows={8}
+                    placeholder="Paste or type raw text content here..."
+                    className="w-full bg-neutral-950 border border-neutral-700 rounded-xl p-4 text-sm text-neutral-200 leading-relaxed font-mono focus:outline-none focus:border-cyan-500/50 resize-y custom-scrollbar"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 px-6 py-3.5 border-t border-neutral-800 bg-neutral-900/90 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setRawTextModal({ isOpen: false, packId: null, packName: '' })}
+                  className="px-4 py-1.5 text-xs text-neutral-400 hover:text-neutral-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveRawText}
+                  disabled={isSavingRawText || !rawTextForm.filename.trim() || !rawTextForm.text.trim()}
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                >
+                  {isSavingRawText ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" />
+                      <span>Saving…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save size={13} />
+                      <span>Save Raw Text</span>
+                    </>
+                  )}
+                </button>
               </div>
             </motion.div>
           </div>

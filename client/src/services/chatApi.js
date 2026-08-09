@@ -1142,12 +1142,30 @@ export async function createBrowserProfile(id, name) {
   return response.json();
 }
 
+export async function deleteBrowserProfile(id) {
+  const response = await fetch(`${API_BASE_URL}/api/browser/profiles/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to delete browser profile");
+  return response.json();
+}
+
 export async function fetchBrowserBinary() {
   const response = await fetch(`${API_BASE_URL}/api/browser/runtime/fetch`, {
     method: "POST",
     headers: getHeaders(),
   });
   if (!response.ok) await throwHttpError(response, "Failed to start browser binary download");
+  return response.json();
+}
+
+export async function deleteBrowserBinary() {
+  const response = await fetch(`${API_BASE_URL}/api/browser/runtime/binary`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to delete browser binary");
   return response.json();
 }
 

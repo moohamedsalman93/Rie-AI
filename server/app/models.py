@@ -85,6 +85,13 @@ class UpdateKnowledgeAssetRequest(BaseModel):
     filename: Optional[str] = None
 
 
+class RawTextAssetCreate(BaseModel):
+    filename: str = Field(..., description="Filename or title for the raw text asset (e.g. notes.txt)")
+    text: str = Field(..., description="Raw text content")
+    description: Optional[str] = Field(None, description="Short summary/description for on-demand LLM index manifest")
+
+
+
 class KnowledgePackResponse(BaseModel):
     id: str
     name: str

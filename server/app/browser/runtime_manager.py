@@ -181,6 +181,44 @@ class BrowserRuntimeManager:
         asyncio.create_task(_fetch_task())
         return {"status": "started", "message": "Browser binary download started."}
 
+    async def delete_browser_binary(self) -> Dict[str, Any]:
+        """Delete/uninstall all downloaded Camoufox stealth browser binaries."""
+        if self._is_fetching:
+            return {"status": "error", "message": "Cannot delete binary while download is in progress."}
+
+        import shutil
+        try:
+            from camoufox.multiversion import list_installed, remove_version, BROWSERS_DIR
+            installed = list_installed()
+            deleted_count = 0
+
+            for ver in installed:
+                if hasattr(ver, "path") and ver.path:
+                    try:
+                        remove_version(ver.path)
+                        deleted_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error deleting version path {ver.path}: {e}")
+                        if ver.path.exists():
+                            shutil.rmtree(ver.path, ignore_errors=True)
+                            deleted_count += 1
+
+            if BROWSERS_DIR.exists():
+                shutil.rmtree(BROWSERS_DIR, ignore_errors=True)
+
+            self._download_stage = "idle"
+            self._download_percentage = 0.0
+            self._download_bytes = 0
+            self._total_bytes = 0
+            self._last_error = None
+            self._fetch_error = None
+
+            logger.info(f"Deleted {deleted_count} Camoufox browser binary installation(s).")
+            return {"status": "success", "message": "Browser binary deleted successfully.", "deleted_count": deleted_count}
+        except Exception as e:
+            logger.exception("Failed deleting Camoufox browser binary")
+            return {"status": "error", "message": str(e)}
+
     async def get_status(self) -> Dict[str, Any]:
         """Return runtime status for backend and frontend Settings UI."""
         is_healthy = await self.check_health()
