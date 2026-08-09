@@ -75,18 +75,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Cache Cargo registry index & source downloads separately (survives across tags)
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('client/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
-
       # Cache compiled Rust artifacts (shared-key ensures reuse across tag pushes)
       - name: Rust cache
         uses: swatinem/rust-cache@v2
