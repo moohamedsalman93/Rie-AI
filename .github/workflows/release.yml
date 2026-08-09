@@ -42,12 +42,14 @@ jobs:
         run: |
           poetry install --no-root
 
-      # 3. Cache PyInstaller
+      # 3. Cache PyInstaller (bootloader + build analysis cache)
       - name: Cache PyInstaller
         uses: actions/cache@v4
         with:
-          path: ~\AppData\Local\pyinstaller
-          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('server/rie-backend.spec') }}
+          path: |
+            ${{ env.LOCALAPPDATA }}/pyinstaller
+            server/build
+          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('server/rie-backend.spec', 'server/poetry.lock') }}
           restore-keys: |
             ${{ runner.os }}-pyinstaller-
 
@@ -60,7 +62,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: client/package-lock.json
 
@@ -73,10 +75,26 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Cache Cargo registry index & source downloads separately (survives across tags)
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('client/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      # Cache compiled Rust artifacts (shared-key ensures reuse across tag pushes)
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: 'client/src-tauri'
+          workspaces: 'client/src-tauri -> target'
+          shared-key: 'tauri-release'
+          cache-all-crates: true
+          cache-on-failure: true
 
       # 7. Build Tauri App and Auto-Publish Release Assets
       - name: Build and Publish Tauri Application
@@ -92,7 +110,7 @@ jobs:
             ## Rie-AI ${{ github.ref_name }}
             
             ### Installation
-            Download and run the MSI/EXE installer for Windows.
+            Download and run the NSIS installer (.exe) for Windows.
             
             ### Features
             - AI Chat Interface
