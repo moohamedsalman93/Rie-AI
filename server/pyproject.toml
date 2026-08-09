@@ -40,6 +40,8 @@ langchain-ollama = "^1.0.1"
 chromadb = "^0.5.23"
 apscheduler = "^3.11.0"
 onnxruntime = "^1.22.1"
+camoufox = {version = "^0.5", extras = ["geoip"]}
+playwright = "^1.52"
 
 
 [tool.poetry.group.dev.dependencies]
