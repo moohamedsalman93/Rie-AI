@@ -2,8 +2,16 @@ name: Build and Release Tauri App
 
 on:
   push:
+    branches:
+      - main
     tags:
-      - 'v*' # Triggers workflow when you push a version tag like v0.3.5
+      - 'v*' # Triggers full release workflow when you push a version tag like v0.3.5
+    paths:
+      # Only relevant for the `main` branch trigger — warms the Rust cache
+      # when Rust-affecting files change. Tag pushes always run regardless
+      # of paths-filter (GitHub ignores `paths` for tag-ref events).
+      - 'client/src-tauri/**'
+      - 'client/src-tauri/Cargo.lock'
 
 permissions:
   contents: write
@@ -75,17 +83,24 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Cache compiled Rust artifacts (shared-key ensures reuse across tag pushes)
+      # Cache compiled Rust artifacts. shared-key keeps the key stable across
+      # both tag releases and cache-warm runs on main, so tag builds can
+      # restore what main already compiled.
+      # add-job-id-key MUST be false — the default (true) makes every job's
+      # cache key unique, which defeats cross-run/cross-job cache reuse.
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: 'client/src-tauri -> target'
           shared-key: 'tauri-release'
+          add-job-id-key: false
           cache-all-crates: true
           cache-on-failure: true
 
       # 7. Build Tauri App and Auto-Publish Release Assets
+      #    Only runs on tag pushes — this is the actual release step.
       - name: Build and Publish Tauri Application
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,13 +111,22 @@ jobs:
           releaseName: 'v__VERSION__ - Release'
           releaseBody: |
             ## Rie-AI ${{ github.ref_name }}
-            
+
             ### Installation
             Download and run the NSIS installer (.exe) for Windows.
-            
+
             ### Features
             - AI Chat Interface
             - Over-The-Air (OTA) updates enabled
           releaseDraft: false
           prerelease: false
           projectPath: './client'
+
+      # 7b. On main pushes (cache-warm only): compile Rust in release mode
+      #     without bundling. This populates target/ under the shared cache
+      #     key on refs/heads/main, so the next tag release restores a warm
+      #     cache instead of building cold.
+      - name: Warm Rust build cache (main only)
+        if: github.ref == 'refs/heads/main'
+        working-directory: ./client/src-tauri
+        run: cargo build --release
