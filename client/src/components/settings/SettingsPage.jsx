@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory, exportBackup, importBackup } from '../../services/chatApi';
+import { checkForAppUpdate, downloadAppUpdate, installDownloadedUpdate } from '../../services/updater';
 import { setShareLocationEnabled, prefetchClientLocation } from '../../utils/locationUtils';
 import { SettingInput } from './SettingInput';
 import { McpServersManager } from './McpServersManager';
@@ -59,6 +60,7 @@ import {
   Wifi,
   ChevronDown,
   ChevronUp,
+  Download,
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen, emit } from '@tauri-apps/api/event';
@@ -317,6 +319,12 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   // Model cards expansion state
   const [expandedProviders, setExpandedProviders] = useState({});
 
+  // Update check state
+  const [updateCheckStatus, setUpdateCheckStatus] = useState('idle'); // idle, checking, up-to-date, available, downloading, downloaded, error
+  const [updateInfo, setUpdateInfo] = useState(null); // the update object
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
+  const [updateError, setUpdateError] = useState(null);
+
   const isProviderConfigured = (key) => {
     switch (key) {
       case 'gemini': return !!settings.google_api_key;
@@ -378,6 +386,28 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     return () => {
       if (unlistenToggled) unlistenToggled();
     };
+  }, []);
+
+  // Listen for update-status-changed events from main window
+  useEffect(() => {
+    let unlisten;
+    const setup = async () => {
+      try {
+        unlisten = await listen('update-status-changed', (event) => {
+          const { status, version } = event.payload || {};
+          if (status === 'available') {
+            setUpdateCheckStatus('available');
+            setUpdateInfo({ version });
+          } else if (status === 'downloaded') {
+            setUpdateCheckStatus('downloaded');
+          }
+        });
+      } catch (e) {
+        console.warn('Failed to listen for update-status-changed:', e);
+      }
+    };
+    setup();
+    return () => { if (unlisten) unlisten(); };
   }, []);
 
   // Listen for deep links to update UI immediately
@@ -2633,6 +2663,111 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         v{appVersion}
                         <BetaLabel />
                       </span>
+                    </div>
+
+                    {/* Check for Updates */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Download className="text-neutral-400" size={18} />
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Software Updates</h4>
+                          <p className="text-[10px] text-neutral-500">
+                            {updateCheckStatus === 'up-to-date' && 'You\'re on the latest version.'}
+                            {updateCheckStatus === 'available' && `v${updateInfo?.version} is available to download.`}
+                            {updateCheckStatus === 'downloading' && `Downloading v${updateInfo?.version}... ${updateDownloadProgress}%`}
+                            {updateCheckStatus === 'downloaded' && `v${updateInfo?.version} downloaded. Restart to apply.`}
+                            {updateCheckStatus === 'error' && <span className="text-red-400">{updateError || 'Check failed'}</span>}
+                            {(updateCheckStatus === 'idle' || updateCheckStatus === 'checking') && 'Check for new versions of Rie-AI.'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {/* Downloading progress bar */}
+                        {updateCheckStatus === 'downloading' && (
+                          <div className="w-20 h-1.5 bg-neutral-800 rounded-full overflow-hidden border border-neutral-700/50">
+                            <div
+                              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                              style={{ width: `${updateDownloadProgress}%` }}
+                            />
+                          </div>
+                        )}
+
+                        {/* idle / checking */}
+                        {(updateCheckStatus === 'idle' || updateCheckStatus === 'checking' || updateCheckStatus === 'up-to-date' || updateCheckStatus === 'error') && (
+                          <button
+                            disabled={updateCheckStatus === 'checking'}
+                            onClick={async () => {
+                              setUpdateCheckStatus('checking');
+                              setUpdateError(null);
+                              try {
+                                const update = await checkForAppUpdate();
+                                if (update) {
+                                  setUpdateInfo(update);
+                                  setUpdateCheckStatus('available');
+                                } else {
+                                  setUpdateCheckStatus('up-to-date');
+                                  setTimeout(() => {
+                                    setUpdateCheckStatus('idle');
+                                  }, 5000);
+                                }
+                              } catch (err) {
+                                setUpdateError(err.message || 'Failed to check');
+                                setUpdateCheckStatus('error');
+                              }
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 hover:border-neutral-600 rounded-lg text-sm font-medium text-neutral-300 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <RefreshCw size={14} className={updateCheckStatus === 'checking' ? 'animate-spin' : ''} />
+                            {updateCheckStatus === 'checking' ? 'Checking...' : 'Check for Updates'}
+                          </button>
+                        )}
+
+                        {/* Available → Download button */}
+                        {updateCheckStatus === 'available' && updateInfo && (
+                          <button
+                            onClick={async () => {
+                              setUpdateCheckStatus('downloading');
+                              setUpdateDownloadProgress(0);
+                              try {
+                                await downloadAppUpdate(updateInfo, (downloaded, total) => {
+                                  const pct = total ? Math.round((downloaded / total) * 100) : 0;
+                                  setUpdateDownloadProgress(pct);
+                                });
+                                setUpdateCheckStatus('downloaded');
+                                // Emit event for main window
+                                try {
+                                  await emit('update-status-changed', { status: 'downloaded', version: updateInfo.version });
+                                } catch (e) { /* ignore */ }
+                              } catch (err) {
+                                setUpdateError(err.message || 'Download failed');
+                                setUpdateCheckStatus('error');
+                              }
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 hover:border-emerald-500/30 rounded-lg text-sm font-semibold text-emerald-400 transition-all"
+                          >
+                            <Download size={14} />
+                            Download v{updateInfo.version}
+                          </button>
+                        )}
+
+                        {/* Downloaded → Restart button */}
+                        {updateCheckStatus === 'downloaded' && updateInfo && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                await installDownloadedUpdate(updateInfo);
+                              } catch (err) {
+                                setUpdateError(err.message || 'Install failed');
+                                setUpdateCheckStatus('error');
+                              }
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg text-sm font-semibold text-emerald-400 transition-all animate-pulse"
+                          >
+                            <Rocket size={14} />
+                            Restart Now
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">

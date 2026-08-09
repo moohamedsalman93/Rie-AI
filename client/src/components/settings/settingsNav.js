@@ -100,7 +100,7 @@ export const SETTINGS_SEARCH_INDEX = [
   { terms: ['voice', 'tts', 'speech', 'edge tts', 'orpheus', 'voice reply'], tab: 'voice' },
   { terms: ['memory', 'embedding', 'ltm', 'bundled', 'nomic'], tab: 'memory' },
   { terms: ['privacy', 'security', 'hitl', 'terminal restrictions', 'location', 'share location', 'gps', 'kiosk', 'kiosk overlay'], tab: 'privacy' },
-  { terms: ['auto-start', 'autostart', 'launch', 'about', 'docs', 'documentation'], tab: 'privacy' },
+  { terms: ['auto-start', 'autostart', 'launch', 'about', 'docs', 'documentation', 'update', 'check for updates', 'version', 'software update'], tab: 'privacy' },
   { terms: ['logs', 'debug', 'system logs'], tab: 'diagnostics', subTab: 'logs' },
   { terms: ['langsmith', 'tracing', 'observability', 'trace'], tab: 'diagnostics', subTab: 'tracing' },
   { terms: ['orchestration', 'planner', 'solo', 'team', 'agent mode'], tab: 'advanced', subTab: 'orchestration' },

@@ -17,7 +17,7 @@ import { SettingsPage } from "./components/SettingsPage";
 import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { LoadingScreen } from "./components/LoadingScreen";
-import { UpdateNotification } from "./components/UpdateNotification";
+import { UpdateBanner, UpdateInstallDialog } from "./components/UpdateNotification";
 import { checkForAppUpdate } from "./services/updater";
 import { NormalModeLayout } from "./components/NormalModeLayout";
 import { FloatingBubble } from "./components/FloatingBubble";
@@ -121,6 +121,9 @@ function MainApp() {
   const [kioskSelection, setKioskSelection] = useState(null);
   const [terminalLogs, setTerminalLogs] = useState([]);
   const [availableUpdate, setAvailableUpdate] = useState(null);
+  const [updateDownloaded, setUpdateDownloaded] = useState(false);
+  const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
+  const [showInstallDialog, setShowInstallDialog] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [windowMode, setWindowMode] = useState("floating");
   const [isAppInitializing, setIsAppInitializing] = useState(true);
@@ -1768,7 +1771,7 @@ function MainApp() {
     };
   }, []);
 
-  // Check for updates on mount
+  // Check for updates on mount — show OS notification + banner (not popup)
 
   useEffect(() => {
     const triggerUpdateCheck = async () => {
@@ -1777,6 +1780,30 @@ function MainApp() {
         const update = await checkForAppUpdate();
         if (update) {
           setAvailableUpdate(update);
+          setUpdateDownloaded(false);
+          setUpdateBannerDismissed(false);
+          setShowInstallDialog(false);
+
+          // Send OS notification so user is aware even if app is in background
+          try {
+            const granted = await isPermissionGranted();
+            if (granted) {
+              sendNotification({
+                title: "Rie-AI Update Available",
+                body: `Version ${update.version} is ready to download.`,
+              });
+            }
+          } catch (e) {
+            console.warn("Failed to send update notification:", e);
+          }
+
+          // Emit event so Settings window can pick it up
+          try {
+            const { emit } = await import("@tauri-apps/api/event");
+            await emit("update-status-changed", { status: "available", version: update.version });
+          } catch (e) {
+            console.warn("Failed to emit update status:", e);
+          }
         }
       }, 3000);
     };
@@ -2534,11 +2561,49 @@ function MainApp() {
 
   return (
     <>
+      {/* Update Banner — non-blocking top banner */}
       <AnimatePresence>
-        {availableUpdate && isOpen && (
-          <UpdateNotification
+        {availableUpdate && !updateBannerDismissed && !showInstallDialog && (
+          <UpdateBanner
             update={availableUpdate}
-            onClose={() => setAvailableUpdate(null)}
+            onDownloadComplete={async () => {
+              setUpdateDownloaded(true);
+              setShowInstallDialog(true);
+              // Emit so settings can react
+              try {
+                const { emit } = await import("@tauri-apps/api/event");
+                await emit("update-status-changed", { status: "downloaded", version: availableUpdate.version });
+              } catch (e) {
+                console.warn("Failed to emit update download status:", e);
+              }
+              // OS notification that download is done
+              try {
+                const granted = await isPermissionGranted();
+                if (granted) {
+                  sendNotification({
+                    title: "Rie-AI Update Downloaded",
+                    body: `Version ${availableUpdate.version} is ready to install.`,
+                  });
+                }
+              } catch (e) {
+                console.warn("Failed to send download complete notification:", e);
+              }
+            }}
+            onDismiss={() => setUpdateBannerDismissed(true)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Update Install Dialog — popup only after download completes */}
+      <AnimatePresence>
+        {showInstallDialog && availableUpdate && updateDownloaded && (
+          <UpdateInstallDialog
+            update={availableUpdate}
+            onRestart={() => {}}
+            onLater={() => {
+              setShowInstallDialog(false);
+              // Banner stays visible (or shows "Ready to install" in settings)
+            }}
           />
         )}
       </AnimatePresence>
