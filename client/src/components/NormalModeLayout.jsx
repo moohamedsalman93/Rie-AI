@@ -864,11 +864,11 @@ export function NormalModeLayout({
                                     className="flex flex-col items-center text-center mb-6 space-y-2 select-none"
                                 >
                                     <h1 className={`font-bold text-white font-sans tracking-tight ${isCompactChat ? 'text-xl' : 'text-3xl'}`}>
-                                        What should we build?
+                                        How can I help you today?
                                     </h1>
 
                                     <p className="text-sm text-neutral-400 max-w-md">
-                                        Select a scenario below or ask Rie-AI to build, analyze, or fix code.
+                                        Select a quick action below or ask Rie-AI to schedule, search, write, or build.
                                     </p>
                                 </motion.div>
 
@@ -882,68 +882,68 @@ export function NormalModeLayout({
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setInput("Explore and understand code");
+                                            setInput("Search the web or research a topic");
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
                                             } shadow-lg hover:shadow-teal-500/5 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-8 h-8 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <Compass size={18} />
+                                            <Search size={18} />
                                         </div>
                                         <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                            Explore and understand code
+                                            Search the web & research topics
                                         </span>
                                     </button>
 
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setInput("Build a new feature, app, or tool");
+                                            setInput("Schedule a task or set a reminder");
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
                                             } shadow-lg hover:shadow-purple-500/5 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-8 h-8 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <Hammer size={18} />
+                                            <CalendarDays size={18} />
                                         </div>
                                         <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                            Build a new feature, app, or tool
+                                            Schedule tasks & set reminders
                                         </span>
                                     </button>
 
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setInput("Review code and suggest changes");
+                                            setInput("Draft an article, email, or summary");
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
                                             } shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-8 h-8 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <RotateCw size={18} />
+                                            <PenLine size={18} />
                                         </div>
                                         <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                            Review code and suggest changes
+                                            Draft content, emails & summaries
                                         </span>
                                     </button>
 
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setInput("Fix issues and failures");
+                                            setInput("Build a feature, tool, or script");
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
                                             } shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-8 h-8 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <FlaskConical size={18} />
+                                            <Hammer size={18} />
                                         </div>
                                         <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
-                                            Fix issues and failures
+                                            Build apps, tools & automate code
                                         </span>
                                     </button>
                                 </motion.div>

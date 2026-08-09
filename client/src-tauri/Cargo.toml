@@ -1,6 +1,6 @@
 [package]
 name = "rie-ai"
-version = "0.4.6"
+version = "0.4.7"
 description = "Rie-AI desktop assistant"
 authors = ["you"]
 edition = "2021"
@@ -60,4 +60,6 @@ uiautomation = { version = "0.25.0", features = ["all"] }
 opt-level = 3       # Optimizes for execution speed, compiles faster than size-optimized 's' or 'z'
 lto = "thin"        # 'thin' LTO compiles much faster than standard 'fat' LTO
 codegen-units = 16  # Runs code generation in parallel using all runner cores
-incremental = true  # Speeds up compiles by rebuilding only modified files when caching is enabled
+panic = "abort"     # Cuts unwinding overhead, reducing binary size & compile time
+incremental = false # Disabled for CI release builds to speed up link time and reduce disk I/O
+
