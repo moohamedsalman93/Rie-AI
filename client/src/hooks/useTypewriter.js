@@ -21,14 +21,9 @@ export function useTypewriter(text, isEnabled = true, speed = 30) {
 
     // Handle Enable/Disable and Initial State
     useEffect(() => {
-        console.log("useTypewriter effect trigger:", { isEnabled, textLength: text.length });
         if (!isEnabled) {
             setDisplayedText(text);
             displayedTextRef.current = text;
-        } else if (displayedTextRef.current === "" && text !== "") {
-            // Initial start if empty
-            // Don't necessarily reset if we are just toggling enabled, 
-            // but usually isEnabled is constant for a message.
         }
     }, [isEnabled, text]);
 
@@ -44,8 +39,6 @@ export function useTypewriter(text, isEnabled = true, speed = 30) {
             }
 
             // Handle case where text content changes completely (e.g. cleared or new response)
-            // Check if target still starts with current (streaming append)
-            // If not, it's a replacement/reset
             if (!target.startsWith(current)) {
                 setDisplayedText(target);
                 displayedTextRef.current = target;
@@ -54,19 +47,29 @@ export function useTypewriter(text, isEnabled = true, speed = 30) {
 
             const remaining = target.slice(current.length);
 
-            // Word-by-word logic: look for the next space
-            // This makes words appear in chunks, which is "word printing"
-            const nextSpace = remaining.indexOf(' ');
+            // Catch-up mechanism: If backlog is huge, snap or reveal larger chunks
+            // to prevent the UI from lagging behind fast LLM streams
+            if (remaining.length > 300) {
+                setDisplayedText(target);
+                displayedTextRef.current = target;
+                return;
+            }
 
             let chunk = "";
-            if (nextSpace !== -1) {
-                // Include the space
-                chunk = remaining.slice(0, nextSpace + 1);
+            if (remaining.length > 100) {
+                // Large backlog: reveal larger chunks up to 40 chars or next space
+                const slice = remaining.slice(0, 40);
+                const spaceIdx = slice.lastIndexOf(' ');
+                const endIdx = spaceIdx > 10 ? spaceIdx + 1 : 40;
+                chunk = remaining.slice(0, endIdx);
             } else {
-                // If no space found, it means we are at the end of the current buffer.
-                // We can either wait for a space (can cause lag) or just show it.
-                // Showing it immediately makes it feel responsive.
-                chunk = remaining;
+                // Normal backlog: Word-by-word logic (look for next space)
+                const nextSpace = remaining.indexOf(' ');
+                if (nextSpace !== -1) {
+                    chunk = remaining.slice(0, nextSpace + 1);
+                } else {
+                    chunk = remaining;
+                }
             }
 
             const nextText = current + chunk;
@@ -80,3 +83,4 @@ export function useTypewriter(text, isEnabled = true, speed = 30) {
 
     return isEnabled ? displayedText : text;
 }
+

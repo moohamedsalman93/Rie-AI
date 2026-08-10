@@ -107,6 +107,31 @@ class BrowserRuntimeManager:
     def _in_process_fetch_sync(self):
         """Perform browser binary download in-process with real-time percentage progress callback."""
         import os
+        import sys
+        import subprocess
+
+        # Ensure camoufox package is importable before attempting binary fetch
+        try:
+            import camoufox  # noqa: F401
+        except ImportError:
+            logger.info("Camoufox Python package not found. Attempting auto-installation via pip...")
+            self._download_stage = "installing_package"
+            try:
+                res = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "camoufox[geoip]"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                logger.info(f"Successfully installed camoufox package via pip: {res.stdout}")
+            except Exception as pip_err:
+                err_msg = (
+                    f"Camoufox Python package is not installed and auto-installation failed: {pip_err}. "
+                    "Please install manually using: pip install camoufox[geoip]"
+                )
+                logger.error(err_msg)
+                raise RuntimeError(err_msg) from pip_err
+
         import camoufox.pkgman as p
         from camoufox.pkgman import CamoufoxFetcher, webdl
         from camoufox.multiversion import install_versioned
