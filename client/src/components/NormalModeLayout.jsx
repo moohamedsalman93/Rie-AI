@@ -844,9 +844,6 @@ export function NormalModeLayout({
                                             </motion.div>
                                         );
                                     })}
-                                    <div className='h-28 w-2'>
-
-                                    </div>
                                 </AnimatePresence>
                                 {shouldShowThinkingShimmer && (
                                     <motion.div
@@ -870,8 +867,12 @@ export function NormalModeLayout({
                                         onDecision={onActionDecision}
                                     />
                                 )}
-                                <div ref={messagesEndRef} />
+
+                                <div className='h-28 w-2'>
+
+                                </div>
                             </div>
+                            <div ref={messagesEndRef} />
                         </main>
                     ) : (
                         <main className={`flex-1 min-h-0 flex flex-col items-center justify-center p-6 overflow-y-auto custom-scrollbar pb-28 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-12" : "px-12")}`}>

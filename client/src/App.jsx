@@ -2235,7 +2235,7 @@ function MainApp() {
       if (streamingThreads.size > 0) {
         // Direct non-blocking scroll during active streaming
         if (messagesEndRef.current) {
-          const scrollContainer = messagesEndRef.current.parentElement;
+          const scrollContainer = messagesEndRef.current.closest('.overflow-y-auto') || messagesEndRef.current.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTop = scrollContainer.scrollHeight;
           }
@@ -2244,7 +2244,7 @@ function MainApp() {
       }
       const timer = setTimeout(() => {
         if (messagesEndRef.current) {
-          const scrollContainer = messagesEndRef.current.parentElement;
+          const scrollContainer = messagesEndRef.current.closest('.overflow-y-auto') || messagesEndRef.current.parentElement;
           if (scrollContainer) {
             scrollContainer.scrollTo({
               top: scrollContainer.scrollHeight,
