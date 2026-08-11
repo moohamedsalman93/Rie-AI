@@ -874,18 +874,24 @@ export function NormalModeLayout({
                             </div>
                         </main>
                     ) : (
-                        <main className={`flex-1 min-h-0 flex flex-col items-center justify-center p-6 overflow-y-auto custom-scrollbar pb-28 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-4" : "px-12")}`}>
+                        <main className={`flex-1 min-h-0 flex flex-col items-center justify-center p-6 overflow-y-auto custom-scrollbar pb-28 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-12" : "px-12")}`}>
                             <div className="w-full max-w-3xl mx-auto flex flex-col justify-center py-4">
                                 <motion.div
                                     initial={{ opacity: 0, y: -10 }}
                                     animate={{ opacity: 1, y: 0 }}
-                                    className="flex flex-col items-center text-center mb-6 space-y-2 select-none"
+                                    className="flex flex-col items-center text-center mb-6 space-y-1.5 select-none"
                                 >
-                                    <h1 className={`font-bold text-white font-sans tracking-tight ${isCompactChat ? 'text-xl' : 'text-3xl'}`}>
+                                    <h1 className={`font-bold text-white font-sans tracking-tight ${
+                                        chatPanelWidthPx < 480
+                                            ? 'text-xl'
+                                            : chatPanelWidthPx < 640
+                                            ? 'text-2xl'
+                                            : 'text-3xl'
+                                    }`}>
                                         How can I help you today?
                                     </h1>
 
-                                    <p className="text-sm text-neutral-400 max-w-md">
+                                    <p className="text-xs sm:text-sm text-neutral-400/90 max-w-md">
                                         Select a quick action below or ask Rie-AI to schedule, search, write, or build.
                                     </p>
                                 </motion.div>
@@ -895,7 +901,13 @@ export function NormalModeLayout({
                                     initial={{ opacity: 0, y: 10 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: 0.05 }}
-                                    className={`grid gap-3 w-full mb-6 ${isCompactChat ? 'grid-cols-2' : 'grid-cols-4'}`}
+                                    className={`grid gap-2.5 w-full mb-6 ${
+                                        chatPanelWidthPx < 400
+                                            ? 'grid-cols-2'
+                                            : chatPanelWidthPx < 640
+                                            ? 'grid-cols-2'
+                                            : 'grid-cols-4'
+                                    }`}
                                 >
                                     <button
                                         type="button"
@@ -903,13 +915,16 @@ export function NormalModeLayout({
                                             setInput("Search the web or research a topic");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                            } shadow-lg hover:shadow-teal-500/5 hover:-translate-y-0.5`}
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-teal-500/30 transition-all duration-200 cursor-pointer text-left flex ${
+                                            chatPanelWidthPx < 400
+                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                        } shadow-md hover:shadow-teal-500/10 hover:-translate-y-0.5`}
                                     >
-                                        <div className="w-8 h-8 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <Search size={18} />
+                                        <div className="w-7 h-7 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <Search size={16} />
                                         </div>
-                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        <span className="text-[11.5px] sm:text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-snug font-sans">
                                             Search the web & research topics
                                         </span>
                                     </button>
@@ -920,13 +935,16 @@ export function NormalModeLayout({
                                             setInput("Schedule a task or set a reminder");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                            } shadow-lg hover:shadow-purple-500/5 hover:-translate-y-0.5`}
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-purple-500/30 transition-all duration-200 cursor-pointer text-left flex ${
+                                            chatPanelWidthPx < 400
+                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                        } shadow-md hover:shadow-purple-500/10 hover:-translate-y-0.5`}
                                     >
-                                        <div className="w-8 h-8 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <CalendarDays size={18} />
+                                        <div className="w-7 h-7 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <CalendarDays size={16} />
                                         </div>
-                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        <span className="text-[11.5px] sm:text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-snug font-sans">
                                             Schedule tasks & set reminders
                                         </span>
                                     </button>
@@ -937,13 +955,16 @@ export function NormalModeLayout({
                                             setInput("Draft an article, email, or summary");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                            } shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5`}
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-emerald-500/30 transition-all duration-200 cursor-pointer text-left flex ${
+                                            chatPanelWidthPx < 400
+                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                        } shadow-md hover:shadow-emerald-500/10 hover:-translate-y-0.5`}
                                     >
-                                        <div className="w-8 h-8 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <PenLine size={18} />
+                                        <div className="w-7 h-7 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <PenLine size={16} />
                                         </div>
-                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        <span className="text-[11.5px] sm:text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-snug font-sans">
                                             Draft content, emails & summaries
                                         </span>
                                     </button>
@@ -954,13 +975,16 @@ export function NormalModeLayout({
                                             setInput("Build a feature, tool, or script");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative p-3.5 rounded-2xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-neutral-700/80 transition-all duration-200 cursor-pointer text-left flex ${isCompactChat ? 'flex-row items-center gap-3 h-16' : 'flex-col justify-between h-28 p-4'
-                                            } shadow-lg hover:shadow-amber-500/5 hover:-translate-y-0.5`}
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/30 transition-all duration-200 cursor-pointer text-left flex ${
+                                            chatPanelWidthPx < 400
+                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                        } shadow-md hover:shadow-amber-500/10 hover:-translate-y-0.5`}
                                     >
-                                        <div className="w-8 h-8 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
-                                            <Hammer size={18} />
+                                        <div className="w-7 h-7 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                                            <Hammer size={16} />
                                         </div>
-                                        <span className="text-xs font-semibold text-neutral-200 group-hover:text-white transition-colors leading-snug font-sans">
+                                        <span className="text-[11.5px] sm:text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-snug font-sans">
                                             Build apps, tools & automate code
                                         </span>
                                     </button>
