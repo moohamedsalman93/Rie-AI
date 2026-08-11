@@ -27,6 +27,15 @@ export function ChatHeader({
   onScheduleMarkRead = () => { },
   onScheduleMarkAllRead = () => { },
   onScheduleOpenChat = () => { },
+  availableUpdate = null,
+  updateDownloaded = false,
+  updateDownloading = false,
+  updateDownloadProgress = 0,
+  updateBannerDismissed = false,
+  updateNotificationDismissed = false,
+  onDownloadUpdate,
+  onInstallUpdate,
+  onDismissUpdateNotification,
   /** Floating mode: opens full schedule sheet from ⋮ menu */
   onOpenSchedule = null,
   onToggleFriends = null,
@@ -57,6 +66,15 @@ export function ChatHeader({
           onOpenChat={onScheduleOpenChat}
           apiStatus={apiStatus}
           windowMode={windowMode}
+          availableUpdate={availableUpdate}
+          updateDownloaded={updateDownloaded}
+          updateDownloading={updateDownloading}
+          updateDownloadProgress={updateDownloadProgress}
+          updateBannerDismissed={updateBannerDismissed}
+          updateNotificationDismissed={updateNotificationDismissed}
+          onDownloadUpdate={onDownloadUpdate}
+          onInstallUpdate={onInstallUpdate}
+          onDismissUpdateNotification={onDismissUpdateNotification}
         />
         <div className="relative">
           <button

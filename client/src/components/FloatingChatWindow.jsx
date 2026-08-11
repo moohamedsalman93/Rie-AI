@@ -79,6 +79,15 @@ export function FloatingChatWindow({
   onScheduleMarkRead = () => {},
   onScheduleMarkAllRead = () => {},
   onScheduleOpenChat = () => {},
+  availableUpdate = null,
+  updateDownloaded = false,
+  updateDownloading = false,
+  updateDownloadProgress = 0,
+  updateBannerDismissed = false,
+  updateNotificationDismissed = false,
+  onDownloadUpdate,
+  onInstallUpdate,
+  onDismissUpdateNotification,
   isScheduleSheetOpen = false,
   onCloseScheduleSheet = () => {},
   onOpenScheduleSheet = () => {},
@@ -145,6 +154,15 @@ export function FloatingChatWindow({
         onScheduleMarkRead={onScheduleMarkRead}
         onScheduleMarkAllRead={onScheduleMarkAllRead}
         onScheduleOpenChat={onScheduleOpenChat}
+        availableUpdate={availableUpdate}
+        updateDownloaded={updateDownloaded}
+        updateDownloading={updateDownloading}
+        updateDownloadProgress={updateDownloadProgress}
+        updateBannerDismissed={updateBannerDismissed}
+        updateNotificationDismissed={updateNotificationDismissed}
+        onDownloadUpdate={onDownloadUpdate}
+        onInstallUpdate={onInstallUpdate}
+        onDismissUpdateNotification={onDismissUpdateNotification}
         onOpenSchedule={onOpenScheduleSheet}
         onToggleFriends={onToggleFriendsQuick}
         kioskOverlay={kioskOverlay}

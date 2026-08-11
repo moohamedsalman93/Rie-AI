@@ -18,7 +18,7 @@ import { PlannerWindowStandalone } from "./components/PlannerWindowPage";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { UpdateBanner, UpdateInstallDialog } from "./components/UpdateNotification";
-import { checkForAppUpdate } from "./services/updater";
+import { checkForAppUpdate, downloadAppUpdate, installDownloadedUpdate } from "./services/updater";
 import { NormalModeLayout } from "./components/NormalModeLayout";
 import { FloatingBubble } from "./components/FloatingBubble";
 import { FloatingChatWindow } from "./components/FloatingChatWindow";
@@ -122,7 +122,10 @@ function MainApp() {
   const [terminalLogs, setTerminalLogs] = useState([]);
   const [availableUpdate, setAvailableUpdate] = useState(null);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
+  const [updateDownloading, setUpdateDownloading] = useState(false);
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState(0);
   const [updateBannerDismissed, setUpdateBannerDismissed] = useState(false);
+  const [updateNotificationDismissed, setUpdateNotificationDismissed] = useState(false);
   const [showInstallDialog, setShowInstallDialog] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [windowMode, setWindowMode] = useState("floating");
@@ -1482,6 +1485,51 @@ function MainApp() {
     },
     [handleSelectThread]
   );
+
+  const handleDownloadUpdate = useCallback(async () => {
+    if (!availableUpdate) return;
+    try {
+      setUpdateDownloading(true);
+      setUpdateDownloadProgress(0);
+      await downloadAppUpdate(availableUpdate, (downloaded, total) => {
+        const percent = total ? Math.round((downloaded / total) * 100) : 0;
+        setUpdateDownloadProgress(percent);
+      });
+      setUpdateDownloading(false);
+      setUpdateDownloaded(true);
+      setShowInstallDialog(true);
+
+      try {
+        const { emit } = await import("@tauri-apps/api/event");
+        await emit("update-status-changed", { status: "downloaded", version: availableUpdate.version });
+      } catch (e) {
+        console.warn("Failed to emit update download status:", e);
+      }
+      try {
+        const granted = await isPermissionGranted();
+        if (granted) {
+          sendNotification({
+            title: "Rie-AI Update Downloaded",
+            body: `Version ${availableUpdate.version} is ready to install.`,
+          });
+        }
+      } catch (e) {
+        console.warn("Failed to send download complete notification:", e);
+      }
+    } catch (err) {
+      console.error("Update download failed:", err);
+      setUpdateDownloading(false);
+    }
+  }, [availableUpdate]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    if (!availableUpdate) return;
+    try {
+      await installDownloadedUpdate(availableUpdate);
+    } catch (err) {
+      console.error("Install failed:", err);
+    }
+  }, [availableUpdate]);
   //#endregion
 
   //#region useEffects
@@ -2589,7 +2637,10 @@ function MainApp() {
                 console.warn("Failed to send download complete notification:", e);
               }
             }}
-            onDismiss={() => setUpdateBannerDismissed(true)}
+            onDismiss={() => {
+              setUpdateBannerDismissed(true);
+              setUpdateNotificationDismissed(false);
+            }}
           />
         )}
       </AnimatePresence>
@@ -2599,10 +2650,11 @@ function MainApp() {
         {showInstallDialog && availableUpdate && updateDownloaded && (
           <UpdateInstallDialog
             update={availableUpdate}
-            onRestart={() => {}}
+            onRestart={handleInstallUpdate}
             onLater={() => {
               setShowInstallDialog(false);
-              // Banner stays visible (or shows "Ready to install" in settings)
+              setUpdateBannerDismissed(true);
+              setUpdateNotificationDismissed(false);
             }}
           />
         )}
@@ -2725,6 +2777,15 @@ function MainApp() {
                     onScheduleMarkRead={handleScheduleMarkRead}
                     onScheduleMarkAllRead={handleScheduleMarkAllRead}
                     onScheduleOpenChat={handleScheduleOpenChat}
+                    availableUpdate={availableUpdate}
+                    updateDownloaded={updateDownloaded}
+                    updateDownloading={updateDownloading}
+                    updateDownloadProgress={updateDownloadProgress}
+                    updateBannerDismissed={updateBannerDismissed}
+                    updateNotificationDismissed={updateNotificationDismissed}
+                    onDownloadUpdate={handleDownloadUpdate}
+                    onInstallUpdate={handleInstallUpdate}
+                    onDismissUpdateNotification={() => setUpdateNotificationDismissed(true)}
                     friends={friends}
                     friendThreadMeta={friendThreadMeta}
                     activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
@@ -2825,6 +2886,15 @@ function MainApp() {
               onScheduleMarkRead={handleScheduleMarkRead}
               onScheduleMarkAllRead={handleScheduleMarkAllRead}
               onScheduleOpenChat={handleScheduleOpenChat}
+              availableUpdate={availableUpdate}
+              updateDownloaded={updateDownloaded}
+              updateDownloading={updateDownloading}
+              updateDownloadProgress={updateDownloadProgress}
+              updateBannerDismissed={updateBannerDismissed}
+              updateNotificationDismissed={updateNotificationDismissed}
+              onDownloadUpdate={handleDownloadUpdate}
+              onInstallUpdate={handleInstallUpdate}
+              onDismissUpdateNotification={() => setUpdateNotificationDismissed(true)}
               isScheduleSheetOpen={isFloatingScheduleOpen}
               onCloseScheduleSheet={() => setIsFloatingScheduleOpen(false)}
               onOpenScheduleSheet={() => setIsFloatingScheduleOpen(true)}

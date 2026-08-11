@@ -102,6 +102,15 @@ export function NormalModeLayout({
     onScheduleMarkRead = () => { },
     onScheduleMarkAllRead = () => { },
     onScheduleOpenChat = () => { },
+    availableUpdate = null,
+    updateDownloaded = false,
+    updateDownloading = false,
+    updateDownloadProgress = 0,
+    updateBannerDismissed = false,
+    updateNotificationDismissed = false,
+    onDownloadUpdate,
+    onInstallUpdate,
+    onDismissUpdateNotification,
     friends = [],
     friendThreadMeta = {},
     activeFriendMeta = null,
@@ -524,6 +533,15 @@ export function NormalModeLayout({
                         onMarkAllRead={onScheduleMarkAllRead}
                         onOpenChat={onScheduleOpenChat}
                         apiStatus={apiStatus}
+                        availableUpdate={availableUpdate}
+                        updateDownloaded={updateDownloaded}
+                        updateDownloading={updateDownloading}
+                        updateDownloadProgress={updateDownloadProgress}
+                        updateBannerDismissed={updateBannerDismissed}
+                        updateNotificationDismissed={updateNotificationDismissed}
+                        onDownloadUpdate={onDownloadUpdate}
+                        onInstallUpdate={onInstallUpdate}
+                        onDismissUpdateNotification={onDismissUpdateNotification}
                     />
 
 
