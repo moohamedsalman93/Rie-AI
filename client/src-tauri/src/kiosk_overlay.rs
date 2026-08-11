@@ -439,36 +439,73 @@ fn handle_raw_key(vk: u32, key_down: bool, scan_code: u32) {
     } else {
         // Key up → remove from pressed set
         update_pressed_set(vk, false);
-        // Handle PTT key-up (Shift+Alt+S release) before returning
-        if vk == 0x53 && ALT_DOWN.load(Ordering::Relaxed) && SHIFT_DOWN.load(Ordering::Relaxed) {
+        // Handle key-up for PTT (0x53) and Privacy (0x51 - 'Q')
+        if vk == 0x53 || vk == 0x51 {
             use tauri::Emitter;
             if let Some(app) = APP_HANDLE.get() {
-                let _ = app.emit("rie-shortcut-ptt", "Released");
+                let event_name = if vk == 0x53 { "rie-shortcut-ptt" } else { "rie-shortcut-privacy" };
+                let _ = app.emit(event_name, "Released");
             }
         }
         return; // Nothing else to do on key-up for non-modifier keys
     }
 
-    // Detect hotkeys (Shift+Alt+A, Shift+Alt+S, Shift+Alt+C)
+    // Detect hotkeys (Shift+Alt+A, Shift+Alt+S, Shift+Alt+C, Shift+Alt+Q)
     let alt = ALT_DOWN.load(Ordering::Relaxed);
     let shift = SHIFT_DOWN.load(Ordering::Relaxed);
 
     if alt && shift {
-        if vk == 0x41 { // 'A'
+        if vk == 0x41 { // 'A' - Toggle Bubble/Chat
             if let Some(app) = APP_HANDLE.get() {
                 let _ = app.emit("rie-shortcut-toggle", ());
             }
             return;
         }
-        if vk == 0x53 { // 'S'
+        if vk == 0x53 { // 'S' - Push To Talk
             if let Some(app) = APP_HANDLE.get() {
                 let _ = app.emit("rie-shortcut-ptt", "Pressed");
             }
             return;
         }
-        if vk == 0x43 { // 'C'
+        if vk == 0x43 { // 'C' - Cancel
             if let Some(app) = APP_HANDLE.get() {
                 let _ = app.emit("rie-shortcut-cancel", ());
+            }
+            return;
+        }
+        if vk == 0x51 { // 'Q' - Screen Privacy Toggle (Press to enable, hold to disable)
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-privacy", "Pressed");
+            }
+            return;
+        }
+        if vk == 0x4E { // 'N' - New Chat
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-new-chat", ());
+            }
+            return;
+        }
+        if vk == 0x56 { // 'V' - Capture Screen
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-capture-screen", ());
+            }
+            return;
+        }
+        if vk == 0x4D { // 'M' - Toggle Mic / Mute
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-toggle-mute", ());
+            }
+            return;
+        }
+        if vk == 0x4B { // 'K' - Toggle Kiosk Mode
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-toggle-kiosk", ());
+            }
+            return;
+        }
+        if vk == 0x46 { // 'F' - Focus Chat Input
+            if let Some(app) = APP_HANDLE.get() {
+                let _ = app.emit("rie-shortcut-focus-input", ());
             }
             return;
         }

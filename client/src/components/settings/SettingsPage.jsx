@@ -61,6 +61,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  Keyboard,
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen, emit } from '@tauri-apps/api/event';
@@ -2547,6 +2548,56 @@ Separate keywords by commas. Commands containing these words will be blocked."
                               }`}
                           />
                         </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="premium-card rounded-xl p-5 space-y-4">
+                    <div className={SL.cardHeader}>
+                      <div className={SL.cardHeaderIcon}>
+                        <Keyboard size={16} />
+                      </div>
+                      <h3 className={SL.sectionTitle}>Global Keyboard Shortcuts</h3>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Use these hotkeys to quickly control Rie-AI from anywhere on your system:
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Toggle Bubble &amp; Chat</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+A</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Push to Talk (Hold)</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+S</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Cancel AI Response</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+C</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Start New Chat</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+N</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Screen Capture / Vision</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+V</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Toggle Mic / Mute</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+M</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Toggle Kiosk Overlay</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+K</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Focus Chat Input</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+F</kbd>
+                      </div>
+                      <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
+                        <span className="text-neutral-300 font-medium">Screen Privacy (Press On / Hold Off)</span>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+Q</kbd>
                       </div>
                     </div>
                   </div>

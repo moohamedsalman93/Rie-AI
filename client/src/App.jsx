@@ -23,6 +23,7 @@ import { NormalModeLayout } from "./components/NormalModeLayout";
 import { FloatingBubble } from "./components/FloatingBubble";
 import { FloatingChatWindow } from "./components/FloatingChatWindow";
 import { HITLApproval } from "./components/HITLApproval";
+import { ScreenPrivacyToast } from "./components/ScreenPrivacyToast";
 import {
   WINDOW_SIZES,
   getToolDisplayName,
@@ -144,6 +145,11 @@ function MainApp() {
   const [isFloatingFriendsOpen, setIsFloatingFriendsOpen] = useState(false);
   const [friends, setFriends] = useState([]);
   const [friendThreadMeta, setFriendThreadMeta] = useState({});
+  const [privacyToast, setPrivacyToast] = useState(null);
+  const privacyHoldTimerRef = useRef(null);
+  const isPrivacyHoldingRef = useRef(false);
+  const justDisabledTimeRef = useRef(0);
+  const justEnabledTimeRef = useRef(0);
   const scheduleNotifInitializedRef = useRef(false);
   const scheduleNotifSeenIdsRef = useRef(new Set());
   const prevThreadScheduleNotifIdsRef = useRef(new Set());
@@ -1290,6 +1296,95 @@ function MainApp() {
       console.error("Resume error:", err);
     }
   }, [pendingActions, projectRoot, processStreamChunk, chatMode, speedMode]);
+
+  const showPrivacyToast = useCallback((type) => {
+    setPrivacyToast({
+      show: true,
+      type, // 'enabled' | 'disabled' | 'hold_hint'
+      id: Date.now(),
+    });
+  }, []);
+
+  const enableScreenPrivacy = useCallback(async () => {
+    justEnabledTimeRef.current = Date.now();
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_window_capture_excluded", { exclude: true });
+    } catch (e) {
+      console.error("Failed to set window capture excluded:", e);
+    }
+    setSettings((prev) => ({ ...prev, exclude_from_capture: true }));
+    updateSetting("EXCLUDE_FROM_CAPTURE", "true").catch(() => {});
+    showPrivacyToast("enabled");
+  }, [showPrivacyToast]);
+
+  const disableScreenPrivacy = useCallback(async () => {
+    justDisabledTimeRef.current = Date.now();
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_window_capture_excluded", { exclude: false });
+    } catch (e) {
+      console.error("Failed to disable window capture excluded:", e);
+    }
+    setSettings((prev) => ({ ...prev, exclude_from_capture: false }));
+    updateSetting("EXCLUDE_FROM_CAPTURE", "false").catch(() => {});
+    showPrivacyToast("disabled");
+  }, [showPrivacyToast]);
+
+  const handlePrivacyShortcutPress = useCallback(() => {
+    const now = Date.now();
+    // Cooldown protection: ignore press if privacy was just disabled within 800ms (prevents release/bounce re-enabling)
+    if (now - justDisabledTimeRef.current < 800) {
+      return;
+    }
+    if (now - justEnabledTimeRef.current < 400) {
+      return;
+    }
+
+    const isCurrentlyExcluded = settings.exclude_from_capture !== false;
+    
+    if (!isCurrentlyExcluded) {
+      // Screen privacy is OFF -> Pressing key is enough to ENABLE immediately!
+      enableScreenPrivacy();
+    } else {
+      // Screen privacy is ON -> Must HOLD key for 1s to DISABLE!
+      if (isPrivacyHoldingRef.current) return;
+      isPrivacyHoldingRef.current = true;
+
+      if (privacyHoldTimerRef.current) clearTimeout(privacyHoldTimerRef.current);
+      privacyHoldTimerRef.current = setTimeout(() => {
+        disableScreenPrivacy();
+        isPrivacyHoldingRef.current = false;
+        privacyHoldTimerRef.current = null;
+      }, 1000);
+    }
+  }, [settings.exclude_from_capture, enableScreenPrivacy, disableScreenPrivacy]);
+
+  const handlePrivacyShortcutRelease = useCallback(() => {
+    const now = Date.now();
+    // Ignore release event if privacy was just disabled within 800ms
+    if (now - justDisabledTimeRef.current < 800) {
+      if (privacyHoldTimerRef.current) {
+        clearTimeout(privacyHoldTimerRef.current);
+        privacyHoldTimerRef.current = null;
+      }
+      isPrivacyHoldingRef.current = false;
+      return;
+    }
+
+    const isCurrentlyExcluded = settings.exclude_from_capture !== false;
+    
+    if (isCurrentlyExcluded && isPrivacyHoldingRef.current) {
+      if (privacyHoldTimerRef.current) {
+        // Key released BEFORE 1s hold completed -> Cancel hold & show hint toast
+        clearTimeout(privacyHoldTimerRef.current);
+        privacyHoldTimerRef.current = null;
+        isPrivacyHoldingRef.current = false;
+        showPrivacyToast("hold_hint");
+      }
+    }
+  }, [settings.exclude_from_capture, showPrivacyToast]);
+
   const handleNewChat = useCallback(() => {
     const newThreadId = crypto.randomUUID();
     setSessions(prev => ({ ...prev, [newThreadId]: initialMessages }));
@@ -1959,6 +2054,7 @@ function MainApp() {
           try {
             const { invoke } = await import("@tauri-apps/api/core");
             await invoke("set_window_capture_excluded", { exclude: parsedValue });
+            showPrivacyToast(parsedValue ? "enabled" : "disabled");
           } catch (e) {
             console.error("Failed to update capture affinity in main window:", e);
           }
@@ -2280,7 +2376,17 @@ function MainApp() {
     const isWindows = navigator.userAgent.includes("Windows");
     if (isWindows) return;
 
-    const shortcuts = ["Alt+Shift+S", "Alt+Shift+C", "Alt+Shift+A"];
+    const shortcuts = [
+      "Alt+Shift+S",
+      "Alt+Shift+C",
+      "Alt+Shift+A",
+      "Alt+Shift+N",
+      "Alt+Shift+V",
+      "Alt+Shift+M",
+      "Alt+Shift+K",
+      "Alt+Shift+F",
+      "Alt+Shift+Q",
+    ];
     let mounted = true;
 
     const setupGlobalShortcuts = async () => {
@@ -2324,6 +2430,59 @@ function MainApp() {
             }
           }
         });
+
+        // Register Global New Chat
+        await register("Alt+Shift+N", (event) => {
+          if (event.state === "Pressed") {
+            handleNewChat();
+            if (!isOpenRef.current) handleOpen();
+            setTimeout(() => textareaRef.current?.focus(), 150);
+          }
+        });
+
+        // Register Global Capture Screen
+        await register("Alt+Shift+V", (event) => {
+          if (event.state === "Pressed") {
+            if (!isOpenRef.current) handleOpen();
+            handleCaptureScreen();
+          }
+        });
+
+        // Register Global Toggle Mic / Mute
+        await register("Alt+Shift+M", (event) => {
+          if (event.state === "Pressed") {
+            if (isRecordingRef.current) stopRecording();
+            else startRecording();
+          }
+        });
+
+        // Register Global Toggle Kiosk
+        await register("Alt+Shift+K", (event) => {
+          if (event.state === "Pressed") {
+            import("@tauri-apps/api/core").then(({ invoke }) => {
+              invoke("get_kiosk_overlay_mode").then((cur) => {
+                invoke("set_kiosk_overlay_mode", { enabled: !cur });
+              });
+            });
+          }
+        });
+
+        // Register Global Focus Input
+        await register("Alt+Shift+F", (event) => {
+          if (event.state === "Pressed") {
+            if (!isOpenRef.current) handleOpen();
+            setTimeout(() => textareaRef.current?.focus(), 150);
+          }
+        });
+
+        // Register Global Privacy Toggle
+        await register("Alt+Shift+Q", (event) => {
+          if (event.state === "Pressed") {
+            handlePrivacyShortcutPress();
+          } else if (event.state === "Released") {
+            handlePrivacyShortcutRelease();
+          }
+        });
       } catch (err) {
         console.error("Failed to register global shortcuts:", err);
       }
@@ -2337,7 +2496,7 @@ function MainApp() {
         try { await unregister(s); } catch (e) { /* ignore */ }
       });
     };
-  }, [startRecording, stopRecording, handleCancelRequest]); // Removed state deps
+  }, [startRecording, stopRecording, handleCancelRequest, handleNewChat, handleCaptureScreen, handleOpen, handleMinimize]); // Removed state deps
 
 
   // Set loading window size during init (resize effect handles post-load)
@@ -2555,26 +2714,24 @@ function MainApp() {
     };
   }, [persistFriendMeta, loadThreadKnowledge]);
 
-  // Raw Input custom shortcut listeners on Windows (toggle, PTT, cancel)
+  // Raw Input custom shortcut listeners on Windows (toggle, PTT, cancel, new chat, capture, mute, kiosk, focus)
   useEffect(() => {
     if (!navigator.userAgent.includes("Windows")) return;
 
     let isCancelled = false;
-    let unlistenToggle;
-    let unlistenPtt;
-    let unlistenCancel;
+    const unlistens = [];
 
     const setup = async () => {
-      unlistenToggle = await listen("rie-shortcut-toggle", () => {
+      const u1 = await listen("rie-shortcut-toggle", () => {
         if (isOpenRef.current) {
           handleMinimize();
         } else {
           handleOpen();
         }
       });
-      if (isCancelled) { unlistenToggle(); return; }
+      unlistens.push(u1);
 
-      unlistenPtt = await listen("rie-shortcut-ptt", (event) => {
+      const u2 = await listen("rie-shortcut-ptt", (event) => {
         const state = event.payload;
         if (state === "Pressed") {
           if (!isGlobalPTTPressedRef.current) {
@@ -2586,25 +2743,125 @@ function MainApp() {
           stopRecording();
         }
       });
-      if (isCancelled) { unlistenPtt(); if (unlistenToggle) unlistenToggle(); return; }
+      unlistens.push(u2);
 
-      unlistenCancel = await listen("rie-shortcut-cancel", () => {
+      const u3 = await listen("rie-shortcut-cancel", () => {
         if (isLoadingRef.current && threadIdRef.current) {
           handleCancelRequest();
         }
       });
-      if (isCancelled) { unlistenCancel(); if (unlistenToggle) unlistenToggle(); if (unlistenPtt) unlistenPtt(); return; }
+      unlistens.push(u3);
+
+      const u4 = await listen("rie-shortcut-new-chat", () => {
+        handleNewChat();
+        if (!isOpenRef.current) handleOpen();
+        setTimeout(() => textareaRef.current?.focus(), 150);
+      });
+      unlistens.push(u4);
+
+      const u5 = await listen("rie-shortcut-capture-screen", () => {
+        if (!isOpenRef.current) handleOpen();
+        handleCaptureScreen();
+      });
+      unlistens.push(u5);
+
+      const u6 = await listen("rie-shortcut-toggle-mute", () => {
+        if (isRecordingRef.current) {
+          stopRecording();
+        } else {
+          startRecording();
+        }
+      });
+      unlistens.push(u6);
+
+      const u7 = await listen("rie-shortcut-toggle-kiosk", async () => {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          const mode = await invoke("get_kiosk_overlay_mode");
+          await invoke("set_kiosk_overlay_mode", { enabled: !mode });
+        } catch (e) {
+          console.error("Failed to toggle kiosk mode:", e);
+        }
+      });
+      unlistens.push(u7);
+
+      const u8 = await listen("rie-shortcut-focus-input", () => {
+        if (!isOpenRef.current) handleOpen();
+        setTimeout(() => textareaRef.current?.focus(), 150);
+      });
+      unlistens.push(u8);
+
+      const u9 = await listen("rie-shortcut-privacy", (event) => {
+        const state = event.payload;
+        if (state === "Pressed") {
+          handlePrivacyShortcutPress();
+        } else if (state === "Released") {
+          handlePrivacyShortcutRelease();
+        }
+      });
+      unlistens.push(u9);
+
+      if (isCancelled) {
+        unlistens.forEach((fn) => fn && fn());
+      }
     };
 
     setup();
 
     return () => {
       isCancelled = true;
-      if (unlistenToggle) unlistenToggle();
-      if (unlistenPtt) unlistenPtt();
-      if (unlistenCancel) unlistenCancel();
+      unlistens.forEach((fn) => fn && fn());
     };
-  }, [startRecording, stopRecording, handleCancelRequest]);
+  }, [startRecording, stopRecording, handleCancelRequest, handleNewChat, handleCaptureScreen, handleOpen, handleMinimize, handlePrivacyShortcutPress, handlePrivacyShortcutRelease]);
+
+  // In-app keydown & keyup shortcuts when focused (Ctrl+Shift+N, Escape, Ctrl+,, Ctrl+Shift+S, Alt+Shift+Q)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Alt + Shift + Q or Ctrl + Shift + Q -> Privacy Toggle
+      if ((e.altKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "q") {
+        e.preventDefault();
+        handlePrivacyShortcutPress();
+        return;
+      }
+      // Escape to minimize/close when floating/open
+      if (e.key === "Escape" && isOpenRef.current && !isSettingsOpen && !isHistoryOpen) {
+        handleMinimize();
+        return;
+      }
+      // Ctrl + Shift + N -> New Chat
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        handleNewChat();
+        setTimeout(() => textareaRef.current?.focus(), 100);
+        return;
+      }
+      // Ctrl + , -> Settings
+      if ((e.ctrlKey || e.metaKey) && e.key === ",") {
+        e.preventDefault();
+        handleOpenSettingsWindow();
+        return;
+      }
+      // Ctrl + Shift + S -> Screen Capture
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        handleCaptureScreen();
+        return;
+      }
+    };
+
+    const handleKeyUp = (e) => {
+      if (e.key.toLowerCase() === "q") {
+        handlePrivacyShortcutRelease();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [handleMinimize, handleNewChat, handleOpenSettingsWindow, handleCaptureScreen, handlePrivacyShortcutPress, handlePrivacyShortcutRelease, isSettingsOpen, isHistoryOpen]);
   //#endregion
 
   return (
@@ -2923,6 +3180,7 @@ function MainApp() {
         </AnimatePresence>
       </div >
 
+      <ScreenPrivacyToast toast={privacyToast} onDismiss={() => setPrivacyToast(null)} />
     </>
   );
 }

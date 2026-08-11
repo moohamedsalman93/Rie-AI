@@ -14,6 +14,12 @@ import {
     Minus,
     X,
     AlertTriangle,
+    PlusCircle,
+    Camera,
+    MicOff,
+    Monitor,
+    Command,
+    ShieldCheck,
 } from "lucide-react";
 import logo from "../assets/logo.png";
 import { BetaLabel } from "./BetaLabel";
@@ -89,10 +95,16 @@ export function WelcomeScreen({ onGetStarted, onMouseDown, onMinimize, onClose }
                         </p>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2 mt-2 max-w-sm mx-auto">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 max-w-lg mx-auto text-left">
                         <ShortcutCard keys="Alt + Shift + A" desc="Toggle Bubble and Chat" Icon={RefreshCw} />
-                        <ShortcutCard keys="Alt + Shift + S" desc="Push to Talk" Icon={Mic} />
+                        <ShortcutCard keys="Alt + Shift + S" desc="Push to Talk (Hold)" Icon={Mic} />
                         <ShortcutCard keys="Alt + Shift + C" desc="Stop current response" Icon={Square} />
+                        <ShortcutCard keys="Alt + Shift + N" desc="Start New Chat" Icon={PlusCircle} />
+                        <ShortcutCard keys="Alt + Shift + V" desc="Screen Capture / Vision" Icon={Camera} />
+                        <ShortcutCard keys="Alt + Shift + M" desc="Toggle Mic / Mute" Icon={MicOff} />
+                        <ShortcutCard keys="Alt + Shift + K" desc="Toggle Kiosk Overlay" Icon={Monitor} />
+                        <ShortcutCard keys="Alt + Shift + F" desc="Focus Chat Input" Icon={Command} />
+                        <ShortcutCard keys="Alt + Shift + Q" desc="Screen Privacy (Press On / Hold Off)" Icon={ShieldCheck} />
                     </div>
                 </div>
             ),
