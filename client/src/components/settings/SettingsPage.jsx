@@ -2505,30 +2505,49 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       <h3 className={SL.sectionTitle}>Appearance &amp; Customization</h3>
                     </div>
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0 flex-1">
                           <h4 className="text-sm font-medium text-neutral-200">Floating Chat Transparency</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-md">
+                          <p className="text-[10px] text-neutral-500 max-w-xs">
                             Adjust the transparency/opacity of the floating chat window.
                           </p>
                         </div>
-                        <div className="text-right">
-                          <span className="text-xs font-semibold text-neutral-300">
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="text-xs font-mono font-bold text-emerald-400 w-9 text-right">
                             {Math.round((settings.floating_chat_opacity ?? 0.85) * 100)}%
                           </span>
+                          {(() => {
+                            const val = Math.round((settings.floating_chat_opacity ?? 0.85) * 100);
+                            const pct = (val - 10) / 90;
+                            return (
+                              <div className="relative flex items-center w-28 sm:w-36 h-6 select-none">
+                                {/* Track Background & Fill */}
+                                <div className="absolute inset-y-2 left-0 right-0 bg-neutral-800 rounded-full overflow-hidden border border-neutral-700/50">
+                                  <div
+                                    className="h-full bg-emerald-500 rounded-full transition-all duration-75"
+                                    style={{ width: `${val}%` }}
+                                  />
+                                </div>
+                                {/* Invisible Range Input */}
+                                <input
+                                  type="range"
+                                  min="10"
+                                  max="100"
+                                  step="5"
+                                  value={val}
+                                  onChange={(e) => handleLocalSettingChange('FLOATING_CHAT_OPACITY', String(parseFloat(e.target.value) / 100))}
+                                  disabled={isSavingAll}
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                                />
+                                {/* Custom Thumb Knob */}
+                                <div
+                                  className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow border border-neutral-300 pointer-events-none transition-all duration-75"
+                                  style={{ left: `calc(${pct * 100}% - ${pct * 16}px)` }}
+                                />
+                              </div>
+                            );
+                          })()}
                         </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <input
-                          type="range"
-                          min="10"
-                          max="100"
-                          step="5"
-                          value={Math.round((settings.floating_chat_opacity ?? 0.85) * 100)}
-                          onChange={(e) => handleLocalSettingChange('FLOATING_CHAT_OPACITY', String(parseFloat(e.target.value) / 100))}
-                          disabled={isSavingAll}
-                          className="flex-1 accent-emerald-500 h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
-                        />
                       </div>
 
                       <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
@@ -2547,6 +2566,100 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.show_bubble ?? true) ? 'translate-x-6' : 'translate-x-1'
                               }`}
                           />
+                        </div>
+                      </div>
+
+                      {/* Bubble Text Label */}
+                      <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Show Bubble "Rie-AI" Label</h4>
+                          <p className="text-[10px] text-neutral-500 max-w-xs">
+                            Display the "Rie-AI" text label next to the icon when idle. Disable for a compact icon-only bubble.
+                          </p>
+                        </div>
+                        <div
+                          onClick={() => handleLocalSettingChange('BUBBLE_SHOW_LABEL', String(!(settings.bubble_show_label ?? true)))}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.bubble_show_label ?? true) ? 'bg-emerald-500' : 'bg-neutral-700'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.bubble_show_label ?? true) ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </div>
+                      </div>
+
+                      {/* Bubble Size */}
+                      <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Floating Bubble Size</h4>
+                          <p className="text-[10px] text-neutral-500 max-w-xs">
+                            Choose the physical size scale of the floating bubble widget.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800 p-1 rounded-lg shrink-0">
+                          {['small', 'medium', 'large'].map((size) => {
+                            const current = settings.bubble_size || 'medium';
+                            const active = current === size;
+                            const label = size === 'small' ? 'Compact' : size === 'medium' ? 'Standard' : 'Large';
+                            return (
+                              <button
+                                key={size}
+                                onClick={() => handleLocalSettingChange('BUBBLE_SIZE', size)}
+                                className={`px-2.5 py-1 text-xs rounded-md font-medium transition-all ${
+                                  active
+                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                                    : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800'
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Fully Transparent Background */}
+                      <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Transparent Glass Background</h4>
+                          <p className="text-[10px] text-neutral-500 max-w-xs">
+                            Enable fully transparent glass background style for the floating bubble.
+                          </p>
+                        </div>
+                        <div
+                          onClick={() => handleLocalSettingChange('BUBBLE_TRANSPARENT_BG', String(!(settings.bubble_transparent_bg ?? false)))}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.bubble_transparent_bg ?? false) ? 'bg-emerald-500' : 'bg-neutral-700'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.bubble_transparent_bg ?? false) ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </div>
+                      </div>
+
+                      {/* Snap to Screen Edge */}
+                      <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Snap to Screen Edges</h4>
+                          <p className="text-[10px] text-neutral-500 max-w-xs">
+                            Automatically magnetize the floating bubble to the nearest monitor edge when released.
+                          </p>
+                        </div>
+                        <div
+                          onClick={() => handleLocalSettingChange('BUBBLE_SNAP_EDGE', String(!(settings.bubble_snap_edge ?? true)))}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.bubble_snap_edge ?? true) ? 'bg-emerald-500' : 'bg-neutral-700'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.bubble_snap_edge ?? true) ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </div>
+                      </div>
+
+                      {/* Show Tool Activity Status */}
+                      <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
+                        <div>
+                          <h4 className="text-sm font-medium text-neutral-200">Show Tool Activity on Bubble</h4>
+                          <p className="text-[10px] text-neutral-500 max-w-xs">
+                            Display active tool status labels (Searching, Reading Screen) on the bubble during agent execution.
+                          </p>
+                        </div>
+                        <div
+                          onClick={() => handleLocalSettingChange('BUBBLE_SHOW_TOOLS', String(!(settings.bubble_show_tools ?? true)))}
+                          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full cursor-pointer transition-colors ${(settings.bubble_show_tools ?? true) ? 'bg-emerald-500' : 'bg-neutral-700'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(settings.bubble_show_tools ?? true) ? 'translate-x-6' : 'translate-x-1'}`} />
                         </div>
                       </div>
                     </div>

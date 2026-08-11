@@ -390,6 +390,26 @@ class Settings:
         return self._get("SHOW_BUBBLE", "true").lower() == "true"
 
     @property
+    def BUBBLE_SHOW_LABEL(self) -> bool:
+        return self._get("BUBBLE_SHOW_LABEL", "true").lower() == "true"
+
+    @property
+    def BUBBLE_SIZE(self) -> str:
+        return self._get("BUBBLE_SIZE", "medium")
+
+    @property
+    def BUBBLE_TRANSPARENT_BG(self) -> bool:
+        return self._get("BUBBLE_TRANSPARENT_BG", "false").lower() == "true"
+
+    @property
+    def BUBBLE_SNAP_EDGE(self) -> bool:
+        return self._get("BUBBLE_SNAP_EDGE", "true").lower() == "true"
+
+    @property
+    def BUBBLE_SHOW_TOOLS(self) -> bool:
+        return self._get("BUBBLE_SHOW_TOOLS", "true").lower() == "true"
+
+    @property
     def TTS_PROVIDER(self) -> str:
         """
         TTS Provider: 'edge-tts' or 'groq'

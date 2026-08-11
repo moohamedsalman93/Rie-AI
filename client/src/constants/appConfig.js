@@ -4,7 +4,7 @@ export const WINDOW_SIZES = {
   NORMAL: { width: 988, height: 629 },
   BUBBLE: { width: 180, height: 50 },
   SETTINGS: { width: 920, height: 600 },
-  LOADING: { width: 520, height: 420 },
+  LOADING: { width: 340, height: 130 },
 };
 
 export const ANIMATION_DURATIONS = {

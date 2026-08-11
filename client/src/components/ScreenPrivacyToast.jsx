@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ShieldCheck, ShieldAlert, ShieldOff } from "lucide-react";
 
-export function ScreenPrivacyToast({ toast, onDismiss }) {
+export function ScreenPrivacyToast({ toast, windowMode, isOpen, onDismiss }) {
   useEffect(() => {
     if (!toast?.show) return;
     const timer = setTimeout(() => {
@@ -11,7 +11,8 @@ export function ScreenPrivacyToast({ toast, onDismiss }) {
     return () => clearTimeout(timer);
   }, [toast?.id, toast?.show, onDismiss]);
 
-  if (!toast?.show) return null;
+  // In Bubble Mode (!isOpen && windowMode === "floating"), FloatingBubble handles rendering the toast inside the bubble pill!
+  if (!toast?.show || (!isOpen && windowMode === "floating")) return null;
 
   const isEnabled = toast.type === "enabled";
   const isHoldHint = toast.type === "hold_hint";

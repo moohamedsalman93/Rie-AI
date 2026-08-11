@@ -154,7 +154,7 @@ function MainApp() {
   const scheduleNotifSeenIdsRef = useRef(new Set());
   const prevThreadScheduleNotifIdsRef = useRef(new Set());
 
-  const windowManager = useWindowManager({ isOpen, setIsOpen, windowMode });
+  const windowManager = useWindowManager({ isOpen, setIsOpen, windowMode, settings });
   const {
     getWindow,
     getWindowPosition,
@@ -1830,9 +1830,33 @@ function MainApp() {
     const applyWindowMode = async () => {
       try {
         const win = getWindow();
-        // Loading screen always uses normal mode (full-size window, not floating)
-        const isNormal = windowMode === "normal" || isAppInitializing;
+        const { currentMonitor, LogicalPosition, LogicalSize } = await import("@tauri-apps/api/window");
+        const isNormal = windowMode === "normal" && !isAppInitializing;
         console.log(`Applying window mode: ${windowMode}${isAppInitializing ? " (loading)" : ""}`);
+
+        const centerNormalWindow = async () => {
+          try {
+            const monitor = await currentMonitor();
+            if (monitor) {
+              const workArea = monitor.workAreaSize || monitor.size;
+              const scale = monitor.scaleFactor || 1;
+              const screenWidth = workArea.width / scale;
+              const screenHeight = workArea.height / scale;
+              const cx = Math.max(0, Math.round((screenWidth - WINDOW_SIZES.NORMAL.width) / 2));
+              const cy = Math.max(0, Math.round((screenHeight - WINDOW_SIZES.NORMAL.height) / 2));
+              await win.setPosition(new LogicalPosition(cx, cy));
+            } else {
+              await win.center();
+            }
+          } catch (e) {
+            try { await win.center(); } catch { /* ignore */ }
+          }
+        };
+
+        if (isNormal) {
+          await win.setSize(new LogicalSize(WINDOW_SIZES.NORMAL.width, WINDOW_SIZES.NORMAL.height));
+          await centerNormalWindow();
+        }
 
         // Set properties individually to avoid one failure blocking others
         setTimeout(async () => {
@@ -1851,12 +1875,13 @@ function MainApp() {
           } catch (e) {
             console.error("clearEffects error:", e);
           }
+
+          if (isNormal) {
+            await centerNormalWindow();
+          }
         }, 150);
 
         if (isNormal) {
-          // In normal mode (or during loading), we want standard app size
-          await win.setSize(new LogicalSize(WINDOW_SIZES.NORMAL.width, WINDOW_SIZES.NORMAL.height));
-
           // If we are currently in bubble mode, open it (skip during loading)
           if (!isAppInitializing && !isOpenRef.current) {
             setIsOpen(true);
@@ -1869,12 +1894,72 @@ function MainApp() {
     applyWindowMode();
   }, [windowMode, getWindow, isSettingsOpen, showWelcome, isAppInitializing]);
 
+  // Dynamic window resizing for bubble size, label & toast in Bubble Mode
+  const prevBubbleWidthRef = useRef(180);
+  useEffect(() => {
+    if (windowMode !== "floating" || isOpen || isAppInitializing) return;
+
+    const adjustBubbleWindow = async () => {
+      try {
+        const win = getWindow();
+        const { currentMonitor, LogicalPosition, LogicalSize } = await import("@tauri-apps/api/window");
+
+        const showLabel = settings.bubble_show_label !== false && settings.bubble_show_label !== "false";
+        const sizeMode = settings.bubble_size || "medium";
+
+        let baseWidth = 180;
+        let baseHeight = 50;
+
+        if (sizeMode === "small") {
+          baseWidth = showLabel ? 140 : 54;
+          baseHeight = 44;
+        } else if (sizeMode === "large") {
+          baseWidth = showLabel ? 215 : 78;
+          baseHeight = 62;
+        } else {
+          baseWidth = showLabel ? 180 : 66;
+          baseHeight = 54;
+        }
+
+        const isToastActive = privacyToast?.show;
+        const targetWidth = isToastActive
+          ? (privacyToast.type === "hold_hint" ? 250 : 220)
+          : baseWidth;
+        const targetHeight = baseHeight;
+
+        if (targetWidth !== prevBubbleWidthRef.current) {
+          const delta = targetWidth - prevBubbleWidthRef.current;
+          prevBubbleWidthRef.current = targetWidth;
+
+          if (side === "right") {
+            try {
+              const pos = await win.position();
+              const monitor = await currentMonitor();
+              const scale = monitor?.scaleFactor || 1;
+              const curX = pos.x / scale;
+              const curY = pos.y / scale;
+              await win.setPosition(new LogicalPosition(curX - delta, curY));
+            } catch (e) { /* ignore */ }
+          }
+
+          await win.setSize(new LogicalSize(targetWidth, targetHeight));
+        }
+      } catch (err) {
+        console.warn("Failed to adjust bubble window size:", err);
+      }
+    };
+
+    adjustBubbleWindow();
+  }, [privacyToast, windowMode, isOpen, isAppInitializing, side, getWindow, settings.bubble_show_label, settings.bubble_size]);
+
   // Global mouse event handling
   useEffect(() => {
     const handleGlobalMouseUp = () => {
       if (isDraggingRef.current && !isOpen && windowMode === "floating") {
         isDraggingRef.current = false;
-        setTimeout(() => snapToNearestEdge(), 150);
+        if (settings.bubble_snap_edge !== false) {
+          setTimeout(() => snapToNearestEdge(), 150);
+        }
       } else {
         isDraggingRef.current = false;
       }
@@ -1882,7 +1967,7 @@ function MainApp() {
 
     window.addEventListener("mouseup", handleGlobalMouseUp);
     return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
-  }, [isOpen, snapToNearestEdge]);
+  }, [isOpen, snapToNearestEdge, settings.bubble_snap_edge]);
 
   // Listen for deep links
   useEffect(() => {
@@ -2042,10 +2127,16 @@ function MainApp() {
     const unlistenPromise = listen("settings-updated", (event) => {
       const { key, value } = event.payload;
       const field = key.toLowerCase();
-      const parsedValue =
-        key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'HITL_ENABLED' || key === 'LANGSMITH_TRACING' || key === 'CONNECTIVITY_NGROK_ENABLED' || key === 'SHOW_BUBBLE' || key === 'CAPTURE_SCREEN_AS_TEXT'
-          ? (value === 'true' || value === true)
-          : value;
+      const isBoolKey = [
+        'SHARE_LOCATION', 'EXCLUDE_FROM_CAPTURE', 'VOICE_REPLY', 'HITL_ENABLED',
+        'LANGSMITH_TRACING', 'CONNECTIVITY_NGROK_ENABLED', 'SHOW_BUBBLE',
+        'CAPTURE_SCREEN_AS_TEXT', 'BUBBLE_SHOW_LABEL', 'BUBBLE_TRANSPARENT_BG',
+        'BUBBLE_SNAP_EDGE', 'BUBBLE_SHOW_TOOLS'
+      ].includes(key);
+
+      const parsedValue = isBoolKey
+        ? (value === 'true' || value === true)
+        : value;
 
       setSettings((prev) => ({ ...prev, [field]: parsedValue }));
 
@@ -2499,17 +2590,40 @@ function MainApp() {
   }, [startRecording, stopRecording, handleCancelRequest, handleNewChat, handleCaptureScreen, handleOpen, handleMinimize]); // Removed state deps
 
 
-  // Set loading window size during init (resize effect handles post-load)
+  // Set small loading window size & center on desktop screen during init
   useEffect(() => {
     if (!isAppInitializing) return;
     const initWindow = async () => {
       try {
         const win = getWindow();
+        const { currentMonitor, LogicalPosition } = await import("@tauri-apps/api/window");
         await win.setSize(new LogicalSize(WINDOW_SIZES.LOADING.width, WINDOW_SIZES.LOADING.height));
+
+        const positionCenter = async () => {
+          try {
+            const monitor = await currentMonitor();
+            if (monitor) {
+              const workArea = monitor.workAreaSize || monitor.size;
+              const scale = monitor.scaleFactor || 1;
+              const screenWidth = workArea.width / scale;
+              const screenHeight = workArea.height / scale;
+              const x = Math.max(0, Math.round((screenWidth - WINDOW_SIZES.LOADING.width) / 2));
+              const y = Math.max(0, Math.round((screenHeight - WINDOW_SIZES.LOADING.height) / 2));
+              await win.setPosition(new LogicalPosition(x, y));
+            } else {
+              await win.center();
+            }
+          } catch (e) {
+            try { await win.center(); } catch { /* ignore */ }
+          }
+        };
+
+        await positionCenter();
+        setTimeout(positionCenter, 200);
       } catch { /* Not in Tauri */ }
     };
     initWindow();
-  }, [isAppInitializing]);
+  }, [isAppInitializing, getWindow]);
 
   // Listen for clipboard updates from backend
   useEffect(() => {
@@ -3058,6 +3172,7 @@ function MainApp() {
           ) : !isOpen ? (
             <FloatingBubble
               key="bubble"
+              privacyToast={privacyToast}
               currentTool={currentTool}
               isLoading={isLoading}
               isRecording={isRecording}
@@ -3066,6 +3181,7 @@ function MainApp() {
               onMouseDown={handleBubbleMouseDown}
               getToolDisplayName={getToolDisplayName}
               bubbleRef={bubbleRef}
+              settings={settings}
             />
           ) : (
             <FloatingChatWindow
@@ -3180,7 +3296,7 @@ function MainApp() {
         </AnimatePresence>
       </div >
 
-      <ScreenPrivacyToast toast={privacyToast} onDismiss={() => setPrivacyToast(null)} />
+      <ScreenPrivacyToast toast={privacyToast} windowMode={windowMode} isOpen={isOpen} onDismiss={() => setPrivacyToast(null)} />
     </>
   );
 }

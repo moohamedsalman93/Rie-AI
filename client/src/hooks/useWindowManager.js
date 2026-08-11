@@ -10,7 +10,7 @@ import {
   POSITION_STABLE_THRESHOLD,
 } from "../constants/appConfig";
 
-export function useWindowManager({ isOpen, setIsOpen, windowMode }) {
+export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} }) {
   const [isSnapping, setIsSnapping] = useState(false);
   const [side, setSide] = useState("left");
 
@@ -102,6 +102,7 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode }) {
 
   const snapToNearestEdge = useCallback(async () => {
     if (isOpen || windowMode === "normal") return;
+    if (settings?.bubble_snap_edge === false || settings?.bubble_snap_edge === "false") return;
 
     try {
       await new Promise((resolve) =>

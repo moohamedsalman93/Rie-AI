@@ -263,6 +263,11 @@ class SettingsResponse(BaseModel):
     capture_screen_as_text: bool = False
     floating_chat_opacity: float = 0.85
     show_bubble: bool = True
+    bubble_show_label: bool = True
+    bubble_size: str = "medium"
+    bubble_transparent_bg: bool = False
+    bubble_snap_edge: bool = True
+    bubble_show_tools: bool = True
 
     # TTS Settings
     tts_provider: str = "edge-tts"

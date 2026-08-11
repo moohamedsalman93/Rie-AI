@@ -1117,7 +1117,7 @@ export function NormalModeLayout({
                         }}
                         className={`px-4 py-3 absolute bottom-0 left-0 w-full z-10 ${isCompactChat ? "px-3" : (isHistoryVisible ? "px-6" : "px-24")}`}
                     >
-                        <div className="w-full max-w-3xl mx-auto">
+                        <div className="w-full max-w-xl/*  */ xl:max-w-3xl mx-auto">
                             <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all">
                                 {/* Inline Attachments (if any attached) */}
                                 {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
