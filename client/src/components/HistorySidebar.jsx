@@ -21,6 +21,8 @@ export function HistorySidebar({
 }) {
     const [threads, setThreads] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
     const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -29,23 +31,62 @@ export function HistorySidebar({
 
     const isPersistent = windowMode === 'normal';
     const showSidebar = isOpen || isPersistent;
+    const PAGE_SIZE = 15;
 
     useEffect(() => {
         if (!showSidebar) return;
+        let isCancelled = false;
         (async () => {
             setLoading(true);
             setError(null);
             try {
-                const data = await getHistory();
-                setThreads(Array.isArray(data) ? data : []);
+                const data = await getHistory(PAGE_SIZE, 0, searchTerm);
+                if (!isCancelled) {
+                    const loaded = Array.isArray(data) ? data : [];
+                    setThreads(loaded);
+                    setHasMore(loaded.length >= PAGE_SIZE);
+                }
             } catch (err) {
-                console.error("Failed to load history:", err);
-                setError("Failed to load history");
+                if (!isCancelled) {
+                    console.error("Failed to load history:", err);
+                    setError("Failed to load history");
+                }
             } finally {
-                setLoading(false);
+                if (!isCancelled) {
+                    setLoading(false);
+                }
             }
         })();
-    }, [showSidebar]);
+        return () => {
+            isCancelled = true;
+        };
+    }, [showSidebar, searchTerm]);
+
+    const handleScroll = async (e) => {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        if (scrollHeight - scrollTop - clientHeight < 60) {
+            if (loading || loadingMore || !hasMore) return;
+            setLoadingMore(true);
+            try {
+                const nextOffset = threads.length;
+                const data = await getHistory(PAGE_SIZE, nextOffset, searchTerm);
+                if (Array.isArray(data)) {
+                    if (data.length < PAGE_SIZE) {
+                        setHasMore(false);
+                    }
+                    setThreads((prev) => {
+                        const existingIds = new Set(prev.map((t) => String(t.id)));
+                        const newItems = data.filter((t) => !existingIds.has(String(t.id)));
+                        return [...prev, ...newItems];
+                    });
+                }
+            } catch (err) {
+                console.error("Failed to load more history:", err);
+            } finally {
+                setLoadingMore(false);
+            }
+        }
+    };
 
     const formatDate = (isoString) => {
         if (!isoString) return "";
@@ -160,7 +201,7 @@ export function HistorySidebar({
                     />
                 </div>
             </div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1" onScroll={handleScroll}>
                 <div className="rounded-lg border border-white/5 bg-neutral-900/50">
                     <button type="button" onClick={() => setFriendsOpen((prev) => !prev)} className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-semibold text-neutral-200">
                         <span className="inline-flex items-center gap-1.5"><Users size={13} /> Friends</span>
@@ -215,6 +256,11 @@ export function HistorySidebar({
                                 ))}
                             </div>
                         ))}
+                        {loadingMore && (
+                            <div className="flex justify-center py-2">
+                                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-emerald-500" />
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

@@ -900,15 +900,21 @@ def save_message(thread_id: str, role: str, content: str, image_url: Optional[st
     conn.commit()
     conn.close()
 
-def get_threads() -> List[Dict[str, Any]]:
-    """Get all chat threads ordered by last update"""
+def get_threads(limit: Optional[int] = None, offset: int = 0, search: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Get chat threads ordered by last update with optional pagination and search filter"""
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    cursor.execute(
-        """
+    where_clause = ""
+    params = []
+    
+    if search and search.strip():
+        where_clause = "WHERE LOWER(t.title) LIKE ?"
+        params.append(f"%{search.strip().lower()}%")
+        
+    query = f"""
         SELECT
             t.*,
             ft.friend_id AS friend_id,
@@ -921,9 +927,15 @@ def get_threads() -> List[Dict[str, Any]]:
             FROM thread_knowledge
             GROUP BY thread_id
         ) tk_agg ON tk_agg.thread_id = t.id
+        {where_clause}
         ORDER BY t.updated_at DESC
-        """
-    )
+    """
+    
+    if limit is not None and limit > 0:
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     
     threads = []

@@ -760,10 +760,19 @@ export async function generatePlannerInstruction(payload) {
 
 /**
  * Get chat history threads
+ * @param {number|null} limit
+ * @param {number} offset
+ * @param {string|null} search
  * @returns {Promise<Array>}
  */
-export async function getHistory() {
-  const response = await fetch(`${API_BASE_URL}/history`, {
+export async function getHistory(limit = null, offset = 0, search = null) {
+  const params = new URLSearchParams();
+  if (limit !== null && limit !== undefined) params.append("limit", limit);
+  if (offset) params.append("offset", offset);
+  if (search && search.trim()) params.append("search", search.trim());
+  const queryString = params.toString() ? `?${params.toString()}` : "";
+
+  const response = await fetch(`${API_BASE_URL}/history${queryString}`, {
     method: "GET",
     headers: getHeaders(),
   });

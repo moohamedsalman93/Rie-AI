@@ -2434,9 +2434,13 @@ async def get_desktop_text():
 
 
 @router.get("/history")
-async def get_history_threads():
-    """Get list of chat history threads"""
-    threads = await run_in_threadpool(get_threads)
+async def get_history_threads(
+    limit: Optional[int] = Query(None, ge=1),
+    offset: int = Query(0, ge=0),
+    search: Optional[str] = Query(None),
+):
+    """Get list of chat history threads with pagination and search support"""
+    threads = await run_in_threadpool(get_threads, limit, offset, search)
     return threads
 
 @router.get("/history/{thread_id}")

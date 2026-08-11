@@ -164,6 +164,8 @@ export function NormalModeLayout({
     // Sidebar state
     const [threads, setThreads] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [threadToDelete, setThreadToDelete] = useState(null);
@@ -175,6 +177,59 @@ export function NormalModeLayout({
     const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
     const [browserEngine, setBrowserEngine] = useState(() => localStorage.getItem("rie_browser_engine") || "default");
     const [isBrowserBinaryAvailable, setIsBrowserBinaryAvailable] = useState(false);
+    const PAGE_SIZE = 15;
+
+    useEffect(() => {
+        let isCancelled = false;
+        (async () => {
+            setLoading(true);
+            try {
+                const data = await getHistory(PAGE_SIZE, 0, searchTerm);
+                if (!isCancelled) {
+                    const loaded = Array.isArray(data) ? data : [];
+                    setThreads(loaded);
+                    setHasMore(loaded.length >= PAGE_SIZE);
+                }
+            } catch (err) {
+                if (!isCancelled) {
+                    console.error('Failed to load history:', err);
+                }
+            } finally {
+                if (!isCancelled) {
+                    setLoading(false);
+                }
+            }
+        })();
+        return () => {
+            isCancelled = true;
+        };
+    }, [searchTerm]);
+
+    const handleHistoryScroll = async (e) => {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        if (scrollHeight - scrollTop - clientHeight < 60) {
+            if (loading || loadingMore || !hasMore) return;
+            setLoadingMore(true);
+            try {
+                const nextOffset = threads.length;
+                const data = await getHistory(PAGE_SIZE, nextOffset, searchTerm);
+                if (Array.isArray(data)) {
+                    if (data.length < PAGE_SIZE) {
+                        setHasMore(false);
+                    }
+                    setThreads((prev) => {
+                        const existingIds = new Set(prev.map((t) => String(t.id)));
+                        const newItems = data.filter((t) => !existingIds.has(String(t.id)));
+                        return [...prev, ...newItems];
+                    });
+                }
+            } catch (err) {
+                console.error("Failed to load more history:", err);
+            } finally {
+                setLoadingMore(false);
+            }
+        }
+    };
 
     useEffect(() => {
         const checkBrowserStatus = async () => {
@@ -327,14 +382,17 @@ export function NormalModeLayout({
     }, [streamingThreads, currentThreadId]);
 
     const loadThreads = async () => {
-        setLoading(true);
         try {
-            const data = await getHistory();
-            setThreads(data);
+            const data = await getHistory(PAGE_SIZE, 0, searchTerm);
+            if (Array.isArray(data)) {
+                setThreads((prev) => {
+                    const fetchedIds = new Set(data.map((t) => String(t.id)));
+                    const keptPrevious = prev.filter((t) => !fetchedIds.has(String(t.id)));
+                    return [...data, ...keptPrevious];
+                });
+            }
         } catch (err) {
             console.error('Failed to load history:', err);
-        } finally {
-            setLoading(false);
         }
     };
 
@@ -655,7 +713,7 @@ export function NormalModeLayout({
                             </div>
 
                             {/* Thread List */}
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-0.5">
+                            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-0.5" onScroll={handleHistoryScroll}>
                                 <div className="mb-2 rounded-lg border border-white/5 bg-neutral-900/50">
                                     <button
                                         type="button"
@@ -740,6 +798,11 @@ export function NormalModeLayout({
                                                 ))}
                                             </div>
                                         ))}
+                                        {loadingMore && (
+                                            <div className="flex justify-center py-2">
+                                                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-emerald-500" />
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>
