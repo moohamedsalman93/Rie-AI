@@ -2,10 +2,50 @@ import React, { memo } from "react";
 import { motion } from "framer-motion";
 import { GitBranch, Info, RotateCw } from 'lucide-react';
 import { MarkdownMessage } from "./MarkdownMessage";
-import { ToolChip } from "./ToolChip";
+import { ToolChip, ToolCallGroup } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
 import { LinkPreview } from "./LinkPreview";
 import { KnowledgeChatBanner } from "./KnowledgeAttachmentChips";
+
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
+  if (!blocks || blocks.length === 0) return null;
+
+  const elements = [];
+  let currentToolGroup = [];
+
+  const flushToolGroup = () => {
+    if (currentToolGroup.length > 0) {
+      const group = [...currentToolGroup];
+      elements.push(
+        <ToolCallGroup
+          key={`tool-group-${elements.length}`}
+          blocks={group}
+          tooltipPlacement={tooltipPlacement}
+        />
+      );
+      currentToolGroup = [];
+    }
+  };
+
+  blocks.forEach((block, idx) => {
+    if (block.type === "tool") {
+      currentToolGroup.push(block);
+    } else {
+      flushToolGroup();
+      elements.push(
+        <div key={`text-${idx}`}>
+          <MarkdownMessage
+            content={block.text}
+            isStreaming={isStreaming}
+          />
+        </div>
+      );
+    }
+  });
+
+  flushToolGroup();
+  return elements;
+}
 
 function ChatMessagesImpl({
   messages,
@@ -140,22 +180,11 @@ function ChatMessagesImpl({
                 )}
                 {m.from === "bot" ? (
                   <div className="flex flex-col gap-2">
-                    {(m.blocks || [{ type: "text", text: m.text }]).map((block, idx) => (
-                      <div key={idx}>
-                        {block.type === "text" ? (
-                          <MarkdownMessage
-                            content={block.text}
-                            isStreaming={isLoading && m.id === streamingBotMessageId}
-                          />
-                        ) : (
-                          <ToolChip
-                            name={block.name}
-                            content={block.text}
-                            tooltipPlacement={toolTooltipPlacement}
-                          />
-                        )}
-                      </div>
-                    ))}
+                    {renderMessageBlocks(
+                      m.blocks || [{ type: "text", text: m.text }],
+                      toolTooltipPlacement,
+                      isLoading && m.id === streamingBotMessageId
+                    )}
                     {pendingAction && m.id === messages[messages.length - 1].id && m.from === "bot" && (
                       <HITLApproval
                         hitl={pendingAction}

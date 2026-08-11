@@ -73,7 +73,6 @@ function formatToolName(name) {
 
 export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) => {
     const [showPopup, setShowPopup] = useState(false);
-    const hideTimeoutRef = useRef(null);
     const triggerRef = useRef(null);
     const popupRef = useRef(null);
     const [popupPos, setPopupPos] = useState({ top: 0, left: 0 });
@@ -93,50 +92,75 @@ export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) =>
         });
     }, [tooltipPlacement]);
 
-    const show = useCallback(() => {
-        if (hideTimeoutRef.current) {
-            clearTimeout(hideTimeoutRef.current);
-            hideTimeoutRef.current = null;
-        }
-        if (triggerRef.current) {
-            const r = triggerRef.current.getBoundingClientRect();
-            const isTop = tooltipPlacement === "top";
-            const initialTop = Math.round(isTop ? Math.max(10, r.top - 180) : Math.min(window.innerHeight - 190, r.bottom + 4));
-            const initialLeft = Math.round(Math.max(10, Math.min(r.left, window.innerWidth - 340)));
-            setPopupPos({ top: initialTop, left: initialLeft });
-        }
-        setShowPopup(true);
+    const togglePopup = useCallback((e) => {
+        e?.stopPropagation();
+        setShowPopup((prev) => {
+            const nextState = !prev;
+            if (nextState && triggerRef.current) {
+                const r = triggerRef.current.getBoundingClientRect();
+                const isTop = tooltipPlacement === "top";
+                const initialTop = Math.round(isTop ? Math.max(10, r.top - 180) : Math.min(window.innerHeight - 190, r.bottom + 4));
+                const initialLeft = Math.round(Math.max(10, Math.min(r.left, window.innerWidth - 340)));
+                setPopupPos({ top: initialTop, left: initialLeft });
+            }
+            return nextState;
+        });
     }, [tooltipPlacement]);
-
-    const hide = useCallback(() => {
-        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
-        hideTimeoutRef.current = setTimeout(() => {
-            setShowPopup(false);
-        }, HOVER_DELAY_MS);
-    }, []);
 
     useEffect(() => {
         if (!showPopup) return;
         updatePopupPosition();
+
+        const handleClickOutside = (e) => {
+            if (
+                popupRef.current &&
+                !popupRef.current.contains(e.target) &&
+                triggerRef.current &&
+                !triggerRef.current.contains(e.target)
+            ) {
+                setShowPopup(false);
+            }
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === "Escape") {
+                setShowPopup(false);
+            }
+        };
+
         const handleScrollOrResize = () => updatePopupPosition();
+
+        document.addEventListener("mousedown", handleClickOutside);
+        document.addEventListener("keydown", handleKeyDown);
         window.addEventListener("scroll", handleScrollOrResize, true);
         window.addEventListener("resize", handleScrollOrResize);
+
         return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("scroll", handleScrollOrResize, true);
             window.removeEventListener("resize", handleScrollOrResize);
         };
     }, [showPopup, updatePopupPosition]);
 
-    const isWriteTodos = name && (name.toLowerCase() === "write_todos" || name.toLowerCase() === "write todos");
-    const todoItems = isWriteTodos ? parseTodoContent(content) : null;
+    const isWriteTodos = useMemo(() => {
+        if (!name) return false;
+        const lower = name.toLowerCase();
+        return lower === "write_todos" || lower === "write todos";
+    }, [name]);
+
+    const todoItems = useMemo(() => {
+        if (!showPopup || !isWriteTodos) return null;
+        return parseTodoContent(content);
+    }, [showPopup, isWriteTodos, content]);
 
     const displayContent = useMemo(() => {
-        if (!content || typeof content !== "string") return "";
+        if (!showPopup || !content || typeof content !== "string") return "";
         if (content.length > 2500) {
             return content.slice(0, 2500) + "\n\n... *(output truncated for tooltip preview)*";
         }
         return content;
-    }, [content]);
+    }, [content, showPopup]);
 
     const popupNode = (
         <AnimatePresence>
@@ -152,8 +176,6 @@ export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) =>
                         left: popupPos.left,
                     }}
                     className="fixed z-[1000] min-w-[200px] max-w-[320px] rounded-lg bg-neutral-900 border border-neutral-700 shadow-xl p-3 text-xs text-neutral-300 custom-scrollbar max-h-64 overflow-y-auto pointer-events-auto"
-                    onMouseEnter={show}
-                    onMouseLeave={hide}
                 >
                     {todoItems ? (
                         <div>
@@ -200,16 +222,16 @@ export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) =>
 
     return (
         <div className="inline-flex flex-col my-1">
-            <span
+            <button
+                type="button"
                 ref={triggerRef}
-                onMouseEnter={show}
-                onMouseLeave={hide}
-                className="group inline-flex items-center gap-1.5 cursor-default"
+                onClick={togglePopup}
+                className="group inline-flex items-center gap-1.5 cursor-pointer select-none text-left focus:outline-none"
             >
-                <span className="text-[10px] font-medium text-neutral-500/70 tracking-wide truncate">
+                <span className="text-[10px] font-medium text-neutral-500/70 group-hover:text-neutral-300 transition-colors tracking-wide truncate">
                     {formatToolName(name)}
                 </span>
-                <span className="flex shrink-0 text-neutral-500/60 group-hover:text-neutral-500/90">
+                <span className="flex shrink-0 text-neutral-500/60 group-hover:text-neutral-200 transition-colors">
                     <svg
                         xmlns="http://www.w3.org/2000/svg"
                         width="10"
@@ -226,7 +248,7 @@ export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) =>
                         <line x1="12" y1="8" x2="12.01" y2="8"></line>
                     </svg>
                 </span>
-            </span>
+            </button>
 
             {showPopup && typeof document !== "undefined" ? createPortal(popupNode, document.body) : null}
         </div>
@@ -234,4 +256,68 @@ export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) =>
 });
 
 ToolChip.displayName = "ToolChip";
+
+export const ToolCallGroup = memo(({ blocks, tooltipPlacement = "bottom" }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+
+    if (!blocks || blocks.length === 0) return null;
+
+    if (blocks.length < 3) {
+        return (
+            <div className="flex flex-col gap-0.5">
+                {blocks.map((block, idx) => (
+                    <ToolChip
+                        key={idx}
+                        name={block.name}
+                        content={block.text}
+                        tooltipPlacement={tooltipPlacement}
+                    />
+                ))}
+            </div>
+        );
+    }
+
+    return (
+        <div className="my-1 border border-neutral-800/80 rounded-lg bg-neutral-900/50 overflow-hidden max-w-max">
+            <button
+                type="button"
+                onClick={() => setIsExpanded((prev) => !prev)}
+                className="flex items-center gap-2 px-2.5 py-1 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/60 transition-colors select-none focus:outline-none"
+            >
+                <div className="flex items-center gap-1.5">
+                    <svg className="w-3 h-3 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6H4a1 1 0 1 0 0 2h12.3l-1.6 1.6a1 1 0 1 0 1.4 1.4l3.3-3.3a1 1 0 0 0 0-1.4l-3.3-3.3a1 1 0 0 0-1.4 0z" />
+                    </svg>
+                    <span className="text-[11px] font-medium tracking-wide">
+                        Ran {blocks.length} tools
+                    </span>
+                </div>
+                <svg
+                    className={`w-3 h-3 text-neutral-500 transform transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+
+            {isExpanded && (
+                <div className="px-2.5 py-1.5 border-t border-neutral-800/60 flex flex-col gap-1 bg-neutral-950/40">
+                    {blocks.map((block, idx) => (
+                        <ToolChip
+                            key={idx}
+                            name={block.name}
+                            content={block.text}
+                            tooltipPlacement={tooltipPlacement}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+});
+
+ToolCallGroup.displayName = "ToolCallGroup";
 

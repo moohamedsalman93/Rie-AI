@@ -29,9 +29,49 @@ import { getHistory, getBrowserStatus } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
 import { LinkPreview } from './LinkPreview';
-import { ToolChip } from './ToolChip';
+import { ToolChip, ToolCallGroup } from './ToolChip';
 import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
+
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
+    if (!blocks || blocks.length === 0) return null;
+
+    const elements = [];
+    let currentToolGroup = [];
+
+    const flushToolGroup = () => {
+        if (currentToolGroup.length > 0) {
+            const group = [...currentToolGroup];
+            elements.push(
+                <ToolCallGroup
+                    key={`tool-group-${elements.length}`}
+                    blocks={group}
+                    tooltipPlacement={tooltipPlacement}
+                />
+            );
+            currentToolGroup = [];
+        }
+    };
+
+    blocks.forEach((block, idx) => {
+        if (block.type === 'tool') {
+            currentToolGroup.push(block);
+        } else {
+            flushToolGroup();
+            elements.push(
+                <div key={`text-${idx}`}>
+                    <MarkdownMessage
+                        content={block.text}
+                        isStreaming={isStreaming}
+                    />
+                </div>
+            );
+        }
+    });
+
+    flushToolGroup();
+    return elements;
+}
 import { ScheduledTasksPanel } from './ScheduledTasksPanel';
 import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
 import { KnowledgeAttachmentChips, KnowledgeHistoryBadge, KnowledgeChatBanner } from './KnowledgeAttachmentChips';
@@ -816,22 +856,11 @@ export function NormalModeLayout({
                                                         )}
                                                         {m.from === 'bot' ? (
                                                             <div className="flex flex-col gap-2">
-                                                                {(m.blocks || [{ type: 'text', text: m.text }]).map((block, idx) => (
-                                                                    <div key={idx}>
-                                                                        {block.type === 'text' ? (
-                                                                            <MarkdownMessage
-                                                                                content={block.text}
-                                                                                isStreaming={m.id === streamingBotMessageId}
-                                                                            />
-                                                                        ) : (
-                                                                            <ToolChip
-                                                                                name={block.name}
-                                                                                content={block.text}
-                                                                                tooltipPlacement={toolTooltipPlacement}
-                                                                            />
-                                                                        )}
-                                                                    </div>
-                                                                ))}
+                                                                {renderMessageBlocks(
+                                                                    m.blocks || [{ type: 'text', text: m.text }],
+                                                                    toolTooltipPlacement,
+                                                                    m.id === streamingBotMessageId
+                                                                )}
                                                             </div>
                                                         ) : (
                                                             m.text
