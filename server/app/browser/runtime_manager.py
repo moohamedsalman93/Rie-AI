@@ -114,6 +114,14 @@ class BrowserRuntimeManager:
         try:
             import camoufox  # noqa: F401
         except ImportError:
+            if getattr(sys, 'frozen', False):
+                err_msg = (
+                    "Camoufox Python package is not bundled in this executable build. "
+                    "Please rebuild the backend binary using update-backend.ps1."
+                )
+                logger.error(err_msg)
+                raise RuntimeError(err_msg)
+
             logger.info("Camoufox Python package not found. Attempting auto-installation via pip...")
             self._download_stage = "installing_package"
             try:
