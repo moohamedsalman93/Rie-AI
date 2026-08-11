@@ -1244,6 +1244,10 @@ class AgentManager:
                     continue
                 resolved_tools.append(tool)
 
+            # Ensure core system tools like read_knowledge_asset are available to subagents
+            if "read_knowledge_asset" in all_tools_map and all_tools_map["read_knowledge_asset"] not in resolved_tools:
+                resolved_tools.append(all_tools_map["read_knowledge_asset"])
+
             subagent_middleware = []
             if name == "coding_specialist":
                 subagent_middleware.append(FilesystemMiddleware(backend=self.dynamic_backend))
@@ -1441,6 +1445,10 @@ class AgentManager:
                 for extra_tool in loaded_mcp_tools + loaded_external_tools:
                     if extra_tool not in tools_to_use:
                         tools_to_use.append(extra_tool)
+
+        # Always ensure core system tools like read_knowledge_asset are available
+        if "read_knowledge_asset" in all_tools_map and all_tools_map["read_knowledge_asset"] not in tools_to_use:
+            tools_to_use.append(all_tools_map["read_knowledge_asset"])
 
         print(
             "DEBUG: Initializing agent with orchestration_mode=%s and tools=%s"

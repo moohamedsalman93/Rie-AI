@@ -63,7 +63,8 @@ class BrowserRuntimeManager:
                 self._camoufox_version = "installed"
 
             return True
-        except ImportError:
+        except Exception as exc:
+            logger.warning(f"Camoufox health check failed: {exc}")
             return False
 
     async def ensure_running(self) -> bool:
