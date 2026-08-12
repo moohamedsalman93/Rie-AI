@@ -39,6 +39,11 @@ export function ChatInputArea({
   kioskSelection = null,
   onAddKioskSelection = null,
   onClearKioskSelection = null,
+  provider,
+  onSelectProvider,
+  settings,
+  onOpenSettings,
+  onUpdateSetting,
 }) {
   const [dragCounter, setDragCounter] = useState(0);
   const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);

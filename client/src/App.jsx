@@ -34,6 +34,36 @@ import { useAttachments } from "./hooks/useAttachments";
 import { useKnowledgeAttachment } from "./hooks/useKnowledgeAttachment";
 
 
+
+/**
+ * Clean markdown symbols, code blocks, URLs, and formatting from text for natural TTS speech output.
+ * @param {string} text
+ * @returns {string}
+ */
+function cleanTextForSpeech(text) {
+  if (!text) return "";
+  let clean = text;
+  // Remove code blocks ```...```
+  clean = clean.replace(/```[\s\S]*?```/g, "");
+  // Remove inline code `...`
+  clean = clean.replace(/`[^`]+`/g, "");
+  // Remove URLs
+  clean = clean.replace(/https?:\/\/\S+/gi, "");
+  // Remove Markdown links [text](url) -> text
+  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  // Remove headers (#, ##, etc.)
+  clean = clean.replace(/^\s*#+\s+/gm, "");
+  // Remove bold/italic symbols (*, _, **)
+  clean = clean.replace(/[*_]{1,3}/g, "");
+  // Remove blockquote symbol (> )
+  clean = clean.replace(/^\s*>\s+/gm, "");
+  // Remove bullet list symbols (- , * , + )
+  clean = clean.replace(/^\s*[-*+]\s+/gm, "");
+  // Replace multiple spaces/newlines with single space
+  clean = clean.replace(/\s+/g, " ").trim();
+  return clean;
+}
+
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
 function mergeScheduleNotificationLog(prev, incoming) {
   const map = new Map(prev.map((n) => [n.id, n]));
@@ -416,6 +446,22 @@ function MainApp() {
     }
   }, []);
 
+  // Stop & clear all audio playback and queues
+  const stopSpeech = useCallback(() => {
+    audioQueueRef.current = [];
+    sentenceBufferRef.current = "";
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      } catch (err) {
+        console.error("Error stopping audio playback:", err);
+      }
+      currentAudioRef.current = null;
+    }
+    isPlayingRef.current = false;
+  }, []);
+
   // Audio Queue Processor
   const processAudioQueue = useCallback(async () => {
     if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
@@ -465,7 +511,9 @@ function MainApp() {
 
   const queueSentence = useCallback((text) => {
     if (!text || !text.trim()) return;
-    const audioPromise = speakText(text, ttsVoiceRef.current, ttsProviderRef.current).catch(err => {
+    const cleaned = cleanTextForSpeech(text);
+    if (!cleaned) return;
+    const audioPromise = speakText(cleaned, ttsVoiceRef.current, ttsProviderRef.current).catch(err => {
       console.error("TTS fetch error", err);
       return null;
     });
@@ -485,12 +533,11 @@ function MainApp() {
         setCurrentTool(null);
         setIsTerminalOpen(false);
 
-        // Speak the full accumulated assistant response once at the end of the stream
-        // Only do this when the last turn was initiated via voice input
-        if (voiceReplyRef.current && lastTurnWasVoiceRef.current && accumulatedTextRef.current.trim()) {
-          queueSentence(accumulatedTextRef.current);
+        // Flush & speak any remaining unspoken text left in sentenceBufferRef at the end of stream
+        if (voiceReplyRef.current && lastTurnWasVoiceRef.current && sentenceBufferRef.current.trim()) {
+          queueSentence(sentenceBufferRef.current);
         }
-        // Reset buffers for the next turn
+        // Reset sentence buffer and accumulated text for the next turn
         sentenceBufferRef.current = "";
         accumulatedTextRef.current = "";
 
@@ -656,6 +703,25 @@ function MainApp() {
         if (content) {
           accumulatedTextRef.current += content;
 
+          // Real-time sentence-streaming for voice reply
+          if (voiceReplyRef.current && lastTurnWasVoiceRef.current) {
+            sentenceBufferRef.current += content;
+            let buffer = sentenceBufferRef.current;
+            const sentenceRegex = /([^.!?\n]+[.!?\n]+(?:\s+|$))/g;
+            let match;
+            let lastIdx = 0;
+            while ((match = sentenceRegex.exec(buffer)) !== null) {
+              const rawSentence = match[0];
+              lastIdx = sentenceRegex.lastIndex;
+              if (rawSentence.trim()) {
+                queueSentence(rawSentence);
+              }
+            }
+            if (lastIdx > 0) {
+              sentenceBufferRef.current = buffer.slice(lastIdx);
+            }
+          }
+
           if (!pendingStreamTextRef.current[threadId]) {
             pendingStreamTextRef.current[threadId] = { botMsgId: botMessageId, pendingText: "" };
           }
@@ -776,13 +842,7 @@ function MainApp() {
     if (!trimmed && !hasAttachments || isLoading) return;
 
     // Stop and clear audio
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
-    sentenceBufferRef.current = "";
+    stopSpeech();
 
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -1065,13 +1125,7 @@ function MainApp() {
     try {
       if (isRecording) return;
 
-      if (currentAudioRef.current) {
-        currentAudioRef.current.pause();
-        currentAudioRef.current = null;
-      }
-      audioQueueRef.current = [];
-      isPlayingRef.current = false;
-      sentenceBufferRef.current = "";
+      stopSpeech();
 
       if (isTauri()) {
         await startNativeRecording();
@@ -1166,13 +1220,7 @@ function MainApp() {
 
     // Stop audio (only if cancelling current thread or shared audio)
     if (threadId === threadIdRef.current) {
-      if (currentAudioRef.current) {
-        currentAudioRef.current.pause();
-        currentAudioRef.current = null;
-      }
-      audioQueueRef.current = [];
-      isPlayingRef.current = false;
-      sentenceBufferRef.current = "";
+      stopSpeech();
     }
 
     // Restore input if it's the current thread
@@ -2366,6 +2414,33 @@ function MainApp() {
     );
   }, [speedMode, isAppInitializing]);
 
+  const handleSelectProvider = async (newProvider) => {
+    setSettings((prev) => ({ ...prev, llm_provider: newProvider }));
+    try {
+      await updateSetting("LLM_PROVIDER", newProvider);
+    } catch (err) {
+      console.error("Failed to save LLM provider setting:", err);
+    }
+  };
+
+  const handleUpdateSetting = async (key, value) => {
+    const fieldMap = {
+      GEMINI_MODEL: "gemini_model",
+      OPENAI_MODEL: "openai_model",
+      GROQ_MODEL: "groq_model",
+      OLLAMA_MODEL: "ollama_model",
+      VERTEX_MODEL: "vertex_model",
+    };
+    if (fieldMap[key]) {
+      setSettings((prev) => ({ ...prev, [fieldMap[key]]: value }));
+    }
+    try {
+      await updateSetting(key, value);
+    } catch (err) {
+      console.error(`Failed to update ${key} setting:`, err);
+    }
+  };
+
   // Polling mechanism for health status
   useEffect(() => {
     let pollInterval;
@@ -3031,7 +3106,7 @@ function MainApp() {
         )}
       </AnimatePresence>
 
-      <div className={`fixed inset-0 flex pointer-events-none rounded-2xl overflow-hidden ${side === "right" ? "justify-end" : "justify-start"} ${(settings.exclude_from_capture !== false) ? "screen-privacy-active" : ""}`}>
+      <div className={`fixed inset-0 flex items-center pointer-events-none rounded-2xl overflow-hidden ${side === "right" ? "justify-end" : "justify-start"} ${(settings.exclude_from_capture !== false) ? "screen-privacy-active" : ""}`}>
         <AnimatePresence
           mode="wait"
           onExitComplete={async () => {
@@ -3044,10 +3119,31 @@ function MainApp() {
                 }
                 const pos = await getWindowPosition();
                 if (side === "right") {
-                  const shiftX = WINDOW_SIZES.CHAT.width - WINDOW_SIZES.BUBBLE.width;
-                  await win.setPosition(new LogicalPosition(pos.x + shiftX, pos.y));
+                  const scale = await win.scaleFactor();
+                  const outerSize = await win.outerSize();
+                  const curW = Math.round(outerSize.width / scale);
+
+                  const showLabel = settings.bubble_show_label !== false && settings.bubble_show_label !== "false";
+                  const sizeMode = settings.bubble_size || "medium";
+                  let targetBubbleWidth = 180;
+                  if (sizeMode === "small") targetBubbleWidth = showLabel ? 140 : 54;
+                  else if (sizeMode === "large") targetBubbleWidth = showLabel ? 215 : 78;
+                  else targetBubbleWidth = showLabel ? 180 : 66;
+
+                  const rightEdge = pos.x + curW;
+                  let targetX = rightEdge - targetBubbleWidth;
+
+                  const screenWidth = window.screen.availWidth;
+                  const screenLeft = window.screen.availLeft || 0;
+                  const maxAllowedX = screenLeft + screenWidth - targetBubbleWidth;
+                  if (targetX > maxAllowedX) targetX = maxAllowedX;
+                  if (targetX < screenLeft) targetX = screenLeft;
+
+                  await win.setPosition(new LogicalPosition(targetX, pos.y));
+                  await win.setSize(new LogicalSize(targetBubbleWidth, WINDOW_SIZES.BUBBLE.height));
+                } else {
+                  await win.setSize(new LogicalSize(WINDOW_SIZES.BUBBLE.width, WINDOW_SIZES.BUBBLE.height));
                 }
-                await win.setSize(new LogicalSize(WINDOW_SIZES.BUBBLE.width, WINDOW_SIZES.BUBBLE.height));
 
                 if (pendingBubblePositionRef.current) {
                   const { x, y } = pendingBubblePositionRef.current;
@@ -3142,6 +3238,9 @@ function MainApp() {
                     speedMode={speedMode}
                     setSpeedMode={setSpeedMode}
                     provider={settings?.llm_provider || 'rie'}
+                    onSelectProvider={handleSelectProvider}
+                    settings={settings}
+                    onUpdateSetting={handleUpdateSetting}
                     onClearTerminal={handleClearTerminal}
                     scheduleNotifications={scheduleNotificationLog}
                     scheduleUnreadCount={scheduleNotifications.length}
@@ -3186,6 +3285,7 @@ function MainApp() {
           ) : (
             <FloatingChatWindow
               key="chat"
+              side={side}
               settings={settings}
               showWelcome={showWelcome}
               setShowWelcome={setShowWelcome}
@@ -3251,6 +3351,8 @@ function MainApp() {
               speedMode={speedMode}
               setSpeedMode={setSpeedMode}
               provider={settings?.llm_provider || 'rie'}
+              onSelectProvider={handleSelectProvider}
+              onUpdateSetting={handleUpdateSetting}
               onDeleteMessage={handleDeleteMessage}
               onOpenMessageInNewChat={handleOpenMessageInNewChat}
               onClearTerminal={handleClearTerminal}

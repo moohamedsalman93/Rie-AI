@@ -107,19 +107,27 @@ export function FloatingChatWindow({
   onAddKioskSelection = null,
   onClearKioskSelection = null,
   provider,
+  onSelectProvider,
+  onUpdateSetting,
+  side = "left",
 }) {
+  const origin = side === "right" ? "top right" : "top left";
+
   return (
     <motion.section
       key="chat"
-      initial={{ opacity: 0, scale: 0.9, y: 20, filter: "blur(8px)" }}
-      animate={{ opacity: 1, scale: 1, y: 0, filter: "blur(0px)" }}
-      exit={{ opacity: 0, scale: 0.9, y: 20, filter: "blur(8px)" }}
+      initial={{ opacity: 0, scale: 0.15, filter: "blur(6px)" }}
+      animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+      exit={{ opacity: 0, scale: 0.15, filter: "blur(6px)" }}
       transition={{
-        duration: 0.4,
-        ease: [0.23, 1, 0.32, 1] // Custom easeOutQuint for premium feel
+        type: "spring",
+        stiffness: 350,
+        damping: 28,
+        mass: 0.7
       }}
-      className="pointer-events-auto w-full relative h-full flex flex-col overflow-hidden bg-transparent rounded-xl z-0"
+      className="pointer-events-auto w-full relative h-full flex flex-col overflow-hidden bg-transparent rounded-2xl z-0"
       style={{
+        transformOrigin: origin,
         '--floating-chat-opacity': settings?.floating_chat_opacity ?? 0.85
       }}
     >
@@ -149,6 +157,8 @@ export function FloatingChatWindow({
         speedMode={speedMode}
         setSpeedMode={setSpeedMode}
         provider={provider}
+        onSelectProvider={onSelectProvider}
+        settings={settings}
         scheduleNotifications={scheduleNotifications}
         scheduleUnreadCount={scheduleUnreadCount}
         onScheduleMarkRead={onScheduleMarkRead}
@@ -266,6 +276,11 @@ export function FloatingChatWindow({
             kioskSelection={kioskSelection}
             onAddKioskSelection={onAddKioskSelection}
             onClearKioskSelection={onClearKioskSelection}
+            provider={provider}
+            onSelectProvider={onSelectProvider}
+            settings={settings}
+            onOpenSettings={onOpenSettingsWindow}
+            onUpdateSetting={onUpdateSetting}
           />
 
           <Terminal

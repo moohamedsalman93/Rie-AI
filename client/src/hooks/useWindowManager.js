@@ -181,8 +181,16 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
         setSide(isRightSide ? "right" : "left");
 
         if (isRightSide) {
-          const shiftX = WINDOW_SIZES.CHAT.width - WINDOW_SIZES.BUBBLE.width;
-          await win.setPosition(new LogicalPosition(pos.x - shiftX, pos.y));
+          const curSize = await getWindowSize();
+          const curW = curSize.width > 0 ? curSize.width : WINDOW_SIZES.BUBBLE.width;
+          const rightEdge = pos.x + curW;
+          let targetX = rightEdge - size.width;
+
+          const maxAllowedX = screenLeft + screenWidth - size.width;
+          if (targetX > maxAllowedX) targetX = maxAllowedX;
+          if (targetX < screenLeft) targetX = screenLeft;
+
+          await win.setPosition(new LogicalPosition(targetX, pos.y));
         }
       }
 
@@ -200,7 +208,7 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
       console.error("Failed to handle open:", err);
       setIsOpen(true);
     }
-  }, [getWindow, getWindowPosition, windowMode, setIsOpen]);
+  }, [getWindow, getWindowPosition, getWindowSize, windowMode, setIsOpen]);
 
   const handleMinimize = useCallback(async () => {
     if (windowMode === "normal") {

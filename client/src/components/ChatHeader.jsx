@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { CalendarClock, Users } from "lucide-react";
 import { ModeToggle } from "./ModeToggle";
+import { LlmProviderSelector } from "./LlmProviderSelector";
 import { ScheduleNotificationsBell } from "./ScheduleNotificationsBell";
 import logo from "../assets/logo.png";
 
@@ -40,6 +41,8 @@ export function ChatHeader({
   onOpenSchedule = null,
   onToggleFriends = null,
   provider,
+  onSelectProvider,
+  settings = {},
 }) {
   return (
     <header
@@ -216,6 +219,17 @@ export function ChatHeader({
                 </button>
 
                 <div className="my-1 h-[1px] bg-neutral-700/50" />
+
+                {onSelectProvider && (
+                  <div className="py-1 flex items-center justify-between gap-2 px-1">
+                    <span className="text-[11px] text-neutral-400 font-medium select-none">Provider:</span>
+                    <LlmProviderSelector
+                      provider={provider}
+                      onSelectProvider={onSelectProvider}
+                      settings={settings}
+                    />
+                  </div>
+                )}
 
                 <div className=" py-1">
                   <ModeToggle

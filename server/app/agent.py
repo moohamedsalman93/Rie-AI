@@ -208,29 +208,44 @@ class RotatingChatGroq(BaseChatModel):
     api_keys: List[str]
     model_name: str
     temperature: float
+    reasoning_effort: Optional[str] = None
     _rotator: Any = None
 
-    def __init__(self, api_keys: List[str], model: str, temperature: float = 0, **kwargs: Any):
-        super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, **kwargs)
+    def __init__(self, api_keys: List[str], model: str, temperature: float = 0, reasoning_effort: Optional[str] = None, **kwargs: Any):
+        super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "groq"))
 
     def _get_model(self) -> ChatGroq:
         """Get a ChatGroq instance with the next API key in the rotation"""
         key, _idx = self._rotator.next_key()
-        return ChatGroq(
-            api_key=key,
-            model=self.model_name,
-            temperature=self.temperature
-        )
+        kwargs = {
+            "api_key": key,
+            "model": self.model_name,
+            "temperature": self.temperature,
+        }
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+        try:
+            return ChatGroq(**kwargs)
+        except Exception:
+            kwargs.pop("reasoning_effort", None)
+            return ChatGroq(**kwargs)
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
         kwargs.setdefault("parallel_tool_calls", True)
-        dummy = ChatGroq(
-            api_key=self.api_keys[0],
-            model=self.model_name,
-            temperature=self.temperature
-        )
+        dummy_kwargs = {
+            "api_key": self.api_keys[0],
+            "model": self.model_name,
+            "temperature": self.temperature,
+        }
+        if self.reasoning_effort:
+            dummy_kwargs["reasoning_effort"] = self.reasoning_effort
+        try:
+            dummy = ChatGroq(**dummy_kwargs)
+        except Exception:
+            dummy_kwargs.pop("reasoning_effort", None)
+            dummy = ChatGroq(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
         
         # Extract formatted tools and tool_choice from the RunnableBinding
@@ -292,31 +307,46 @@ class RotatingChatOpenAI(BaseChatModel):
     model_name: str
     base_url: str
     temperature: float
+    reasoning_effort: Optional[str] = None
     _rotator: Any = None
 
-    def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: float = 0.7, **kwargs: Any):
-        super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, **kwargs)
+    def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: float = 0.7, reasoning_effort: Optional[str] = None, **kwargs: Any):
+        super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "openai"))
 
     def _get_model(self) -> ChatOpenAI:
         """Get a ChatOpenAI instance with the next API key in the rotation"""
         key, _idx = self._rotator.next_key()
-        return ChatOpenAI(
-            openai_api_key=key,
-            model_name=self.model_name,
-            base_url=self.base_url,
-            temperature=self.temperature
-        )
+        kwargs = {
+            "openai_api_key": key,
+            "model_name": self.model_name,
+            "base_url": self.base_url,
+            "temperature": self.temperature,
+        }
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+        try:
+            return ChatOpenAI(**kwargs)
+        except Exception:
+            kwargs.pop("reasoning_effort", None)
+            return ChatOpenAI(**kwargs)
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
         kwargs.setdefault("parallel_tool_calls", True)
-        dummy = ChatOpenAI(
-            openai_api_key=self.api_keys[0],
-            model_name=self.model_name,
-            base_url=self.base_url,
-            temperature=self.temperature
-        )
+        dummy_kwargs = {
+            "openai_api_key": self.api_keys[0],
+            "model_name": self.model_name,
+            "base_url": self.base_url,
+            "temperature": self.temperature,
+        }
+        if self.reasoning_effort:
+            dummy_kwargs["reasoning_effort"] = self.reasoning_effort
+        try:
+            dummy = ChatOpenAI(**dummy_kwargs)
+        except Exception:
+            dummy_kwargs.pop("reasoning_effort", None)
+            dummy = ChatOpenAI(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
         new_kwargs = getattr(bound, "kwargs", {})
         return self.bind(**new_kwargs)
@@ -368,29 +398,44 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
     api_keys: List[str]
     model_name: str
     temperature: float
+    reasoning_effort: Optional[str] = None
     _rotator: Any = None
 
-    def __init__(self, api_keys: List[str], model: str, temperature: float = 0, **kwargs: Any):
-        super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, **kwargs)
+    def __init__(self, api_keys: List[str], model: str, temperature: float = 0, reasoning_effort: Optional[str] = None, **kwargs: Any):
+        super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "gemini"))
 
     def _get_model(self) -> ChatGoogleGenerativeAI:
         """Get a ChatGoogleGenerativeAI instance with the next API key in the rotation"""
         key, _idx = self._rotator.next_key()
-        return ChatGoogleGenerativeAI(
-            google_api_key=key,
-            model=self.model_name,
-            temperature=self.temperature
-        )
+        kwargs = {
+            "google_api_key": key,
+            "model": self.model_name,
+            "temperature": self.temperature,
+        }
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+        try:
+            return ChatGoogleGenerativeAI(**kwargs)
+        except Exception:
+            kwargs.pop("reasoning_effort", None)
+            return ChatGoogleGenerativeAI(**kwargs)
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
         kwargs.setdefault("parallel_tool_calls", True)
-        dummy = ChatGoogleGenerativeAI(
-            google_api_key=self.api_keys[0],
-            model=self.model_name,
-            temperature=self.temperature
-        )
+        dummy_kwargs = {
+            "google_api_key": self.api_keys[0],
+            "model": self.model_name,
+            "temperature": self.temperature,
+        }
+        if self.reasoning_effort:
+            dummy_kwargs["reasoning_effort"] = self.reasoning_effort
+        try:
+            dummy = ChatGoogleGenerativeAI(**dummy_kwargs)
+        except Exception:
+            dummy_kwargs.pop("reasoning_effort", None)
+            dummy = ChatGoogleGenerativeAI(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
         new_kwargs = getattr(bound, "kwargs", {})
         return self.bind(**new_kwargs)
@@ -992,46 +1037,62 @@ class AgentManager:
             if thread_id in self._active_tasks:
                 del self._active_tasks[thread_id]
             reset_agent_context(tokens)
-    
-    def _create_llm_by_provider(self, provider: str) -> Optional[BaseChatModel]:
-        """Create an LLM instance by provider name."""
+
+    def _get_reasoning_effort(self, speed_mode: str = "thinking") -> Optional[str]:
+        """Returns 'high' for thinking mode, or None (disabled) for flash mode."""
+        if speed_mode == "flash":
+            return None
+        return "high"
+
+    def _create_llm_by_provider(self, provider: str, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
+        """Create an LLM instance by provider name and speed mode."""
         if provider == "vertex":
-            return self._create_vertex_llm()
+            return self._create_vertex_llm(speed_mode=speed_mode)
         elif provider == "gemini":
-            return self._create_gemini_llm()
+            return self._create_gemini_llm(speed_mode=speed_mode)
         elif provider == "groq":
-            return self._create_llm()
+            return self._create_llm(speed_mode=speed_mode)
         elif provider == "openai":
-            return self._create_openai_llm()
+            return self._create_openai_llm(speed_mode=speed_mode)
         elif provider == "rie":
-            return self._create_rie_llm()
+            return self._create_rie_llm(speed_mode=speed_mode)
         elif provider == "ollama":
-            return self._create_ollama_llm()
+            return self._create_ollama_llm(speed_mode=speed_mode)
         return None
 
-    def _create_llm(self) -> Optional[BaseChatModel]:
+    def _create_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return a Groq LLM instance (potentially rotating)"""
         keys = settings.GROQ_API_KEYS
         if not keys:
             print("ERROR: No Groq API keys configured")
             return None
         
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
+
         try:
             if len(keys) > 1:
-                print(f"DEBUG: Creating RotatingChatGroq with {len(keys)} keys")
+                print(f"DEBUG: Creating RotatingChatGroq with {len(keys)} keys (reasoning_effort={reasoning_effort})")
                 llm = RotatingChatGroq(
                     api_keys=keys,
                     model=settings.GROQ_MODEL,
                     temperature=0,
+                    reasoning_effort=reasoning_effort,
                 )
             else:
-                # Fallback to standard ChatGroq for single key
-                llm = ChatGroq(
-                    api_key=keys[0],
-                    model=settings.GROQ_MODEL,
-                    temperature=0,
-                )
-            print(f"DEBUG: Groq LLM created successfully with model: {settings.GROQ_MODEL}")
+                kwargs = {
+                    "api_key": keys[0],
+                    "model": settings.GROQ_MODEL,
+                    "temperature": 0,
+                }
+                if reasoning_effort:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                try:
+                    llm = ChatGroq(**kwargs)
+                except Exception as e:
+                    print(f"DEBUG: Fallback without reasoning_effort for ChatGroq: {e}")
+                    kwargs.pop("reasoning_effort", None)
+                    llm = ChatGroq(**kwargs)
+            print(f"DEBUG: Groq LLM created successfully with model: {settings.GROQ_MODEL} (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Groq LLM: {e}")
@@ -1039,28 +1100,39 @@ class AgentManager:
             traceback.print_exc()
             return None
 
-    def _create_gemini_llm(self) -> Optional[BaseChatModel]:
+    def _create_gemini_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return a direct Gemini LLM instance (Generative AI API)"""
         keys = settings.GOOGLE_API_KEYS
         if not keys:
             print("ERROR: GOOGLE_API_KEY is not set")
             return None
 
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
+
         try:
             if len(keys) > 1:
-                print(f"DEBUG: Creating RotatingChatGoogleGenerativeAI with {len(keys)} keys")
+                print(f"DEBUG: Creating RotatingChatGoogleGenerativeAI with {len(keys)} keys (reasoning_effort={reasoning_effort})")
                 llm = RotatingChatGoogleGenerativeAI(
                     api_keys=keys,
                     model=settings.GEMINI_MODEL,
                     temperature=0,
+                    reasoning_effort=reasoning_effort,
                 )
             else:
-                llm = ChatGoogleGenerativeAI(
-                    google_api_key=keys[0],
-                    model=settings.GEMINI_MODEL,
-                    temperature=0,
-                )
-            print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL}")
+                kwargs = {
+                    "google_api_key": keys[0],
+                    "model": settings.GEMINI_MODEL,
+                    "temperature": 0,
+                }
+                if reasoning_effort:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                try:
+                    llm = ChatGoogleGenerativeAI(**kwargs)
+                except Exception as e:
+                    print(f"DEBUG: Fallback without reasoning_effort for ChatGoogleGenerativeAI: {e}")
+                    kwargs.pop("reasoning_effort", None)
+                    llm = ChatGoogleGenerativeAI(**kwargs)
+            print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL} (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Gemini LLM: {e}")
@@ -1068,7 +1140,7 @@ class AgentManager:
             traceback.print_exc()
             return None
 
-    def _create_vertex_llm(self) -> Optional[ChatVertexAI]:
+    def _create_vertex_llm(self, speed_mode: str = "thinking") -> Optional[ChatVertexAI]:
         """Create and return a Vertex AI (Gemini) LLM instance"""
         if settings.VERTEX_CREDENTIALS_PATH:
              import os
@@ -1076,88 +1148,120 @@ class AgentManager:
              
         if not settings.VERTEX_PROJECT:
             print("ERROR: VERTEX_PROJECT is not set")
-            # If credentials path is set, we might not strictly need project if it's in the key file,
-            # but ChatVertexAI usually expects it or infers it.
             if not settings.VERTEX_CREDENTIALS_PATH:
                 return None
 
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
+
         try:
-            llm = ChatVertexAI(
-                model=settings.VERTEX_MODEL,
-                project=settings.VERTEX_PROJECT,
-                location=settings.VERTEX_LOCATION,
-                temperature=0,
-            )
+            kwargs = {
+                "model": settings.VERTEX_MODEL,
+                "project": settings.VERTEX_PROJECT,
+                "location": settings.VERTEX_LOCATION,
+                "temperature": 0,
+            }
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            try:
+                llm = ChatVertexAI(**kwargs)
+            except Exception as e:
+                print(f"DEBUG: Fallback without reasoning_effort for ChatVertexAI: {e}")
+                kwargs.pop("reasoning_effort", None)
+                llm = ChatVertexAI(**kwargs)
             print(
                 f"DEBUG: Vertex AI LLM created successfully with model: {settings.VERTEX_MODEL}, "
-                f"project: {settings.VERTEX_PROJECT}, location: {settings.VERTEX_LOCATION}"
+                f"project: {settings.VERTEX_PROJECT}, location: {settings.VERTEX_LOCATION} (reasoning_effort={reasoning_effort})"
             )
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Vertex AI LLM: {e}")
             return None
 
-    def _create_openai_llm(self) -> Optional[BaseChatModel]:
+    def _create_openai_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return an OpenAI LLM instance (compatible with Z.ai, potentially rotating)"""
         keys = settings.OPENAI_API_KEYS
         if not keys:
             print("ERROR: No OpenAI API keys configured")
             return None
 
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
+
         try:
             if len(keys) > 1:
-                print(f"DEBUG: Creating RotatingChatOpenAI with {len(keys)} keys")
+                print(f"DEBUG: Creating RotatingChatOpenAI with {len(keys)} keys (reasoning_effort={reasoning_effort})")
                 llm = RotatingChatOpenAI(
                     api_keys=keys,
                     model=settings.OPENAI_MODEL,
                     base_url=settings.OPENAI_BASE_URL,
                     temperature=0.7,
+                    reasoning_effort=reasoning_effort,
                 )
             else:
-                llm = ChatOpenAI(
-                    model_name=settings.OPENAI_MODEL,
-                    openai_api_key=keys[0],
-                    base_url=settings.OPENAI_BASE_URL,
-                    temperature=0.7,
-                )
-            print(f"DEBUG: OpenAI LLM created successfully with model: {settings.OPENAI_MODEL} and base_url: {settings.OPENAI_BASE_URL}")
+                kwargs = {
+                    "model_name": settings.OPENAI_MODEL,
+                    "openai_api_key": keys[0],
+                    "base_url": settings.OPENAI_BASE_URL,
+                    "temperature": 0.7,
+                }
+                if reasoning_effort:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                try:
+                    llm = ChatOpenAI(**kwargs)
+                except Exception as e:
+                    print(f"DEBUG: Fallback without reasoning_effort for ChatOpenAI: {e}")
+                    kwargs.pop("reasoning_effort", None)
+                    llm = ChatOpenAI(**kwargs)
+            print(f"DEBUG: OpenAI LLM created successfully with model: {settings.OPENAI_MODEL} and base_url: {settings.OPENAI_BASE_URL} (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create OpenAI LLM: {e}")
             return None
 
-    def _create_rie_llm(self) -> Optional[BaseChatModel]:
+    def _create_rie_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return a Rie LLM instance (OpenAI compatible)"""
-        # Rie is hardcoded - no API key validation needed
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
         try:
-            llm = ChatOpenAI(
-                model_name=settings.RIE_MODEL,
-                openai_api_key=settings.RIE_ACCESS_TOKEN,
-                base_url=settings.RIE_API_URL,
-                temperature=0.7,
-            )
-            print(f"DEBUG: Rie LLM created successfully with model: {settings.RIE_MODEL} at {settings.RIE_API_URL}")
+            kwargs = {
+                "model_name": settings.RIE_MODEL,
+                "openai_api_key": settings.RIE_ACCESS_TOKEN,
+                "base_url": settings.RIE_API_URL,
+                "temperature": 0.7,
+            }
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            try:
+                llm = ChatOpenAI(**kwargs)
+            except Exception:
+                kwargs.pop("reasoning_effort", None)
+                llm = ChatOpenAI(**kwargs)
+            print(f"DEBUG: Rie LLM created successfully with model: {settings.RIE_MODEL} at {settings.RIE_API_URL} (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Rie LLM: {e}")
             return None
 
-    def _create_ollama_llm(self) -> Optional[BaseChatModel]:
+    def _create_ollama_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return an Ollama LLM instance (via OpenAI-compatible bridge for stability)"""
         if not settings.OLLAMA_MODEL:
             print("ERROR: No Ollama model selected")
             return None
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
         try:
-            # We use ChatOpenAI because it handles tool calling and streaming 
-            # more robustly with Ollama's /v1 endpoint than ChatOllama's native API.
             api_key = settings.OLLAMA_API_KEY or "ollama"
-            llm = ChatOpenAI(
-                model_name=settings.OLLAMA_MODEL,
-                openai_api_key=api_key,
-                base_url=f"{settings.OLLAMA_API_URL.rstrip('/')}/v1",
-                temperature=0.7,
-            )
-            print(f"DEBUG: Ollama LLM created successfully using OpenAI bridge with model: {settings.OLLAMA_MODEL} at {settings.OLLAMA_API_URL}/v1")
+            kwargs = {
+                "model_name": settings.OLLAMA_MODEL,
+                "openai_api_key": api_key,
+                "base_url": f"{settings.OLLAMA_API_URL.rstrip('/')}/v1",
+                "temperature": 0.7,
+            }
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
+            try:
+                llm = ChatOpenAI(**kwargs)
+            except Exception:
+                kwargs.pop("reasoning_effort", None)
+                llm = ChatOpenAI(**kwargs)
+            print(f"DEBUG: Ollama LLM created successfully using OpenAI bridge with model: {settings.OLLAMA_MODEL} at {settings.OLLAMA_API_URL}/v1 (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create Ollama LLM: {e}")
@@ -1351,12 +1455,12 @@ class AgentManager:
 
         system_prompt = final_system_prompt
 
-        primary_llm = self._create_llm_by_provider(provider)
+        primary_llm = self._create_llm_by_provider(provider, speed_mode=effective_speed_mode)
         
         fallback_provider = settings.FALLBACK_LLM_PROVIDER
         fallback_llm = None
         if fallback_provider and fallback_provider != provider:
-            fallback_llm = self._create_llm_by_provider(fallback_provider)
+            fallback_llm = self._create_llm_by_provider(fallback_provider, speed_mode=effective_speed_mode)
             
         if primary_llm and fallback_llm:
             print(f"DEBUG: Creating FallbackChatModel with primary: {provider}, fallback: {fallback_provider}")

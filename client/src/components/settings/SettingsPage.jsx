@@ -3199,7 +3199,15 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       <div className="relative">
                         <select
                           value={settings.tts_provider || 'edge-tts'}
-                          onChange={(e) => handleLocalSettingChange('TTS_PROVIDER', e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            handleLocalSettingChange('TTS_PROVIDER', val);
+                            if (val === 'edge-tts' && (!settings.tts_voice || !settings.tts_voice.includes('Neural'))) {
+                              handleLocalSettingChange('TTS_VOICE', 'en-US-EmmaNeural');
+                            } else if (val === 'groq' && (!settings.tts_voice || settings.tts_voice.includes('Neural'))) {
+                              handleLocalSettingChange('TTS_VOICE', 'hannah');
+                            }
+                          }}
                           className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
                         >
                           <option value="edge-tts">Edge TTS (Neural)</option>

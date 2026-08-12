@@ -68,10 +68,12 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" data-tauri-drag-region="false">
           {onMinimize && (
             <button
               type="button"
+              data-tauri-drag-region="false"
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onMinimize();
@@ -85,6 +87,8 @@ export function LoadingScreen({ onMouseDown, onClose, onMinimize }) {
           {onClose && (
             <button
               type="button"
+              data-tauri-drag-region="false"
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 onClose();

@@ -32,6 +32,7 @@ import { LinkPreview } from './LinkPreview';
 import { ToolChip, ToolCallGroup } from './ToolChip';
 import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
+import { LlmProviderSelector } from './LlmProviderSelector';
 
 function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
     if (!blocks || blocks.length === 0) return null;
@@ -160,6 +161,9 @@ export function NormalModeLayout({
     onAttachKnowledge = () => { },
     onDetachKnowledge = () => { },
     provider,
+    onSelectProvider,
+    settings = {},
+    onUpdateSetting,
 }) {
     // Sidebar state
     const [threads, setThreads] = useState([]);
@@ -1117,7 +1121,7 @@ export function NormalModeLayout({
                         }}
                         className={`px-4 py-3 absolute bottom-0 left-0 w-full z-10 ${isCompactChat ? "px-3" : (isHistoryVisible ? "px-6" : "px-24")}`}
                     >
-                        <div className="w-full max-w-xl/*  */ xl:max-w-3xl mx-auto">
+                        <div className="w-full max-w-xl xl:max-w-3xl mx-auto">
                             <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all">
                                 {/* Inline Attachments (if any attached) */}
                                 {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
@@ -1272,14 +1276,13 @@ export function NormalModeLayout({
                                     </div>
 
                                     <div className="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={onOpenSettings}
-                                            className="flex items-center gap-1.5 rounded-lg bg-neutral-800/80 hover:bg-neutral-800 border border-neutral-700/60 px-2.5 py-1 text-xs text-neutral-300 hover:text-white transition-colors"
-                                        >
-                                            <span className="font-medium text-[11px]">{provider ? provider : '5.6 Terra Medium'}</span>
-                                            <ChevronDown size={12} className="text-neutral-400" />
-                                        </button>
+                                        <LlmProviderSelector
+                                            provider={provider}
+                                            onSelectProvider={onSelectProvider}
+                                            settings={settings}
+                                            onOpenSettings={onOpenSettings}
+                                            onUpdateSetting={onUpdateSetting}
+                                        />
 
                                         <button
                                             type="button"

@@ -502,11 +502,24 @@ async def speak_text(data: SpeakRequest):
         else: # Default/edge-tts
             import edge_tts
             
-            async def audio_generator():
+            # Ensure valid Edge TTS voice, fallback to default if invalid/mismatched (e.g. 'hannah')
+            if not voice or "Neural" not in str(voice):
+                voice = "en-US-EmmaNeural"
+
+            try:
                 communicate = edge_tts.Communicate(data.text, voice)
-                async for chunk in communicate.stream():
-                    if chunk["type"] == "audio":
-                        yield chunk["data"]
+            except Exception as init_err:
+                logging.warning(f"Edge TTS init failed for voice '{voice}', falling back to 'en-US-EmmaNeural': {init_err}")
+                voice = "en-US-EmmaNeural"
+                communicate = edge_tts.Communicate(data.text, voice)
+
+            async def audio_generator():
+                try:
+                    async for chunk in communicate.stream():
+                        if chunk["type"] == "audio":
+                            yield chunk["data"]
+                except Exception as stream_err:
+                    logging.error(f"Edge TTS streaming error: {stream_err}")
 
             return StreamingResponse(
                 audio_generator(),
