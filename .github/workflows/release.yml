@@ -2,16 +2,8 @@ name: Build and Release Tauri App
 
 on:
   push:
-    branches:
-      - main
     tags:
-      - 'v*' # Triggers full release workflow when you push a version tag like v0.3.5
-    paths:
-      # Only relevant for the `main` branch trigger — warms the Rust cache
-      # when Rust-affecting files change. Tag pushes always run regardless
-      # of paths-filter (GitHub ignores `paths` for tag-ref events).
-      - 'client/src-tauri/**'
-      - 'client/src-tauri/Cargo.lock'
+      - 'v*' # Triggers release workflow only when you push a version tag like v0.5.6
 
 permissions:
   contents: write
@@ -24,20 +16,30 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. Setup Python & Poetry
+      # 1. Restore cached Python Sidecar Executable (checks cache first)
+      - name: Cache Python Sidecar Binary
+        id: sidecar-cache
+        uses: actions/cache@v4
+        with:
+          path: client/src-tauri/bin/rie-backend-x86_64-pc-windows-msvc.exe
+          key: ${{ runner.os }}-sidecar-${{ hashFiles('server/**/*.py', 'server/poetry.lock', 'server/rie-backend.spec', 'update-backend.ps1') }}
+
+      # 2. Python Environment & Sidecar Build (ONLY if sidecar cache misses)
       - name: Set up Python
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install Poetry
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
         run: |
           pipx install poetry
           poetry config virtualenvs.create true
           poetry config virtualenvs.in-project true
 
-      # 2. Cache Poetry Dependencies
       - name: Cache Poetry Virtualenv
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: server/.venv
@@ -46,27 +48,17 @@ jobs:
             ${{ runner.os }}-poetry-
 
       - name: Install Python Dependencies
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
         working-directory: ./server
         run: |
           poetry install --no-root
 
-      # 3. Cache PyInstaller (bootloader + build analysis cache)
-      - name: Cache PyInstaller
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.LOCALAPPDATA }}/pyinstaller
-            server/build
-          key: ${{ runner.os }}-pyinstaller-${{ hashFiles('server/rie-backend.spec', 'server/poetry.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pyinstaller-
-
-      # 4. Build Python Sidecar (PyInstaller)
       - name: Build Python Sidecar (PyInstaller)
+        if: steps.sidecar-cache.outputs.cache-hit != 'true'
         run: |
           powershell -NoProfile -ExecutionPolicy Bypass -File ./update-backend.ps1
 
-      # 5. Setup Node.js & dependencies with cache
+      # 3. Setup Node.js & dependencies with cache
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -79,15 +71,11 @@ jobs:
         run: |
           npm ci
 
-      # 6. Setup Rust for Tauri compiler
+      # 4. Setup Rust for Tauri compiler
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Cache compiled Rust artifacts. shared-key keeps the key stable across
-      # both tag releases and cache-warm runs on main, so tag builds can
-      # restore what main already compiled.
-      # add-job-id-key MUST be false — the default (true) makes every job's
-      # cache key unique, which defeats cross-run/cross-job cache reuse.
+      # Cache compiled Rust artifacts across tag releases
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -97,10 +85,8 @@ jobs:
           cache-all-crates: true
           cache-on-failure: true
 
-      # 7. Build Tauri App and Auto-Publish Release Assets
-      #    Only runs on tag pushes — this is the actual release step.
+      # 5. Build Tauri App and Auto-Publish Release Assets
       - name: Build and Publish Tauri Application
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -122,11 +108,4 @@ jobs:
           prerelease: false
           projectPath: './client'
 
-      # 7b. On main pushes (cache-warm only): compile Rust in release mode
-      #     without bundling. This populates target/ under the shared cache
-      #     key on refs/heads/main, so the next tag release restores a warm
-      #     cache instead of building cold.
-      - name: Warm Rust build cache (main only)
-        if: github.ref == 'refs/heads/main'
-        working-directory: ./client/src-tauri
-        run: cargo build --release
+
