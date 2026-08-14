@@ -202,6 +202,22 @@ def init_db():
 
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_friends_device_id ON friends(device_id)")
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS plugin_integrations (
+            plugin_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            auth_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            encrypted_credentials TEXT,
+            account_info TEXT,
+            config TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
     cursor.execute("PRAGMA table_info(friends)")
     friend_columns_peer = {row[1] for row in cursor.fetchall()}
     if "peer_access_json" not in friend_columns_peer:
@@ -2535,6 +2551,148 @@ def import_backup_data(import_sections: List[str], data: Dict[str, Any]) -> Dict
             conn.close()
             
     return result
+
+
+# ── Plugin Integrations Database API ──────────────────────────────────────────
+
+def _get_plugin_aliases(plugin_id: str) -> List[str]:
+    """Helper to return canonical IDs and aliases for 3rd-party plugins."""
+    aliases = [plugin_id]
+    if plugin_id == "gmail":
+        aliases.append("google")
+    elif plugin_id == "google":
+        aliases.append("gmail")
+    elif plugin_id in ("calendar", "google_calendar"):
+        aliases.extend(["calendar", "google_calendar", "google"])
+    return list(dict.fromkeys(aliases))
+
+
+def save_plugin_integration(
+    plugin_id: str,
+    name: str,
+    auth_type: str,
+    status: str,
+    encrypted_credentials: str = "",
+    account_info: str = "{}",
+    config: str = "{}"
+) -> bool:
+    """Save or update a plugin integration record."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    now_iso = datetime.now().isoformat()
+    try:
+        # Clean up alias records (e.g. if plugin_id is gmail, delete legacy google row)
+        aliases = [a for a in _get_plugin_aliases(plugin_id) if a != plugin_id]
+        if aliases:
+            placeholders = ",".join("?" * len(aliases))
+            cursor.execute(f"DELETE FROM plugin_integrations WHERE plugin_id IN ({placeholders})", aliases)
+
+        cursor.execute(
+            """
+            INSERT INTO plugin_integrations
+            (plugin_id, name, auth_type, status, encrypted_credentials, account_info, config, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(plugin_id) DO UPDATE SET
+                name = excluded.name,
+                auth_type = excluded.auth_type,
+                status = excluded.status,
+                encrypted_credentials = excluded.encrypted_credentials,
+                account_info = excluded.account_info,
+                config = excluded.config,
+                updated_at = excluded.updated_at
+            """,
+            (plugin_id, name, auth_type, status, encrypted_credentials, account_info, config, now_iso, now_iso)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"Failed to save plugin integration {plugin_id}: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def get_plugin_integration(plugin_id: str) -> Optional[dict]:
+    """Retrieve a single plugin integration by plugin_id (handling aliases like google/gmail)."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        aliases = _get_plugin_aliases(plugin_id)
+        placeholders = ",".join("?" * len(aliases))
+        cursor.execute(
+            f"SELECT plugin_id, name, auth_type, status, encrypted_credentials, account_info, config, created_at, updated_at FROM plugin_integrations WHERE plugin_id IN ({placeholders})",
+            aliases
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "plugin_id": row[0],
+            "name": row[1],
+            "auth_type": row[2],
+            "status": row[3],
+            "encrypted_credentials": row[4] or "",
+            "account_info": json.loads(row[5]) if row[5] else {},
+            "config": json.loads(row[6]) if row[6] else {},
+            "created_at": row[7],
+            "updated_at": row[8]
+        }
+    except Exception as e:
+        logging.error(f"Error fetching plugin integration {plugin_id}: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def list_plugin_integrations() -> List[dict]:
+    """List all registered plugin integrations."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    results = []
+    try:
+        cursor.execute(
+            "SELECT plugin_id, name, auth_type, status, encrypted_credentials, account_info, config, created_at, updated_at FROM plugin_integrations"
+        )
+        rows = cursor.fetchall()
+        for row in rows:
+            results.append({
+                "plugin_id": row[0],
+                "name": row[1],
+                "auth_type": row[2],
+                "status": row[3],
+                "encrypted_credentials": row[4] or "",
+                "account_info": json.loads(row[5]) if row[5] else {},
+                "config": json.loads(row[6]) if row[6] else {},
+                "created_at": row[7],
+                "updated_at": row[8]
+            })
+    except Exception as e:
+        logging.error(f"Error listing plugin integrations: {e}")
+    finally:
+        conn.close()
+    return results
+
+
+def delete_plugin_integration(plugin_id: str) -> bool:
+    """Delete a plugin integration record (handling aliases like google/gmail)."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        aliases = _get_plugin_aliases(plugin_id)
+        placeholders = ",".join("?" * len(aliases))
+        cursor.execute(f"DELETE FROM plugin_integrations WHERE plugin_id IN ({placeholders})", aliases)
+        conn.commit()
+        return True
+    except Exception as e:
+        logging.error(f"Error deleting plugin integration {plugin_id}: {e}")
+        return False
+    finally:
+        conn.close()
+
 
 
 

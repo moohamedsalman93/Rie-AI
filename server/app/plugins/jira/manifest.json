@@ -1,0 +1,46 @@
+{
+  "manifest_version": 1,
+  "id": "jira",
+  "name": "jira",
+  "displayName": "Jira",
+  "version": "1.0.0",
+  "description": "Manage Jira issues, search sprint boards, and track project tickets.",
+  "category": "Project Management",
+  "icon": "jira",
+  "auth_type": "oauth2",
+  "scopes": [
+    "Read Jira project boards",
+    "Create and update tickets"
+  ],
+  "default_scopes": ["read:jira-work", "write:jira-work"],
+  "tools": [
+    {
+      "name": "jira_search_issues",
+      "description": "Search Jira issues using JQL query string.",
+      "risk_level": "read",
+      "capability": "jira.read",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "jql": { "type": "string", "description": "JQL search string (e.g. 'project = PROJ AND status = Open')." }
+        },
+        "required": ["jql"]
+      }
+    },
+    {
+      "name": "jira_create_issue",
+      "description": "Create a new ticket/issue in Jira project.",
+      "risk_level": "write",
+      "capability": "jira.write",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project_key": { "type": "string", "description": "Jira Project key (e.g. 'PROJ')." },
+          "summary": { "type": "string", "description": "Brief summary/title of the issue." },
+          "issue_type": { "type": "string", "description": "Issue type (e.g. 'Task', 'Bug', 'Story').", "default": "Task" }
+        },
+        "required": ["project_key", "summary"]
+      }
+    }
+  ]
+}

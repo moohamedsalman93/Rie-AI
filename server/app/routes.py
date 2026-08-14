@@ -43,9 +43,17 @@ from app.windows_tools import WINDOWS_TOOLS
 from app.ltm_tools import LTM_TOOLS
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 from app.mcp_client import mcp_manager
+from app.plugins.loader import plugin_registry
+from app.plugin_manager import plugin_manager
+from app.security_crypto import encrypt_json, decrypt_json
 from app.database import (
+    save_plugin_integration,
+    get_plugin_integration,
+    list_plugin_integrations,
+    delete_plugin_integration,
     update_setting,
     get_setting,
+
     create_thread,
     update_thread_title,
     count_user_messages,
@@ -3595,3 +3603,244 @@ async def get_active_skills_endpoint(
         pass
 
     return active
+
+
+# ── Plugin & Connector Layer API Endpoints ─────────────────────────────────────
+
+@router.get("/api/plugins/catalog")
+async def get_plugin_catalog():
+    """
+    Get all available connector plugins in catalog with their status,
+    account info, and exposed tools.
+    """
+    plugin_registry.discover_plugins()
+    db_records = list_plugin_integrations()
+    installed_map = {r["plugin_id"]: r for r in db_records}
+    if "google" in installed_map and "gmail" not in installed_map:
+        installed_map["gmail"] = installed_map["google"]
+
+    catalog = []
+    for plugin_id, manifest in plugin_registry.manifests.items():
+        installed = installed_map.get(plugin_id)
+        status = installed["status"] if installed else "disconnected"
+        account_info = installed["account_info"] if installed else {}
+        updated_at = installed["updated_at"] if installed else None
+
+        tools_info = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "risk_level": getattr(t, "risk_level", "read")
+            }
+            for t in manifest.tools
+        ]
+
+        catalog.append({
+            "id": manifest.id,
+            "name": manifest.name,
+            "displayName": manifest.displayName,
+            "version": getattr(manifest, "version", "1.0.0"),
+            "description": manifest.description,
+            "category": manifest.category,
+            "icon": manifest.icon,
+            "auth_type": manifest.auth_type,
+            "scopes": getattr(manifest, "scopes", []),
+            "status": status,
+            "account_info": account_info,
+            "config": installed.get("config", {}) if installed else {},
+            "updated_at": updated_at,
+            "tools": tools_info
+        })
+
+    return {"status": "ok", "plugins": catalog}
+
+
+@router.post("/api/plugins/{plugin_id}/capabilities")
+async def toggle_plugin_capability(plugin_id: str, capability: str, enabled: bool):
+    """Toggle a plugin tool capability (enable or disable)."""
+    record = get_plugin_integration(plugin_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' is not installed.")
+
+    config = record.get("config", {})
+    disabled_caps = set(config.get("disabled_capabilities", []))
+
+    if enabled:
+        disabled_caps.discard(capability)
+    else:
+        disabled_caps.add(capability)
+
+    config["disabled_capabilities"] = list(disabled_caps)
+
+    save_plugin_integration(
+        plugin_id=plugin_id,
+        name=record["name"],
+        auth_type=record["auth_type"],
+        status=record["status"],
+        encrypted_credentials=record.get("encrypted_credentials", ""),
+        account_info=json.dumps(record.get("account_info", {})),
+        config=json.dumps(config)
+    )
+
+    await plugin_manager.initialize()
+    return {"status": "ok", "plugin_id": plugin_id, "disabled_capabilities": list(disabled_caps)}
+
+
+@router.post("/api/plugins/{plugin_id}/connect")
+async def connect_plugin(plugin_id: str, custom_client_id: Optional[str] = None):
+    """
+    Initiate OAuth authorization flow via cloud middleware proxy or direct custom client ID.
+    Returns auth_url for user browser redirection.
+    """
+    manifest = plugin_registry.get_manifest(plugin_id)
+    if not manifest:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' not found in catalog.")
+
+    callback_url = "http://127.0.0.1:14300/api/plugins/oauth/callback"
+
+    # If custom_client_id is provided, construct direct OAuth URL immediately
+    if custom_client_id and custom_client_id.strip():
+        cid = custom_client_id.strip()
+        scopes_str = " ".join(manifest.scopes or [])
+        if plugin_id == "github":
+            auth_url = f"https://github.com/login/oauth/authorize?client_id={cid}&redirect_uri={callback_url}&scope={scopes_str}&state=github"
+        elif plugin_id in ("gmail", "calendar"):
+            auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?client_id={cid}&redirect_uri={callback_url}&response_type=code&scope={scopes_str}&access_type=offline&prompt=consent"
+        elif plugin_id == "jira":
+            auth_url = f"https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id={cid}&scope={scopes_str}&redirect_uri={callback_url}&response_type=code&prompt=consent"
+        else:
+            auth_url = f"https://oauth.provider.com/authorize?client_id={cid}&redirect_uri={callback_url}&response_type=code"
+
+        return {
+            "status": "ok",
+            "plugin_id": plugin_id,
+            "auth_url": auth_url
+        }
+
+    # Otherwise call rie-be-main cloud server to generate OAuth URL
+    cloud_url = f"http://localhost:8001/v1/integrations/oauth/{plugin_id}/authorize"
+    params = {"desktop_callback": callback_url}
+
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            res = await client.get(cloud_url, params=params)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("status") == "ok" and data.get("auth_url"):
+                    return {
+                        "status": "ok",
+                        "plugin_id": plugin_id,
+                        "auth_url": data["auth_url"]
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": data.get("message", "Cloud middleware failed to construct authorization URL.")
+                    }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"OAuth middleware error ({res.status_code}): {res.text}"
+                }
+    except Exception as e:
+        logger.error(f"Error calling cloud OAuth authorization endpoint: {e}")
+        return {
+            "status": "error",
+            "message": "OAuth proxy server (port 8001) is offline. Open 'Manage' on the plugin card to enter your OAuth Client ID under Custom Client ID (Self-Host)."
+        }
+
+
+@router.get("/api/plugins/oauth/callback")
+async def plugin_oauth_callback(
+    provider: str = Query(...),
+    payload: str = Query(...)
+):
+    """
+    OAuth Callback destination hit after user authorizes.
+    Decodes payload from cloud middleware, encrypts tokens, saves to SQLite, and updates agent tool router.
+    """
+    import urllib.parse
+    import base64
+    import json
+    from fastapi.responses import HTMLResponse
+    from app.oauth_templates import render_oauth_success_html, render_oauth_error_html
+
+    try:
+        unquoted = urllib.parse.unquote(payload)
+        raw_json = base64.urlsafe_b64decode(unquoted.encode("utf-8")).decode("utf-8")
+        data = json.loads(raw_json)
+
+        status = data.get("status")
+        target_plugin_id = provider
+        if target_plugin_id == "google":
+            target_plugin_id = "gmail"
+
+        manifest = plugin_registry.get_manifest(target_plugin_id)
+        name = manifest.displayName if manifest else target_plugin_id.capitalize()
+
+        if status != "success":
+            err_detail = data.get("message") or "Authorization was rejected or cancelled by provider."
+            return HTMLResponse(
+                content=render_oauth_error_html(err_detail, name),
+                status_code=400
+            )
+
+        tokens = data.get("tokens", {})
+        account_info = data.get("account_info", {})
+
+        # Encrypt token payload with Fernet security crypto module
+        encrypted_creds = encrypt_json({"tokens": tokens})
+
+        # Save record in database
+        save_plugin_integration(
+            plugin_id=target_plugin_id,
+            name=name,
+            auth_type="oauth2",
+            status="connected",
+            encrypted_credentials=encrypted_creds,
+            account_info=json.dumps(account_info),
+            config="{}"
+        )
+
+        # Re-initialize plugin manager tools
+        await plugin_manager.initialize()
+
+        # Render ultra-premium glassmorphic landing page
+        html_content = render_oauth_success_html(
+            provider_id=target_plugin_id,
+            provider_name=name,
+            account_info=account_info
+        )
+        return HTMLResponse(content=html_content)
+
+    except Exception as e:
+        logger.error(f"Failed to process plugin OAuth callback: {e}", exc_info=True)
+        from fastapi.responses import HTMLResponse
+        from app.oauth_templates import render_oauth_error_html
+        return HTMLResponse(
+            content=render_oauth_error_html(str(e), provider.capitalize()),
+            status_code=400
+        )
+
+
+@router.post("/api/plugins/{plugin_id}/disconnect")
+async def disconnect_plugin(plugin_id: str):
+    """Disconnect plugin integration and delete credentials."""
+    success = delete_plugin_integration(plugin_id)
+    if success:
+        await plugin_manager.initialize()
+        return {"status": "ok", "message": f"Plugin '{plugin_id}' disconnected."}
+    return {"status": "error", "message": f"Failed to disconnect plugin '{plugin_id}'."}
+
+
+@router.post("/api/plugins/{plugin_id}/sync")
+async def sync_plugin(plugin_id: str):
+    """Test/sync active plugin integration."""
+    record = get_plugin_integration(plugin_id)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' is not installed.")
+
+    # Re-initialize plugin tools
+    await plugin_manager.initialize()
+    return {"status": "ok", "plugin": record}
+

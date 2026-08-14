@@ -30,7 +30,10 @@ def set_agent_context(
 
 def reset_agent_context(tokens: list) -> None:
     for var, token in tokens:
-        var.reset(token)
+        try:
+            var.reset(token)
+        except (ValueError, RuntimeError):
+            pass
 
 
 def get_current_thread_id() -> Optional[str]:

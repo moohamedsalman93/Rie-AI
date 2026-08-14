@@ -1,0 +1,181 @@
+{
+  "manifest_version": 1,
+  "id": "gmail",
+  "name": "gmail",
+  "displayName": "Gmail",
+  "version": "2.1.0",
+  "description": "Full Gmail automation: search, read, send with attachments, reply, create drafts, archive, mark read/unread, trash emails, and manage labels.",
+  "category": "Communication",
+  "icon": "gmail",
+  "auth_type": "oauth2",
+  "scopes": [
+    "Read inbox & search messages",
+    "Send emails on your behalf",
+    "Manage drafts",
+    "Modify labels, archive & trash emails"
+  ],
+  "default_scopes": [
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify"
+  ],
+  "tools": [
+    {
+      "name": "gmail_search_emails",
+      "description": "Search user's Gmail inbox, spam, or trash with query strings (e.g. 'is:unread', 'from:john@example.com', 'in:spam').",
+      "risk_level": "read",
+      "capability": "gmail.read",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search query string for Gmail filters." },
+          "max_results": { "type": "integer", "description": "Maximum number of emails to retrieve (default 5).", "default": 5 }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "gmail_get_email",
+      "description": "Fetch complete email details including headers (From, To, Subject, Date) and unindented body content by message ID.",
+      "risk_level": "read",
+      "capability": "gmail.read",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message_id": { "type": "string", "description": "Gmail message ID to fetch." }
+        },
+        "required": ["message_id"]
+      }
+    },
+    {
+      "name": "gmail_send_email",
+      "description": "Send a real email via Gmail API with optional file attachments.",
+      "risk_level": "write",
+      "capability": "gmail.send",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string", "description": "Recipient email address." },
+          "subject": { "type": "string", "description": "Subject line of the email." },
+          "body": { "type": "string", "description": "Body text of the email message." },
+          "attachments": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional list of absolute file paths to attach to the email (PDFs, images, documents, CSVs)."
+          },
+          "thread_id": { "type": "string", "description": "Optional thread ID to group into an existing conversation thread." }
+        },
+        "required": ["to", "subject", "body"]
+      }
+    },
+    {
+      "name": "gmail_create_draft",
+      "description": "Create a new email draft in user's Gmail account without sending, with optional file attachments.",
+      "risk_level": "write",
+      "capability": "gmail.send",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string", "description": "Recipient email address." },
+          "subject": { "type": "string", "description": "Subject line of the draft." },
+          "body": { "type": "string", "description": "Body content of the draft." },
+          "attachments": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional list of absolute file paths to attach to the draft."
+          },
+          "thread_id": { "type": "string", "description": "Optional thread ID to associate draft with." }
+        },
+        "required": ["to", "subject", "body"]
+      }
+    },
+    {
+      "name": "gmail_reply_email",
+      "description": "Reply directly to an existing email or thread with optional file attachments.",
+      "risk_level": "write",
+      "capability": "gmail.send",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message_id": { "type": "string", "description": "Message ID of the email being replied to." },
+          "to": { "type": "string", "description": "Recipient email address." },
+          "subject": { "type": "string", "description": "Subject line (e.g. 'Re: Original Subject')." },
+          "body": { "type": "string", "description": "Reply message body text." },
+          "attachments": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional list of absolute file paths to attach."
+          },
+          "thread_id": { "type": "string", "description": "Thread ID of the conversation." }
+        },
+        "required": ["message_id", "to", "subject", "body"]
+      }
+    },
+    {
+      "name": "gmail_archive_email",
+      "description": "Archive an email by removing it from the INBOX label.",
+      "risk_level": "write",
+      "capability": "gmail.modify",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message_id": { "type": "string", "description": "Gmail message ID to archive." }
+        },
+        "required": ["message_id"]
+      }
+    },
+    {
+      "name": "gmail_mark_as_read",
+      "description": "Mark an unread email as read.",
+      "risk_level": "write",
+      "capability": "gmail.modify",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message_id": { "type": "string", "description": "Gmail message ID to mark as read." }
+        },
+        "required": ["message_id"]
+      }
+    },
+    {
+      "name": "gmail_mark_as_unread",
+      "description": "Mark an email as unread.",
+      "risk_level": "write",
+      "capability": "gmail.modify",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message_id": { "type": "string", "description": "Gmail message ID to mark as unread." }
+        },
+        "required": ["message_id"]
+      }
+    },
+    {
+      "name": "gmail_trash_email",
+      "description": "Move an email to Trash.",
+      "risk_level": "write",
+      "capability": "gmail.modify",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message_id": { "type": "string", "description": "Gmail message ID to move to Trash." }
+        },
+        "required": ["message_id"]
+      }
+    },
+    {
+      "name": "gmail_list_labels",
+      "description": "List all Gmail labels, folders, and message counts.",
+      "risk_level": "read",
+      "capability": "gmail.read",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}

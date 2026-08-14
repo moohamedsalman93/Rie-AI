@@ -4,7 +4,7 @@ Tools for managing MCP server connections and registry.
 import json
 import logging
 from typing import Optional, List, Dict, Any, Literal
-from langchain_core.tools import tool
+from langchain_core.tools import tool, StructuredTool
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -19,8 +19,21 @@ class MCPServerConfig(BaseModel):
     args: Optional[List[str]] = Field(default_factory=list, description="Arguments for the Stdio command")
     env: Optional[Dict[str, str]] = Field(default_factory=dict, description="Environment variables for the Stdio server")
 
-@tool
-def list_mcp_servers() -> str:
+class ListMCPServersInput(BaseModel):
+    pass
+
+class AddMCPServerInput(BaseModel):
+    config: Dict[str, Any] = Field(..., description="A dictionary containing 'name', and either 'url' (for SSE) or 'command' and 'args' (for Stdio).")
+
+class UpdateMCPServerInput(BaseModel):
+    name: str = Field(..., description="The name of the MCP server to update.")
+    updates: Dict[str, Any] = Field(..., description="A dictionary of fields to update (url, command, args, env, or even name).")
+
+class DeleteMCPServerInput(BaseModel):
+    name: str = Field(..., description="The name of the MCP server to delete.")
+
+
+def _list_mcp_servers() -> str:
     """
     List all configured MCP servers and their current status.
     """
@@ -43,14 +56,10 @@ def list_mcp_servers() -> str:
         logger.error(f"Error listing MCP servers: {e}")
         return f"Error listing MCP servers: {e}"
 
-@tool
-def add_mcp_server(config: Dict[str, Any]) -> str:
+
+def _add_mcp_server(config: Dict[str, Any]) -> str:
     """
     Add a new MCP server configuration.
-    
-    Args:
-        config: A dictionary containing 'name', and either 'url' (for SSE) or 'command' and 'args' (for Stdio).
-                Optional 'env' dictionary can be provided for Stdio servers.
     """
     try:
         name = config.get("name")
@@ -82,14 +91,10 @@ def add_mcp_server(config: Dict[str, Any]) -> str:
         logger.error(f"Error adding MCP server: {e}")
         return f"Error adding MCP server: {e}"
 
-@tool
-def update_mcp_server(name: str, updates: Dict[str, Any]) -> str:
+
+def _update_mcp_server(name: str, updates: Dict[str, Any]) -> str:
     """
     Update an existing MCP server configuration.
-    
-    Args:
-        name: The name of the MCP server to update.
-        updates: A dictionary of fields to update (url, command, args, env, or even name).
     """
     try:
         current_servers = settings.MCP_SERVERS
@@ -112,13 +117,10 @@ def update_mcp_server(name: str, updates: Dict[str, Any]) -> str:
         logger.error(f"Error updating MCP server: {e}")
         return f"Error updating MCP server: {e}"
 
-@tool
-def delete_mcp_server(name: str) -> str:
+
+def _delete_mcp_server(name: str) -> str:
     """
     Delete an MCP server configuration.
-    
-    Args:
-        name: The name of the MCP server to delete.
     """
     try:
         current_servers = settings.MCP_SERVERS
@@ -134,5 +136,34 @@ def delete_mcp_server(name: str) -> str:
     except Exception as e:
         logger.error(f"Error deleting MCP server: {e}")
         return f"Error deleting MCP server: {e}"
+
+
+list_mcp_servers = StructuredTool.from_function(
+    func=_list_mcp_servers,
+    name="list_mcp_servers",
+    description="List all configured MCP servers and their current status.",
+    args_schema=ListMCPServersInput,
+)
+
+add_mcp_server = StructuredTool.from_function(
+    func=_add_mcp_server,
+    name="add_mcp_server",
+    description="Add a new MCP server configuration with name, and either url (for SSE) or command and args (for Stdio).",
+    args_schema=AddMCPServerInput,
+)
+
+update_mcp_server = StructuredTool.from_function(
+    func=_update_mcp_server,
+    name="update_mcp_server",
+    description="Update an existing MCP server configuration.",
+    args_schema=UpdateMCPServerInput,
+)
+
+delete_mcp_server = StructuredTool.from_function(
+    func=_delete_mcp_server,
+    name="delete_mcp_server",
+    description="Delete an MCP server configuration by name.",
+    args_schema=DeleteMCPServerInput,
+)
 
 MCP_REGISTRY_TOOLS = [list_mcp_servers, add_mcp_server, update_mcp_server, delete_mcp_server]

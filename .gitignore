@@ -76,4 +76,6 @@ htmlcov/
 *.db-wal
 
 server/chroma_ltm
+server/knowledge/
+server/scratch/
 .cursor

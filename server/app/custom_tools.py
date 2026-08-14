@@ -93,6 +93,53 @@ def create_external_tool(config: Dict[str, Any]) -> StructuredTool:
     headers = config.get("headers") or {}
     body = config.get("body")
 
+    params_schema = config.get("parameters_schema") or {}
+    properties = params_schema.get("properties", {})
+    required = params_schema.get("required", [])
+
+    fields = {}
+    for prop_name, prop_info in properties.items():
+        if not isinstance(prop_info, dict):
+            continue
+        schema_type = prop_info.get("type", "string")
+        if schema_type == "array":
+            items_info = prop_info.get("items", {})
+            item_type_str = items_info.get("type", "string") if isinstance(items_info, dict) else "string"
+            item_py_type = {
+                "integer": int,
+                "number": float,
+                "boolean": bool,
+                "object": dict
+            }.get(item_type_str, str)
+            prop_type = List[item_py_type]
+        else:
+            prop_type = {
+                "integer": int,
+                "number": float,
+                "boolean": bool,
+                "object": dict
+            }.get(schema_type, str)
+
+        prop_description = prop_info.get("description", "")
+        prop_default = ... if prop_name in required else prop_info.get("default", None)
+        fields[prop_name] = (
+            prop_type,
+            Field(..., description=prop_description) if prop_default is ... else Field(default=prop_default, description=prop_description)
+        )
+
+    from pydantic import BaseModel, Field
+    class EmptyInput(BaseModel):
+        pass
+
+    InputModel = EmptyInput
+    if fields:
+        try:
+            import re
+            class_name = re.sub(r'[^a-zA-Z0-9_]', '', name)
+            InputModel = create_model(f"{class_name}Input", **fields)
+        except Exception as e:
+            logger.error(f"Failed to create Pydantic model for external tool {name}: {e}")
+
     async def tool_func(**kwargs: Any) -> Any:
         return await call_external_api(url, method, headers, body=body, **kwargs)
 
@@ -101,6 +148,7 @@ def create_external_tool(config: Dict[str, Any]) -> StructuredTool:
         coroutine=tool_func,
         name=name,
         description=description,
+        args_schema=InputModel
     )
 
 def get_external_tools(configs: List[Dict[str, Any]]) -> List[StructuredTool]:

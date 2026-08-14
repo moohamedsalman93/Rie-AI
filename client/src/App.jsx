@@ -1050,11 +1050,11 @@ function MainApp() {
     };
     if (isScreenToUse) {
       setIsCapturing(true);
-      try {
-        const win = getWindow();
-        const shouldHide = settings.exclude_from_capture !== false;
+      const isTauriEnv = isTauri();
+      const win = isTauriEnv ? getWindow() : null;
 
-        if (shouldHide) {
+      try {
+        if (win && typeof win.hide === 'function') {
           try {
             const { invoke } = await import("@tauri-apps/api/core");
             await invoke("set_foreground_lock", { lock: false });
@@ -1062,7 +1062,7 @@ function MainApp() {
             console.error("Failed to unlock foreground for capture:", e);
           }
           await win.hide();
-          await new Promise(resolve => setTimeout(resolve, 300));
+          await new Promise(resolve => setTimeout(resolve, 350));
         }
 
         let capturedImage = null;
@@ -1084,7 +1084,7 @@ function MainApp() {
           }
         }
 
-        if (shouldHide) {
+        if (win && typeof win.show === 'function') {
           await win.show();
           await win.unminimize();
           await win.setFocus();
@@ -1099,13 +1099,11 @@ function MainApp() {
         await performSend(capturedImage, desktopText);
       } catch (err) {
         console.error("Delayed capture overall outer wrapper failed:", err);
-        const shouldHide = settings.exclude_from_capture !== false;
-        if (shouldHide) {
-          const win = getWindow();
-          await win.show();
-          await win.unminimize();
-          await win.setFocus();
+        if (win && typeof win.show === 'function') {
           try {
+            await win.show();
+            await win.unminimize();
+            await win.setFocus();
             const { invoke } = await import("@tauri-apps/api/core");
             await invoke("set_foreground_lock", { lock: true });
           } catch (e) {

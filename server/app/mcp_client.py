@@ -121,32 +121,45 @@ class MCPManager:
         # Build fields dict for Pydantic model
         fields = {}
         for prop_name, prop_info in properties.items():
-            # Map JSON schema types to Python types
             schema_type = prop_info.get("type", "string")
-            prop_type = {
-                "integer": int,
-                "number": float,
-                "boolean": bool,
-                "array": list,
-                "object": dict
-            }.get(schema_type, str)
-                
+            if schema_type == "array":
+                items_info = prop_info.get("items", {})
+                item_type_str = items_info.get("type", "string") if isinstance(items_info, dict) else "string"
+                item_py_type = {
+                    "integer": int,
+                    "number": float,
+                    "boolean": bool,
+                    "object": dict
+                }.get(item_type_str, str)
+                prop_type = List[item_py_type]
+            else:
+                prop_type = {
+                    "integer": int,
+                    "number": float,
+                    "boolean": bool,
+                    "object": dict
+                }.get(schema_type, str)
+
             prop_description = prop_info.get("description", "")
             prop_default = ... if prop_name in required else None
-            
+
             fields[prop_name] = (
                 prop_type, 
                 Field(..., description=prop_description) if prop_default is ... else Field(default=prop_default, description=prop_description)
             )
         
-        # Create dynamic Pydantic model using create_model
-        try:
-            # Sanitize tool name for class name (remove non-alphanumeric)
-            class_name = re.sub(r'[^a-zA-Z0-9_]', '', tool_name)
-            InputModel = create_model(f"{class_name}Input", **fields)
-        except Exception as e:
-            logger.error(f"Failed to create Pydantic model for tool {tool_name}: {e}")
-            InputModel = None
+        class EmptyInput(BaseModel):
+            pass
+
+        InputModel = EmptyInput
+        if fields:
+            try:
+                # Sanitize tool name for class name (remove non-alphanumeric)
+                class_name = re.sub(r'[^a-zA-Z0-9_]', '', tool_name)
+                InputModel = create_model(f"{class_name}Input", **fields)
+            except Exception as e:
+                logger.error(f"Failed to create Pydantic model for tool {tool_name}: {e}")
+                InputModel = EmptyInput
         
         # Create async function that calls the MCP tool through the connection
         async def tool_func(**kwargs):

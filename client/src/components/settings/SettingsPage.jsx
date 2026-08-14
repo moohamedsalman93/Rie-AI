@@ -11,6 +11,7 @@ import { ExternalApisManager } from './ExternalApisManager';
 import { KnowledgeManager } from './KnowledgeManager';
 import { SkillsManager } from './SkillsManager';
 import BrowserSettingsSection from './BrowserSettingsSection';
+import ConnectorsManager from './tabs/ConnectorsManager';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
@@ -1855,6 +1856,10 @@ key2,
                         })}
                       </div>
                     </div>
+                  )}
+
+                  {capabilityTab === 'connectors' && (
+                    <ConnectorsManager />
                   )}
 
                   {capabilityTab === 'browser' && (

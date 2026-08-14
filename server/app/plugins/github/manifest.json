@@ -1,0 +1,46 @@
+{
+  "manifest_version": 1,
+  "id": "github",
+  "name": "github",
+  "displayName": "GitHub",
+  "version": "1.0.0",
+  "description": "Manage repositories, create issues, search code, and manage pull requests.",
+  "category": "Developer Tools",
+  "icon": "github",
+  "auth_type": "oauth2",
+  "scopes": [
+    "Access public and private repositories",
+    "Read user profile",
+    "Create & update issues"
+  ],
+  "default_scopes": ["repo", "user", "read:user"],
+  "tools": [
+    {
+      "name": "github_list_repos",
+      "description": "List user's public and private GitHub repositories.",
+      "risk_level": "read",
+      "capability": "github.read",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer", "description": "Max repos to fetch.", "default": 10 }
+        }
+      }
+    },
+    {
+      "name": "github_create_issue",
+      "description": "Create a new issue in a specified repository (owner/repo).",
+      "risk_level": "write",
+      "capability": "github.write",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "repo_full_name": { "type": "string", "description": "Repository full name (e.g. 'owner/repo')." },
+          "title": { "type": "string", "description": "Issue title." },
+          "body": { "type": "string", "description": "Detailed description of the issue." }
+        },
+        "required": ["repo_full_name", "title"]
+      }
+    }
+  ]
+}

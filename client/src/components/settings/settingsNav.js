@@ -84,6 +84,7 @@ export const ADVANCED_SUB_TABS = [
 
 export const CAPABILITY_SUB_TABS = [
   { id: 'builtin', label: 'Built-in Tools' },
+  { id: 'connectors', label: 'Connectors & Plugins' },
   { id: 'browser', label: 'Browser Engine' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'external', label: 'External APIs' },

@@ -8,11 +8,12 @@ import re
 import threading
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Iterator, AsyncIterator
+from typing import Any, List, Optional, Iterator, AsyncIterator, Annotated
 from collections.abc import Generator
 
 import httpx
 from openai import APIConnectionError
+from pydantic import BaseModel, Field
 
 from langchain.agents import create_agent
 from langchain_groq import ChatGroq
@@ -33,6 +34,7 @@ from langchain.agents.middleware import (
     ModelResponse,
 )
 from langchain.tools import tool, ToolRuntime
+from langchain_core.tools import InjectedToolArg
 from typing import Callable, Awaitable
 from deepagents.middleware.subagents import SubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
@@ -47,6 +49,7 @@ from app.tools import (
 )
 from app.windows_tools import WINDOWS_TOOLS
 from app.mcp_client import mcp_manager
+from app.plugin_manager import plugin_manager
 from app.memory import memory_store
 from app.ltm_tools import LTM_TOOLS, Context
 from app.custom_tools import get_external_tools
@@ -180,7 +183,9 @@ You are Rie, an autonomous AI assistant specialized in technical tasks.
 Priorities: check and use available skills first, accuracy second, efficiency third.
 
 Rules:
-- Prioritize using specialized skills/instructions. Before starting any task, check the "Available Skills" section. If any available skill matches or relates to the task, you MUST first call the `load_skill` tool to retrieve and follow its instructions.
+- Connected Integration Plugins: If dynamic plugin integration tools (e.g. `gmail_search_emails`, `gmail_get_email`, `gmail_send_email`, `github_*`, `jira_*`) are available in your toolset, you MUST prioritize these native plugin tools over browser automation or loading browser skills (`CamoFox Browser`, `Computer Use Guide`). Use `gmail_*` tools directly for reading, searching, or drafting emails.
+- Email Body Formatting: When displaying email body text or email content to the user, render it as normal plain text paragraphs and bullet points. Do NOT wrap email body text inside code blocks (` ``` `) or backticks (` ` `).
+- Prioritize using specialized skills/instructions for tasks where no dedicated native integration tools exist. Before starting any task, check the "Available Skills" section. If any available skill matches or relates to the task, you MUST call the `load_skill` tool to retrieve and follow its instructions.
 - Web & Browser Tasks: When performing web browsing, page navigation, web searching, or web interactions, if browser tools (such as `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_close`) are available in your toolset, you MUST prioritize `browser_*` tools over desktop GUI tools (`windows_mouse_click`, `windows_key_press`, `get_desktop_state`, `app_control`). Use `browser_*` tools for all web interactions.
 - Prefer verified information and reasoning over assumptions.
 - Select and invoke the most specific and efficient tools for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
@@ -393,6 +398,104 @@ class RotatingChatOpenAI(BaseChatModel):
         return "rotating-openai"
 
 
+def _sanitize_proto_schema(schema_obj: Any) -> None:
+    """Recursively ensure all ARRAY types in a proto Schema or dict have items set."""
+    if not schema_obj:
+        return
+
+    # Handle protobuf Schema
+    if hasattr(schema_obj, "type") and hasattr(schema_obj, "properties"):
+        is_array = False
+        try:
+            is_array = schema_obj.type == 5 or str(schema_obj.type).endswith("ARRAY")
+        except Exception:
+            pass
+
+        if is_array:
+            if not hasattr(schema_obj, "items") or not schema_obj.items or getattr(schema_obj.items, "type", 0) == 0:
+                try:
+                    schema_obj.items.type = 1  # Type.STRING
+                except Exception:
+                    pass
+
+        # Check all child properties
+        if hasattr(schema_obj, "properties") and schema_obj.properties:
+            for prop_name in list(schema_obj.properties.keys()):
+                prop_val = schema_obj.properties[prop_name]
+                prop_is_array = False
+                try:
+                    prop_is_array = prop_val.type == 5 or str(prop_val.type).endswith("ARRAY")
+                except Exception:
+                    pass
+                if prop_is_array:
+                    if not hasattr(prop_val, "items") or not prop_val.items or getattr(prop_val.items, "type", 0) == 0:
+                        try:
+                            prop_val.items.type = 1  # Type.STRING
+                        except Exception:
+                            pass
+                _sanitize_proto_schema(prop_val)
+
+    # Handle dict
+    elif isinstance(schema_obj, dict):
+        prop_type = str(schema_obj.get("type", "")).upper()
+        if prop_type in ("ARRAY", "5") and (not schema_obj.get("items") or schema_obj.get("items") == {}):
+            schema_obj["items"] = {"type": "STRING"}
+        if "properties" in schema_obj and isinstance(schema_obj["properties"], dict):
+            for k, v in schema_obj["properties"].items():
+                _sanitize_proto_schema(v)
+        for k, v in schema_obj.items():
+            if isinstance(v, (dict, list)):
+                _sanitize_proto_schema(v)
+    elif isinstance(schema_obj, list):
+        for item in schema_obj:
+            _sanitize_proto_schema(item)
+
+
+def _sanitize_gemini_tool_declarations(tools_spec: Any) -> Any:
+    """Recursively sanitize tools/function_declarations for Gemini API to ensure every array has items."""
+    if isinstance(tools_spec, dict):
+        prop_type = str(tools_spec.get("type", "")).upper()
+        if prop_type in ("ARRAY", "array") and (not tools_spec.get("items") or tools_spec.get("items") == {}):
+            tools_spec["items"] = {"type": "STRING"}
+
+        # Also check properties inside parameters schema
+        if "properties" in tools_spec and isinstance(tools_spec["properties"], dict):
+            for prop_k, prop_v in list(tools_spec["properties"].items()):
+                if isinstance(prop_v, dict):
+                    p_type = str(prop_v.get("type", "")).upper()
+                    if p_type in ("ARRAY", "array") and (not prop_v.get("items") or prop_v.get("items") == {}):
+                        prop_v["items"] = {"type": "STRING"}
+                    if "properties" in prop_v:
+                        tools_spec["properties"][prop_k] = _sanitize_gemini_tool_declarations(prop_v)
+
+        for k, v in list(tools_spec.items()):
+            tools_spec[k] = _sanitize_gemini_tool_declarations(v)
+    elif isinstance(tools_spec, list):
+        return [_sanitize_gemini_tool_declarations(item) for item in tools_spec]
+    return tools_spec
+
+
+class SafeChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
+    """ChatGoogleGenerativeAI with automatic Gemini schema sanitization on _prepare_request and bind_tools."""
+
+    def _prepare_request(self, messages: List[BaseMessage], **kwargs: Any) -> Any:
+        request = super()._prepare_request(messages, **kwargs)
+        if hasattr(request, "tools") and request.tools:
+            for tool_obj in request.tools:
+                if hasattr(tool_obj, "function_declarations") and tool_obj.function_declarations:
+                    for fd in tool_obj.function_declarations:
+                        if hasattr(fd, "parameters") and fd.parameters:
+                            _sanitize_proto_schema(fd.parameters)
+        return request
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+        bound = super().bind_tools(tools, **kwargs)
+        if hasattr(bound, "kwargs") and isinstance(bound.kwargs, dict):
+            if "tools" in bound.kwargs:
+                bound.kwargs["tools"] = _sanitize_gemini_tool_declarations(bound.kwargs["tools"])
+        return bound
+
+
 class RotatingChatGoogleGenerativeAI(BaseChatModel):
     """A wrapper for ChatGoogleGenerativeAI that rotates through multiple API keys to bypass rate limits."""
     api_keys: List[str]
@@ -405,8 +508,8 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "gemini"))
 
-    def _get_model(self) -> ChatGoogleGenerativeAI:
-        """Get a ChatGoogleGenerativeAI instance with the next API key in the rotation"""
+    def _get_model(self) -> SafeChatGoogleGenerativeAI:
+        """Get a SafeChatGoogleGenerativeAI instance with the next API key in the rotation"""
         key, _idx = self._rotator.next_key()
         kwargs = {
             "google_api_key": key,
@@ -416,10 +519,10 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
         try:
-            return ChatGoogleGenerativeAI(**kwargs)
+            return SafeChatGoogleGenerativeAI(**kwargs)
         except Exception:
             kwargs.pop("reasoning_effort", None)
-            return ChatGoogleGenerativeAI(**kwargs)
+            return SafeChatGoogleGenerativeAI(**kwargs)
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
@@ -432,12 +535,14 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         if self.reasoning_effort:
             dummy_kwargs["reasoning_effort"] = self.reasoning_effort
         try:
-            dummy = ChatGoogleGenerativeAI(**dummy_kwargs)
+            dummy = SafeChatGoogleGenerativeAI(**dummy_kwargs)
         except Exception:
             dummy_kwargs.pop("reasoning_effort", None)
-            dummy = ChatGoogleGenerativeAI(**dummy_kwargs)
+            dummy = SafeChatGoogleGenerativeAI(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
         new_kwargs = getattr(bound, "kwargs", {})
+        if "tools" in new_kwargs:
+            new_kwargs["tools"] = _sanitize_gemini_tool_declarations(new_kwargs["tools"])
         return self.bind(**new_kwargs)
 
     def _generate(
@@ -560,8 +665,12 @@ class FallbackChatModel(BaseChatModel):
             raise e
 
 
-@tool
-def load_skill(skill_name: str, runtime: ToolRuntime = None) -> str:
+class LoadSkillInput(BaseModel):
+    skill_name: str = Field(description="The exact name of the skill to load.")
+
+
+@tool(args_schema=LoadSkillInput)
+def load_skill(skill_name: str, runtime: Annotated[ToolRuntime, InjectedToolArg] = None) -> str:
     """Load the full content of a skill into the agent's context.
     Use this when you need detailed instructions or guidelines for a specific domain/task.
     
@@ -750,7 +859,14 @@ class AgentManager:
         except Exception as e:
             print(f"ERROR: Failed to load external tools for peer map: {e}")
             loaded_external_tools = []
-        for tool in loaded_mcp_tools + loaded_external_tools:
+        try:
+            loaded_plugin_tools = await plugin_manager.refresh_tools() or []
+            if loaded_plugin_tools:
+                print(f"DEBUG: Peer tool map integrated {len(loaded_plugin_tools)} plugin tools")
+        except Exception as e:
+            print(f"ERROR: Failed to load plugin tools for peer map: {e}")
+            loaded_plugin_tools = []
+        for tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
             tool_name = getattr(tool, "name", None)
             if tool_name:
                 all_tools_map[tool_name] = tool
@@ -1127,11 +1243,11 @@ class AgentManager:
                 if reasoning_effort:
                     kwargs["reasoning_effort"] = reasoning_effort
                 try:
-                    llm = ChatGoogleGenerativeAI(**kwargs)
+                    llm = SafeChatGoogleGenerativeAI(**kwargs)
                 except Exception as e:
-                    print(f"DEBUG: Fallback without reasoning_effort for ChatGoogleGenerativeAI: {e}")
+                    print(f"DEBUG: Fallback without reasoning_effort for SafeChatGoogleGenerativeAI: {e}")
                     kwargs.pop("reasoning_effort", None)
-                    llm = ChatGoogleGenerativeAI(**kwargs)
+                    llm = SafeChatGoogleGenerativeAI(**kwargs)
             print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL} (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
@@ -1490,7 +1606,16 @@ class AgentManager:
         except Exception as e:
             print(f"ERROR: Failed to load external tools: {e}")
 
-        for tool in loaded_mcp_tools + loaded_external_tools:
+        # Load Connected Integration Plugin Tools
+        try:
+            loaded_plugin_tools = await plugin_manager.refresh_tools() or []
+            if loaded_plugin_tools:
+                print(f"DEBUG: Integrated {len(loaded_plugin_tools)} integration plugin tools")
+        except Exception as e:
+            print(f"ERROR: Failed to load integration plugin tools: {e}")
+            loaded_plugin_tools = []
+
+        for tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
             tool_name = getattr(tool, "name", None)
             if tool_name:
                 all_tools_map[tool_name] = tool
@@ -1538,6 +1663,9 @@ class AgentManager:
             if not isinstance(main_tool_ids, list):
                 main_tool_ids = []
             tools_to_use = _resolve_tools_from_ids(main_tool_ids)
+            for extra_tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
+                if extra_tool not in tools_to_use:
+                    tools_to_use.append(extra_tool)
         else:
             # Solo mode: full catalog by default, with user-controlled disable list.
             enabled_tool_names = settings.ENABLED_TOOLS
@@ -1545,8 +1673,8 @@ class AgentManager:
                 tools_to_use = list(all_tools_map.values())
             else:
                 tools_to_use = _resolve_tools_from_ids(enabled_tool_names)
-                # Automatically include dynamic MCP tools and external API tools
-                for extra_tool in loaded_mcp_tools + loaded_external_tools:
+                # Automatically include dynamic MCP tools, external API tools, and plugin tools
+                for extra_tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
                     if extra_tool not in tools_to_use:
                         tools_to_use.append(extra_tool)
 
