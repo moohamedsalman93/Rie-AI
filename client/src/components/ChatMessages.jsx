@@ -59,6 +59,7 @@ function ChatMessagesImpl({
   onOpenInNewChat,
   activeFriendMeta = null,
   attachedKnowledge = [],
+  retryStatus = null,
 }) {
   const botReplyCount = messages.filter(
     (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
@@ -71,7 +72,7 @@ function ChatMessagesImpl({
     );
     return hasTextBlocks || (msg.text && msg.text.trim());
   });
-  const shouldShowThinkingShimmer = isLoading && !hasStreamingContent;
+  const shouldShowThinkingShimmer = Boolean((isLoading && !hasStreamingContent) || retryStatus?.message);
 
   return (
     <main
@@ -216,7 +217,14 @@ function ChatMessagesImpl({
               <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
             </div>
           </div>
-          <span className="mt-1 text-[10px] font-medium text-neutral-500">Assistant is thinking...</span>
+          {retryStatus?.message ? (
+            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-300 animate-pulse">
+              <RotateCw size={12} className="animate-spin text-amber-400 shrink-0" />
+              <span>{retryStatus.message}</span>
+            </div>
+          ) : (
+            <span className="mt-1 text-[10px] font-medium text-neutral-500">Assistant is thinking...</span>
+          )}
         </motion.div>
       )}
       <div ref={messagesEndRef} />

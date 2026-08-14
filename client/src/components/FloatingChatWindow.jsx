@@ -14,6 +14,7 @@ export function FloatingChatWindow({
   setIsSettingsOpen,
   onOpenSettingsWindow = null,
   apiStatus,
+  retryStatus = null,
   isMenuOpen,
   setIsMenuOpen,
   windowMode,
@@ -237,6 +238,7 @@ export function FloatingChatWindow({
                 onOpenInNewChat={onOpenMessageInNewChat}
                 activeFriendMeta={activeFriendMeta}
                 attachedKnowledge={attachedKnowledge}
+                retryStatus={retryStatus}
               />
             </div>
           </div>

@@ -3718,11 +3718,12 @@ async def connect_plugin(plugin_id: str, custom_client_id: Optional[str] = None)
         }
 
     # Otherwise call rie-be-main cloud server to generate OAuth URL
-    cloud_url = f"http://localhost:8001/v1/integrations/oauth/{plugin_id}/authorize"
+    cloud_base = settings.RIE_API_URL.rstrip('/')
+    cloud_url = f"{cloud_base}/integrations/oauth/{plugin_id}/authorize"
     params = {"desktop_callback": callback_url}
 
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             res = await client.get(cloud_url, params=params)
             if res.status_code == 200:
                 data = res.json()
@@ -3746,7 +3747,7 @@ async def connect_plugin(plugin_id: str, custom_client_id: Optional[str] = None)
         logger.error(f"Error calling cloud OAuth authorization endpoint: {e}")
         return {
             "status": "error",
-            "message": "OAuth proxy server (port 8001) is offline. Open 'Manage' on the plugin card to enter your OAuth Client ID under Custom Client ID (Self-Host)."
+            "message": f"OAuth server ({cloud_base}) is offline or unreachable. Open 'Manage' on the plugin card to enter your OAuth Client ID under Custom Client ID (Self-Host)."
         }
 
 

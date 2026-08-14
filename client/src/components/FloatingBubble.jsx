@@ -7,6 +7,7 @@ import logo from "../assets/logo.png";
 export function FloatingBubble({
   privacyToast,
   currentTool,
+  retryStatus = null,
   isLoading,
   isRecording,
   hasPendingAction,
@@ -79,7 +80,7 @@ export function FloatingBubble({
   }, [bubbleRef, privacyToast, currentTool, isLoading, isRecording, hasPendingAction, bubbleSize, showLabel, transparentBg, showTools]);
 
   const activeToolText = showTools && currentTool ? getToolDisplayName(currentTool) : null;
-  const shouldShowText = isToastActive || isRecording || hasPendingAction || activeToolText || isLoading || showLabel;
+  const shouldShowText = isToastActive || isRecording || hasPendingAction || activeToolText || Boolean(retryStatus?.message) || isLoading || showLabel;
 
   // Size styling classes
   const sizeClasses =
@@ -220,6 +221,11 @@ export function FloatingBubble({
             <>
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
               <span className="truncate">{activeToolText}</span>
+            </>
+          ) : retryStatus?.message ? (
+            <>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+              <span className="truncate text-amber-300 font-medium text-[11px]">{`Key #${retryStatus.keyIndex || 2}...`}</span>
             </>
           ) : isLoading ? (
             <>

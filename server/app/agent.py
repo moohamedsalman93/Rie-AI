@@ -180,12 +180,12 @@ def _client_device_system_content(
 SYSTEM_PROMPT = """
 You are Rie, an autonomous AI assistant specialized in technical tasks.
 
-Priorities: check and use available skills first, accuracy second, efficiency third.
+Priorities: accuracy and adherence to specific instructions first, direct efficient tool execution second.
 
 Rules:
 - Connected Integration Plugins: If dynamic plugin integration tools (e.g. `gmail_search_emails`, `gmail_get_email`, `gmail_send_email`, `github_*`, `jira_*`) are available in your toolset, you MUST prioritize these native plugin tools over browser automation or loading browser skills (`CamoFox Browser`, `Computer Use Guide`). Use `gmail_*` tools directly for reading, searching, or drafting emails.
 - Email Body Formatting: When displaying email body text or email content to the user, render it as normal plain text paragraphs and bullet points. Do NOT wrap email body text inside code blocks (` ``` `) or backticks (` ` `).
-- Prioritize using specialized skills/instructions for tasks where no dedicated native integration tools exist. Before starting any task, check the "Available Skills" section. If any available skill matches or relates to the task, you MUST call the `load_skill` tool to retrieve and follow its instructions.
+- Specialized Skills & Instructions: When specialized skills or instructions are pre-injected into your context, adhere to them directly and execute the task immediately without delay. If you ever need additional skill details not present in context, call the `load_skill` tool. If native integration plugin tools (e.g. `gmail_*`, `github_*`) already exist for the task, invoke them directly rather than searching for alternative skills.
 - Web & Browser Tasks: When performing web browsing, page navigation, web searching, or web interactions, if browser tools (such as `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_close`) are available in your toolset, you MUST prioritize `browser_*` tools over desktop GUI tools (`windows_mouse_click`, `windows_key_press`, `get_desktop_state`, `app_control`). Use `browser_*` tools for all web interactions.
 - Prefer verified information and reasoning over assumptions.
 - Select and invoke the most specific and efficient tools for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
@@ -208,6 +208,67 @@ Style:
 SUBAGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{2,64}$")
 
 
+def _is_rate_limit_or_recoverable_error(e: Exception) -> bool:
+    """Check if an exception is due to rate limits, quota limits, or temporary upstream failures."""
+    err_str = str(e).lower()
+    type_str = type(e).__name__.lower()
+    recoverable_terms = [
+        "429", "rate_limit", "ratelimit", "rate limit", "resourceexhausted", "resource_exhausted",
+        "resource exhausted", "quota", "too many requests", "overloaded", "503", "service unavailable",
+        "high demand", "temporarily unavailable", "deadline_exceeded", "504", "exceeded",
+        "gateway timeout", "internal server error", "500", "try again"
+    ]
+    return any(term in err_str or term in type_str for term in recoverable_terms)
+
+
+def _dispatch_stream_payload(payload: dict) -> None:
+    try:
+        from app.runtime_context import get_current_thread_id
+        from app.terminal_stream import streamer
+        import json
+        thread_id = get_current_thread_id()
+        msg = json.dumps(payload)
+
+        queues = [streamer.get_queue(thread_id)] if (thread_id and thread_id in streamer.queues) else list(streamer.queues.values())
+        if not queues and thread_id:
+            queues = [streamer.get_queue(thread_id)]
+
+        for q in queues:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(q.put(msg))
+            except RuntimeError:
+                try:
+                    q.put_nowait(msg)
+                except Exception:
+                    pass
+    except Exception as e:
+        _logger.warning("Failed to dispatch stream payload: %s", e)
+
+
+def _emit_retry_event(provider: str, next_key_idx: int, total_keys: int, exc: Exception):
+    """Notify the frontend stream that key rotation / retry is occurring."""
+    payload = {
+        "step": "key_retry",
+        "provider": provider,
+        "key_index": next_key_idx + 1,
+        "total_keys": total_keys,
+        "message": f"Rate limit on key #{next_key_idx}. Retrying with key #{next_key_idx + 1} of {total_keys}...",
+    }
+    _logger.info("[KeyRetry] Emitting retry event to client stream: %s", payload["message"])
+    _dispatch_stream_payload(payload)
+
+
+def _emit_fallback_event(fallback_provider_name: str = "Fallback Model"):
+    """Notify the frontend stream that model fallback is occurring."""
+    payload = {
+        "step": "model_fallback",
+        "message": f"Primary model rate limit reached. Switching to {fallback_provider_name}...",
+    }
+    _logger.info("[ModelFallback] Emitting fallback event to client stream: %s", payload["message"])
+    _dispatch_stream_payload(payload)
+
+
 class RotatingChatGroq(BaseChatModel):
     """A wrapper for ChatGroq that rotates through multiple API keys to bypass rate limits."""
     api_keys: List[str]
@@ -220,9 +281,9 @@ class RotatingChatGroq(BaseChatModel):
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "groq"))
 
-    def _get_model(self) -> ChatGroq:
-        """Get a ChatGroq instance with the next API key in the rotation"""
-        key, _idx = self._rotator.next_key()
+    def _get_model_with_index(self) -> tuple[ChatGroq, int]:
+        """Get a ChatGroq instance with the next API key in the rotation and return (model, key_index)"""
+        key, idx = self._rotator.next_key()
         kwargs = {
             "api_key": key,
             "model": self.model_name,
@@ -231,10 +292,10 @@ class RotatingChatGroq(BaseChatModel):
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
         try:
-            return ChatGroq(**kwargs)
+            return ChatGroq(**kwargs), idx
         except Exception:
             kwargs.pop("reasoning_effort", None)
-            return ChatGroq(**kwargs)
+            return ChatGroq(**kwargs), idx
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
@@ -271,7 +332,26 @@ class RotatingChatGroq(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        return self._get_model()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        last_exc: Optional[Exception] = None
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                return model._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            except Exception as e:
+                last_exc = e
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/groq] Key #%d failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("groq", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No keys available for Groq")
 
     async def _agenerate(
         self,
@@ -280,7 +360,26 @@ class RotatingChatGroq(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        return await self._get_model()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        last_exc: Optional[Exception] = None
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                return await model._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            except Exception as e:
+                last_exc = e
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/groq] Key #%d failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("groq", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No keys available for Groq")
 
     def _stream(
         self,
@@ -289,7 +388,33 @@ class RotatingChatGroq(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        yield from self._get_model()._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                stream_iter = model._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+                first_chunk = next(stream_iter)
+            except StopIteration:
+                return
+            except Exception as e:
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/groq] Key #%d stream start failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("groq", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+
+            yield first_chunk
+            try:
+                for chunk in stream_iter:
+                    yield chunk
+                return
+            except Exception as e:
+                _logger.warning("[KeyRotator/groq] Stream failed mid-generation: %s", e)
+                raise e
 
     async def _astream(
         self,
@@ -298,8 +423,33 @@ class RotatingChatGroq(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        async for chunk in self._get_model()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
-            yield chunk
+        num_attempts = max(1, len(self.api_keys))
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                stream_iter = model._astream(messages, stop=stop, run_manager=run_manager, **kwargs)
+                first_chunk = await stream_iter.__anext__()
+            except StopAsyncIteration:
+                return
+            except Exception as e:
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/groq] Key #%d astream start failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("groq", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+
+            yield first_chunk
+            try:
+                async for chunk in stream_iter:
+                    yield chunk
+                return
+            except Exception as e:
+                _logger.warning("[KeyRotator/groq] astream failed mid-generation: %s", e)
+                raise e
 
     @property
     def _llm_type(self) -> str:
@@ -319,9 +469,9 @@ class RotatingChatOpenAI(BaseChatModel):
         super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "openai"))
 
-    def _get_model(self) -> ChatOpenAI:
-        """Get a ChatOpenAI instance with the next API key in the rotation"""
-        key, _idx = self._rotator.next_key()
+    def _get_model_with_index(self) -> tuple[ChatOpenAI, int]:
+        """Get a ChatOpenAI instance with the next API key in the rotation and return (model, key_index)"""
+        key, idx = self._rotator.next_key()
         kwargs = {
             "openai_api_key": key,
             "model_name": self.model_name,
@@ -331,10 +481,10 @@ class RotatingChatOpenAI(BaseChatModel):
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
         try:
-            return ChatOpenAI(**kwargs)
+            return ChatOpenAI(**kwargs), idx
         except Exception:
             kwargs.pop("reasoning_effort", None)
-            return ChatOpenAI(**kwargs)
+            return ChatOpenAI(**kwargs), idx
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
@@ -363,7 +513,26 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        return self._get_model()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        last_exc: Optional[Exception] = None
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                return model._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            except Exception as e:
+                last_exc = e
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/openai] Key #%d failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("openai", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No keys available for OpenAI")
 
     async def _agenerate(
         self,
@@ -372,7 +541,26 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        return await self._get_model()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        last_exc: Optional[Exception] = None
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                return await model._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            except Exception as e:
+                last_exc = e
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/openai] Key #%d failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("openai", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No keys available for OpenAI")
 
     def _stream(
         self,
@@ -381,7 +569,33 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        yield from self._get_model()._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                stream_iter = model._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+                first_chunk = next(stream_iter)
+            except StopIteration:
+                return
+            except Exception as e:
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/openai] Key #%d stream start failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("openai", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+
+            yield first_chunk
+            try:
+                for chunk in stream_iter:
+                    yield chunk
+                return
+            except Exception as e:
+                _logger.warning("[KeyRotator/openai] Stream failed mid-generation: %s", e)
+                raise e
 
     async def _astream(
         self,
@@ -390,8 +604,33 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        async for chunk in self._get_model()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
-            yield chunk
+        num_attempts = max(1, len(self.api_keys))
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                stream_iter = model._astream(messages, stop=stop, run_manager=run_manager, **kwargs)
+                first_chunk = await stream_iter.__anext__()
+            except StopAsyncIteration:
+                return
+            except Exception as e:
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/openai] Key #%d astream start failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("openai", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+
+            yield first_chunk
+            try:
+                async for chunk in stream_iter:
+                    yield chunk
+                return
+            except Exception as e:
+                _logger.warning("[KeyRotator/openai] astream failed mid-generation: %s", e)
+                raise e
 
     @property
     def _llm_type(self) -> str:
@@ -508,9 +747,9 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "gemini"))
 
-    def _get_model(self) -> SafeChatGoogleGenerativeAI:
-        """Get a SafeChatGoogleGenerativeAI instance with the next API key in the rotation"""
-        key, _idx = self._rotator.next_key()
+    def _get_model_with_index(self) -> tuple[SafeChatGoogleGenerativeAI, int]:
+        """Get a SafeChatGoogleGenerativeAI instance with the next API key in the rotation and return (model, key_index)"""
+        key, idx = self._rotator.next_key()
         kwargs = {
             "google_api_key": key,
             "model": self.model_name,
@@ -519,10 +758,10 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
         try:
-            return SafeChatGoogleGenerativeAI(**kwargs)
+            return SafeChatGoogleGenerativeAI(**kwargs), idx
         except Exception:
             kwargs.pop("reasoning_effort", None)
-            return SafeChatGoogleGenerativeAI(**kwargs)
+            return SafeChatGoogleGenerativeAI(**kwargs), idx
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
@@ -552,7 +791,26 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        return self._get_model()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        last_exc: Optional[Exception] = None
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                return model._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            except Exception as e:
+                last_exc = e
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/gemini] Key #%d failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("gemini", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No keys available for Gemini")
 
     async def _agenerate(
         self,
@@ -561,7 +819,26 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
-        return await self._get_model()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        last_exc: Optional[Exception] = None
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                return await model._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)
+            except Exception as e:
+                last_exc = e
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/gemini] Key #%d failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("gemini", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("No keys available for Gemini")
 
     def _stream(
         self,
@@ -570,7 +847,33 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        yield from self._get_model()._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+        num_attempts = max(1, len(self.api_keys))
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                stream_iter = model._stream(messages, stop=stop, run_manager=run_manager, **kwargs)
+                first_chunk = next(stream_iter)
+            except StopIteration:
+                return
+            except Exception as e:
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/gemini] Key #%d stream start failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("gemini", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+
+            yield first_chunk
+            try:
+                for chunk in stream_iter:
+                    yield chunk
+                return
+            except Exception as e:
+                _logger.warning("[KeyRotator/gemini] Stream failed mid-generation: %s", e)
+                raise e
 
     async def _astream(
         self,
@@ -579,8 +882,33 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
-        async for chunk in self._get_model()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):
-            yield chunk
+        num_attempts = max(1, len(self.api_keys))
+        for attempt in range(num_attempts):
+            model, idx = self._get_model_with_index()
+            try:
+                stream_iter = model._astream(messages, stop=stop, run_manager=run_manager, **kwargs)
+                first_chunk = await stream_iter.__anext__()
+            except StopAsyncIteration:
+                return
+            except Exception as e:
+                self._rotator.record_error(idx)
+                _logger.warning(
+                    "[KeyRotator/gemini] Key #%d astream start failed (attempt %d/%d): %s",
+                    idx + 1, attempt + 1, num_attempts, e
+                )
+                if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
+                    _emit_retry_event("gemini", (idx + 1) % len(self.api_keys), num_attempts, e)
+                    continue
+                raise e
+
+            yield first_chunk
+            try:
+                async for chunk in stream_iter:
+                    yield chunk
+                return
+            except Exception as e:
+                _logger.warning("[KeyRotator/gemini] astream failed mid-generation: %s", e)
+                raise e
 
     @property
     def _llm_type(self) -> str:
@@ -620,6 +948,7 @@ class FallbackChatModel(BaseChatModel):
             return self._primary_model.invoke(input, config=config, **kwargs)
         except Exception as e:
             _logger.warning(f"Primary model failed: {e}. Falling back to fallback model.")
+            _emit_fallback_event()
             return self._fallback_model.invoke(input, config=config, **kwargs)
 
     async def ainvoke(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Any:
@@ -627,6 +956,7 @@ class FallbackChatModel(BaseChatModel):
             return await self._primary_model.ainvoke(input, config=config, **kwargs)
         except Exception as e:
             _logger.warning(f"Primary model failed: {e}. Falling back to fallback model.")
+            _emit_fallback_event()
             return await self._fallback_model.ainvoke(input, config=config, **kwargs)
 
     def stream(self, input: Any, config: Optional[Any] = None, **kwargs: Any) -> Iterator[Any]:
@@ -635,6 +965,7 @@ class FallbackChatModel(BaseChatModel):
             first_chunk = next(iterator)
         except Exception as e:
             _logger.warning(f"Primary model stream failed to start: {e}. Falling back to fallback model.")
+            _emit_fallback_event()
             yield from self._fallback_model.stream(input, config=config, **kwargs)
             return
 
@@ -652,6 +983,7 @@ class FallbackChatModel(BaseChatModel):
             first_chunk = await iterator.__anext__()
         except Exception as e:
             _logger.warning(f"Primary model stream failed to start: {e}. Falling back to fallback model.")
+            _emit_fallback_event()
             async for chunk in self._fallback_model.astream(input, config=config, **kwargs):
                 yield chunk
             return
@@ -691,33 +1023,292 @@ def load_skill(skill_name: str, runtime: Annotated[ToolRuntime, InjectedToolArg]
     return f"Skill '{skill_name}' not found."
 
 
+class DynamicToolRoutingMiddleware(AgentMiddleware):
+    """
+    Middleware that dynamically scopes the tool schema presented to the model per turn
+    based on the user's intent and recent conversation tool interactions.
+    This prevents schema overload (e.g. 35+ tools down to 3-10 tools per turn) and
+    improves model execution speed and tool selection accuracy.
+    """
+
+    DOMAIN_PREFIXES: dict[str, tuple[str, ...]] = {
+        "email": ("gmail_",),
+        "browser": ("browser_", "camofox_"),
+        "desktop": (
+            "windows_",
+            "app_control",
+            "get_desktop_state",
+            "run_terminal_command",
+        ),
+        "github": ("github_",),
+        "jira": ("jira_",),
+    }
+
+    ALWAYS_AVAILABLE_TOOLS: set[str] = {
+        "internet_search",
+        "read_knowledge_asset",
+        "schedule_chat_task",
+        "remote_friend_ask",
+        "load_skill",
+        "write_todos",
+        "get_ltm_context",
+        "search_ltm",
+        "set_ltm_context",
+    }
+
+    @staticmethod
+    def _extract_query_and_history(messages: list[Any]) -> tuple[str, set[str]]:
+        """Extract recent user query text and any previously invoked tool names."""
+        user_texts: list[str] = []
+        invoked_tool_names: set[str] = set()
+
+        if not messages:
+            return "", invoked_tool_names
+
+        recent = messages[-6:] if len(messages) > 6 else messages
+        for msg in recent:
+            # Check tool calls
+            tool_calls = getattr(msg, "tool_calls", None) or []
+            for tc in tool_calls:
+                tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
+                if tc_name:
+                    invoked_tool_names.add(str(tc_name))
+
+            # Check tool response message name
+            msg_name = getattr(msg, "name", None)
+            if msg_name:
+                invoked_tool_names.add(str(msg_name))
+
+            # Check user message text
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            if role in ("human", "user"):
+                content = getattr(msg, "content", "")
+                if isinstance(content, str):
+                    user_texts.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            user_texts.append(part.get("text", ""))
+
+        query = " ".join(user_texts).lower()
+        return query, invoked_tool_names
+
+    @classmethod
+    def _classify_domains(cls, query: str, invoked_tool_names: set[str]) -> set[str]:
+        """Classify active domains based on query intent and recent tool usage."""
+        active_domains: set[str] = set()
+
+        # 1. Maintain domain continuity if a tool from that domain was recently invoked
+        for tool_name in invoked_tool_names:
+            for domain, prefixes in cls.DOMAIN_PREFIXES.items():
+                if any(tool_name.startswith(p) or tool_name == p for p in prefixes):
+                    active_domains.add(domain)
+
+        # 2. Intent keywords matching
+        EMAIL_KEYWORDS = (
+            "email", "gmail", "inbox", "mail", "draft", "reply", "sent mail", 
+            "unread", "archive email", "trash email", "send email", "subject:", 
+            "to:", "from:", "cc:", "bcc:", "forward email", "check my email", 
+            "find email", "search email", "read email"
+        )
+        BROWSER_KEYWORDS = (
+            "browser", "open website", "navigate to", "url", "scrape", "http://", "https://",
+            "web page", "webpage", "apply to job", "fill form", "click on page", "snapshot",
+            "camofox", "camoufox", "playwright", "open browser", "visit "
+        )
+        DESKTOP_KEYWORDS = (
+            "mouse", "keyboard", "press key", "click at", "window", "desktop",
+            "powershell", "terminal", "screen", "screenshot", "taskbar", "minimize",
+            "maximize", "notepad", "calculator", "explorer", "uia", "app_control"
+        )
+        GITHUB_KEYWORDS = ("github", "pull request", "pr #", "issue #", "repo", "commit", "clone")
+        JIRA_KEYWORDS = ("jira", "sprint", "backlog", "story", "epic", "ticket")
+
+        if any(kw in query for kw in EMAIL_KEYWORDS):
+            active_domains.add("email")
+        if any(kw in query for kw in BROWSER_KEYWORDS):
+            active_domains.add("browser")
+        if any(kw in query for kw in DESKTOP_KEYWORDS):
+            active_domains.add("desktop")
+        if any(kw in query for kw in GITHUB_KEYWORDS):
+            active_domains.add("github")
+        if any(kw in query for kw in JIRA_KEYWORDS):
+            active_domains.add("jira")
+
+        return active_domains
+
+    @classmethod
+    def _filter_tools(cls, tools: list[Any], active_domains: set[str]) -> list[Any]:
+        """Filter the tools list down to active domains + core tools."""
+        if not tools or not active_domains:
+            return tools
+
+        filtered: list[Any] = []
+        for t in tools:
+            t_name = getattr(t, "name", str(t))
+
+            # 1. Always keep core tools
+            if t_name in cls.ALWAYS_AVAILABLE_TOOLS:
+                filtered.append(t)
+                continue
+
+            # 2. Keep tools belonging to active domain(s)
+            in_active_domain = False
+            for domain in active_domains:
+                prefixes = cls.DOMAIN_PREFIXES.get(domain, ())
+                if any(t_name.startswith(p) or t_name == p for p in prefixes):
+                    in_active_domain = True
+                    break
+
+            if in_active_domain:
+                filtered.append(t)
+                continue
+
+            # 3. Check if tool belongs to an inactive domain
+            in_inactive_domain = False
+            for domain, prefixes in cls.DOMAIN_PREFIXES.items():
+                if domain not in active_domains:
+                    if any(t_name.startswith(p) or t_name == p for p in prefixes):
+                        in_inactive_domain = True
+                        break
+
+            # 4. If not part of any recognized heavy domain (e.g. custom tool or MCP tool), keep it
+            if not in_inactive_domain:
+                filtered.append(t)
+
+        return filtered
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        if not hasattr(request, "tools") or not request.tools:
+            return handler(request)
+
+        query, invoked_tools = self._extract_query_and_history(request.messages or [])
+        active_domains = self._classify_domains(query, invoked_tools)
+        filtered_tools = self._filter_tools(request.tools, active_domains)
+
+        if len(filtered_tools) != len(request.tools):
+            _logger.debug(
+                "[DynamicToolRouting] Filtered tools from %d to %d (domains: %s)",
+                len(request.tools),
+                len(filtered_tools),
+                list(active_domains),
+            )
+            request = request.override(tools=filtered_tools)
+
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        if not hasattr(request, "tools") or not request.tools:
+            return await handler(request)
+
+        query, invoked_tools = self._extract_query_and_history(request.messages or [])
+        active_domains = self._classify_domains(query, invoked_tools)
+        filtered_tools = self._filter_tools(request.tools, active_domains)
+
+        if len(filtered_tools) != len(request.tools):
+            _logger.debug(
+                "[DynamicToolRouting] Filtered tools from %d to %d (domains: %s)",
+                len(request.tools),
+                len(filtered_tools),
+                list(active_domains),
+            )
+            request = request.override(tools=filtered_tools)
+
+        return await handler(request)
+
+
 class SkillMiddleware(AgentMiddleware):
-    """Middleware that injects available database skill descriptions into the system prompt."""
+    """
+    Middleware that pre-injects active and matching database skill instructions directly
+    into the system prompt, eliminating the costly 'load_skill' LLM round trip while
+    maintaining load_skill as a fallback.
+    """
     tools = [load_skill]
 
-    def _build_skills_prompt(self, request: Optional[ModelRequest] = None) -> str:
-        skills_list = []
+    @staticmethod
+    def _extract_query_text(messages: list[Any]) -> str:
+        """Extract recent user query text from messages."""
+        if not messages:
+            return ""
+        for msg in reversed(messages):
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            if role in ("human", "user"):
+                content = getattr(msg, "content", "")
+                if isinstance(content, str):
+                    return content
+                elif isinstance(content, list):
+                    parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+                    return " ".join(parts)
+        return ""
+
+    @staticmethod
+    def _matches_skill_query(skill_name: str, skill_desc: str, query: str) -> bool:
+        """Heuristic to determine if a skill should be pre-injected based on user query."""
+        if not query:
+            return False
+        q = query.lower()
+        lower_name = skill_name.lower()
+
+        # Skill-specific keyword triggers
+        SKILL_TRIGGERS: dict[str, tuple[str, ...]] = {
+            "job application assistant": ("job", "apply", "career", "resume", "linkedin", "greenhouse", "lever", "workday", "candidate"),
+            "camofox browser": ("camofox", "camoufox", "firefox", "stealth browser", "headless browser"),
+            "powershell style & scripting": ("powershell", "ps1", "posh", ".ps1", "cmdlet", "powershell script"),
+            "windows system tasks": ("windows service", "registry", "taskmgr", "task manager", "event log", "schtasks"),
+            "pdf generation expert": ("pdf", "generate pdf", "report pdf", "weasyprint", "fpdf"),
+            "file & directory operations": ("zip", "unzip", "tar", "archive file", "directory tree", "move files"),
+            "network & downloads": ("download file", "curl", "wget", "network test", "ping host", "dns lookup"),
+        }
+
+        # Check explicit trigger keywords
+        for key, triggers in SKILL_TRIGGERS.items():
+            if key in lower_name:
+                if any(tr in q for tr in triggers):
+                    return True
+
+        # Check if skill name itself appears in query
+        if lower_name in q:
+            return True
+
+        return False
+
+    def _build_skills_sections(self, request: Optional[ModelRequest] = None) -> tuple[list[str], list[str]]:
+        preloaded_sections: list[str] = []
+        available_list: list[str] = []
+
         try:
             from app.database import list_skills
             from langgraph.config import get_config
-            
+
             config = None
             try:
                 config = get_config()
             except Exception:
                 pass
-                
+
             thread_id = None
             skill_ids_from_config = []
             if config and "configurable" in config:
                 thread_id = config["configurable"].get("thread_id")
                 skill_ids_from_config = config["configurable"].get("skill_ids", [])
 
-            # Check if browser_open tool is available in the model request
+            # Check available tools in the model request
             has_camofox_tools = True
+            has_native_gmail_tools = False
             if request and hasattr(request, "tools"):
                 tool_names = [getattr(t, "name", str(t)) for t in (request.tools or [])]
                 has_camofox_tools = any(t in tool_names for t in ("browser_open", "browser_snapshot"))
+                has_native_gmail_tools = any(t.startswith("gmail_") for t in tool_names)
+
+            query_text = self._extract_query_text(getattr(request, "messages", []) or [])
 
             # Collect active/available database skills:
             db_skills = list_skills()
@@ -729,10 +1320,14 @@ class SkillMiddleware(AgentMiddleware):
                 if not has_camofox_tools and ("camofox" in lower_name or "camoufox" in lower_name or "job application" in lower_name):
                     continue
 
-                # check if globally enabled or attached via skill_ids from config
-                is_active = row.get("enabled") or row.get("id") in skill_ids_from_config
-                # check if attached to this thread
-                if not is_active and thread_id:
+                # If native Gmail tools are present and query is about email, omit CamoFox/browser skills to avoid confusion
+                if has_native_gmail_tools and ("email" in query_text.lower() or "mail" in query_text.lower()):
+                    if "camofox" in lower_name or "computer use" in lower_name:
+                        continue
+
+                # Check if attached to this thread or config
+                is_attached = row.get("id") in skill_ids_from_config
+                if not is_attached and thread_id:
                     from app.database import get_db_path
                     import sqlite3
                     try:
@@ -741,69 +1336,74 @@ class SkillMiddleware(AgentMiddleware):
                         cursor = conn.cursor()
                         cursor.execute("SELECT COUNT(*) FROM thread_skills WHERE thread_id = ? AND skill_id = ?", (thread_id, row.get("id")))
                         if cursor.fetchone()[0] > 0:
-                            is_active = True
+                            is_attached = True
                         conn.close()
                     except Exception:
                         pass
-                
-                if is_active:
-                    desc = row.get("description", "").strip() or "Database-defined skill instructions."
-                    skills_list.append(f"- **{name}**: {desc}")
+
+                is_globally_enabled = bool(row.get("enabled", 1))
+                if not is_globally_enabled and not is_attached:
+                    continue
+
+                content = (row.get("content") or "").strip()
+                desc = (row.get("description") or "").strip() or "Specialized skill instructions."
+
+                # Determine whether to PRELOAD full content or list as AVAILABLE
+                should_preload = is_attached or self._matches_skill_query(name, desc, query_text)
+
+                if should_preload and content:
+                    preloaded_sections.append(f"### Skill: {name}\n{content}")
+                else:
+                    available_list.append(f"- **{name}**: {desc}")
 
         except Exception as exc:
-            pass
-            
-        return "\n".join(skills_list)
+            _logger.warning("Error building skills prompt: %s", exc)
+
+        return preloaded_sections, available_list
+
+    def _apply_skills_to_request(self, request: ModelRequest) -> ModelRequest:
+        preloaded_sections, available_list = self._build_skills_sections(request)
+        if not preloaded_sections and not available_list:
+            return request
+
+        parts: list[str] = []
+        if preloaded_sections:
+            parts.append(
+                "## Active Skill Instructions (Pre-loaded)\n"
+                "The following specialized skill guidelines are directly loaded and active for your task. "
+                "Adhere to them immediately without calling `load_skill`:\n\n"
+                + "\n\n".join(preloaded_sections)
+            )
+
+        if available_list:
+            parts.append(
+                "## Available Skills\n"
+                "You have access to these additional skill packages if needed (use `load_skill` only if detailed guidelines for one of these are required):\n"
+                + "\n".join(available_list)
+            )
+
+        skills_addendum = "\n\n" + "\n\n".join(parts)
+        new_content = list(request.system_message.content_blocks) + [
+            {"type": "text", "text": skills_addendum}
+        ]
+        new_system_message = SystemMessage(content=new_content)
+        return request.override(system_message=new_system_message)
 
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        skills_prompt = self._build_skills_prompt(request)
-        if skills_prompt:
-            skills_addendum = (
-                f"\n\n## Available Skills\n"
-                f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
-                f"PRIORITY: If a user task relates to any of these skills, you MUST prioritize loading and adhering to them. "
-                f"Call the load_skill tool with the exact skill name to load its full content into your context BEFORE proceeding with the task.\n\n"
-                f"{skills_prompt}\n\n"
-                f"Do not assume the content of a skill. Always load it first if you need it. Treating these skills as priority is required."
-            )
-
-            new_content = list(request.system_message.content_blocks) + [
-                {"type": "text", "text": skills_addendum}
-            ]
-            new_system_message = SystemMessage(content=new_content)
-            modified_request = request.override(system_message=new_system_message)
-            return handler(modified_request)
-
-        return handler(request)
+        modified_request = self._apply_skills_to_request(request)
+        return handler(modified_request)
 
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        skills_prompt = self._build_skills_prompt(request)
-        if skills_prompt:
-            skills_addendum = (
-                f"\n\n## Available Skills\n"
-                f"You have access to specialized skills and instructions. You only see their brief descriptions below. "
-                f"PRIORITY: If a user task relates to any of these skills, you MUST prioritize loading and adhering to them. "
-                f"Call the load_skill tool with the exact skill name to load its full content into your context BEFORE proceeding with the task.\n\n"
-                f"{skills_prompt}\n\n"
-                f"Do not assume the content of a skill. Always load it first if you need it. Treating these skills as priority is required."
-            )
-
-            new_content = list(request.system_message.content_blocks) + [
-                {"type": "text", "text": skills_addendum}
-            ]
-            new_system_message = SystemMessage(content=new_content)
-            modified_request = request.override(system_message=new_system_message)
-            return await handler(modified_request)
-
-        return await handler(request)
+        modified_request = self._apply_skills_to_request(request)
+        return await handler(modified_request)
 
 
 class AgentManager:
@@ -959,6 +1559,7 @@ class AgentManager:
 
         system_prompt = self._peer_system_prompt(receive_profile)
         middleware_stack = [
+            DynamicToolRoutingMiddleware(),
             SummarizationMiddleware(
                 model=llm,
                 trigger=("tokens", 8000),
@@ -1693,8 +2294,11 @@ class AgentManager:
         try:
             print(f"DEBUG: Creating deep agent with {provider}...")
 
-            # Core middleware stack
-            middleware_stack = [SkillMiddleware()]
+            # Core middleware stack: dynamic tool routing + skill preloading
+            middleware_stack = [
+                DynamicToolRoutingMiddleware(),
+                SkillMiddleware(),
+            ]
             
             # Only add TodoListMiddleware in thinking mode (skip for flash)
             if effective_speed_mode != "flash":

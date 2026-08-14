@@ -22,11 +22,14 @@ from app.database import (
 from app.security_crypto import decrypt_json, encrypt_json
 from app.plugins.loader import plugin_registry
 from app.plugins.base import PluginManifestSpec, PluginToolSpec
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Cloud middleware backend base URL
-RIE_BE_MAIN_URL = "http://localhost:8001/v1"
+
+def _get_cloud_be_url() -> str:
+    """Get the cloud middleware backend base URL."""
+    return settings.RIE_API_URL.rstrip("/")
 
 
 class PluginManager:
@@ -198,8 +201,9 @@ class PluginManager:
             logger.info(f"Force refreshing access token for {plugin_id} ({target_provider}) via cloud middleware...")
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
+                    cloud_be_url = _get_cloud_be_url()
                     ref_res = await client.post(
-                        f"{RIE_BE_MAIN_URL}/integrations/oauth/{target_provider}/refresh?refresh_token={refresh_token}",
+                        f"{cloud_be_url}/integrations/oauth/{target_provider}/refresh?refresh_token={refresh_token}",
                         json={"refresh_token": refresh_token}
                     )
                     if ref_res.status_code == 200:

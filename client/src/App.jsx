@@ -162,6 +162,7 @@ function MainApp() {
   const [windowMode, setWindowMode] = useState("floating");
   const [isAppInitializing, setIsAppInitializing] = useState(true);
   const [currentTool, setCurrentTool] = useState(null);
+  const [retryStatus, setRetryStatus] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [isWindowDraggingFile, setIsWindowDraggingFile] = useState(false);
   const [pendingActions, setPendingActions] = useState({}); // Map: threadId -> HITL request
@@ -531,6 +532,7 @@ function MainApp() {
           return next;
         });
         setCurrentTool(null);
+        setRetryStatus(null);
         setIsTerminalOpen(false);
 
         // Flush & speak any remaining unspoken text left in sentenceBufferRef at the end of stream
@@ -545,6 +547,17 @@ function MainApp() {
           firstToolMinimizedRef.current = false;
           handleOpen(true);
         }
+        return;
+      }
+
+      if (data.step === "key_retry" || data.step === "model_fallback") {
+        setRetryStatus({
+          threadId,
+          message: data.message || `Retrying with key #${data.key_index || 1}...`,
+          keyIndex: data.key_index,
+          totalKeys: data.total_keys,
+          provider: data.provider,
+        });
         return;
       }
 
@@ -584,12 +597,14 @@ function MainApp() {
           return next;
         });
         setCurrentTool(null);
+        setRetryStatus(null);
         setIsTerminalOpen(false); // Auto-close terminal on HITL
         return;
       }
 
       if (data.error) {
         flushStreamText();
+        setRetryStatus(null);
         const rawError = typeof data.error === "string" ? data.error.trim() : "";
         const rawDetails = typeof data.details === "string" ? data.details.trim() : "";
         const isGenericStreamError =
@@ -3262,6 +3277,7 @@ function MainApp() {
                     attachedKnowledge={attachedKnowledge}
                     onAttachKnowledge={attachKnowledge}
                     onDetachKnowledge={detachKnowledge}
+                    retryStatus={retryStatus}
                   />
                 </>
               )}
@@ -3271,6 +3287,7 @@ function MainApp() {
               key="bubble"
               privacyToast={privacyToast}
               currentTool={currentTool}
+              retryStatus={retryStatus}
               isLoading={isLoading}
               isRecording={isRecording}
               hasPendingAction={Object.keys(pendingActions).length > 0} // Any thread has pending HITL
@@ -3293,6 +3310,7 @@ function MainApp() {
               apiStatus={apiStatus}
               isMenuOpen={isMenuOpen}
               setIsMenuOpen={setIsMenuOpen}
+              retryStatus={retryStatus}
               windowMode={windowMode}
               onToggleWindowMode={handleToggleWindowMode}
               onOpenHistory={() => setIsHistoryOpen(true)}

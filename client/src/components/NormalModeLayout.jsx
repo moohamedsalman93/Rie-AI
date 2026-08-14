@@ -160,6 +160,7 @@ export function NormalModeLayout({
     attachedKnowledge = [],
     onAttachKnowledge = () => { },
     onDetachKnowledge = () => { },
+    retryStatus = null,
     provider,
     onSelectProvider,
     settings = {},
@@ -182,6 +183,19 @@ export function NormalModeLayout({
     const [browserEngine, setBrowserEngine] = useState(() => localStorage.getItem("rie_browser_engine") || "default");
     const [isBrowserBinaryAvailable, setIsBrowserBinaryAvailable] = useState(false);
     const PAGE_SIZE = 15;
+
+    const botReplyCount = messages.filter(
+        (msg) => msg.from === 'bot' && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
+    ).length;
+    const toolTooltipPlacement = botReplyCount <= 2 ? 'bottom' : 'top';
+    const hasStreamingContent = messages.some((msg) => {
+        if (msg.from !== 'bot' || msg.id !== streamingBotMessageId) return false;
+        const hasTextBlocks = (msg.blocks || []).some(
+            (block) => block.type === 'text' && block.text && block.text.trim()
+        );
+        return hasTextBlocks || (msg.text && msg.text.trim());
+    });
+    const shouldShowThinkingShimmer = Boolean((isLoading && !hasStreamingContent) || retryStatus?.message);
 
     useEffect(() => {
         let isCancelled = false;
@@ -499,18 +513,6 @@ export function NormalModeLayout({
 
         return Object.values(groups).filter(g => g.threads.length > 0);
     }, [filteredThreads]);
-    const botReplyCount = messages.filter(
-        (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
-    ).length;
-    const toolTooltipPlacement = botReplyCount <= 2 ? "bottom" : "top";
-    const hasStreamingContent = messages.some((msg) => {
-        if (msg.from !== "bot" || msg.id !== streamingBotMessageId) return false;
-        const hasTextBlocks = (msg.blocks || []).some(
-            (block) => block.type === "text" && block.text && block.text.trim()
-        );
-        return hasTextBlocks || (msg.text && msg.text.trim());
-    });
-    const shouldShowThinkingShimmer = isLoading && !hasStreamingContent;
 
     const getThreadFriendMeta = (threadId) => {
         if (!friendThreadMeta) return null;
@@ -951,10 +953,16 @@ export function NormalModeLayout({
                                             <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
                                             <div className="space-y-1.5">
                                                 <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
-                                                <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
                                             </div>
                                         </div>
-                                        <span className="mt-1 text-[10px] font-medium text-neutral-600">Assistant is thinking...</span>
+                                        {retryStatus?.message ? (
+                                            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-300 animate-pulse">
+                                                <RotateCw size={12} className="animate-spin text-amber-400 shrink-0" />
+                                                <span>{retryStatus.message}</span>
+                                            </div>
+                                        ) : (
+                                            <span className="mt-1 text-[10px] font-medium text-neutral-600">Assistant is thinking...</span>
+                                        )}
                                     </motion.div>
                                 )}
                                 {pendingAction && (
