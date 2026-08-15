@@ -66,8 +66,9 @@ htmlcov/
 *.egg-info/
 .eggs/
 
-# Windows binaries (build artifacts)
+# Windows binaries & sidecars (build artifacts)
 *.exe
+client/src-tauri/bin/
 
 *db
 

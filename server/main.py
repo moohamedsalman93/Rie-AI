@@ -46,14 +46,12 @@ logger.info(f"Backend starting up... Logging to: {settings.LOG_FILE}")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.routes import router
-from app.database import init_db
+from app.database import init_db, is_db_ready, ensure_db_ready, get_db_initialization_status
 from app.mcp_client import mcp_manager
-from app.scheduler import scheduler_manager
+from app.scheduler import scheduler_manager, is_scheduler_ready
 from app.connectivity.ngrok_autostart import try_start_ngrok_tunnel_on_startup
-
-# Initialize database and populate default configurations including PDF skills
-init_db()
 
 # Create FastAPI application instance
 app = FastAPI(
@@ -62,13 +60,80 @@ app = FastAPI(
     debug=settings.DEBUG
 )
 
+# Subsystem background status tracker
+_subsystem_status = {
+    "ngrok": False,
+}
+
+@app.get("/health")
+async def health_check():
+    """Liveness check: returns 200 OK immediately when the FastAPI server is up (<2ms)."""
+    return {"status": "ok", "app": settings.APP_NAME, "version": settings.APP_VERSION}
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check: returns 200 OK only when BOTH database and scheduler are initialized."""
+    db_ready = is_db_ready()
+    sched_ready = is_scheduler_ready()
+    ready = db_ready and sched_ready
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={
+            "status": "ready" if ready else "initializing",
+            "database": db_ready,
+            "scheduler": sched_ready,
+        },
+    )
+
+@app.get("/status")
+async def status_check():
+    """Subsystem status check: reports detailed state across background services."""
+    db_status = get_db_initialization_status()
+    sched_status = "READY" if is_scheduler_ready() else "INITIALIZING"
+    ngrok_enabled = getattr(settings, "CONNECTIVITY_NGROK_ENABLED", False)
+    ngrok_status = "RUNNING" if _subsystem_status.get("ngrok") else ("DISABLED" if not ngrok_enabled else "STOPPED")
+
+    is_overall_ready = (db_status == "READY" and sched_status == "READY")
+
+    return {
+        "status": "ready" if is_overall_ready else ("error" if db_status == "ERROR" else "initializing"),
+        "subsystems": {
+            "database": db_status,
+            "scheduler": sched_status,
+            "plugins": "READY",
+            "ngrok": ngrok_status,
+            "browser": "NOT_INITIALIZED",
+            "llm_providers": "LAZY",
+        },
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+    }
+
+async def _background_initialization():
+    """Run non-critical background initialization without blocking FastAPI startup or /health."""
+    try:
+        logger.info("Starting background initialization (database, scheduler, ngrok)...")
+        # 1. DB initialization in worker thread
+        await asyncio.to_thread(init_db)
+        logger.info("Database schema initialized.")
+
+        # 2. Scheduler start & pending restore
+        scheduler_manager.start()
+        scheduler_manager.reschedule_pending_from_db()
+        logger.info("Scheduler started.")
+
+        # 3. Ngrok autostart check
+        await asyncio.to_thread(try_start_ngrok_tunnel_on_startup)
+        _subsystem_status["ngrok"] = getattr(settings, "CONNECTIVITY_NGROK_ENABLED", False)
+        logger.info("Ngrok autostart check complete.")
+    except Exception as e:
+        logger.exception("Error during background initialization: %s", e)
+
 # Lifecycle event handlers
 @app.on_event("startup")
 async def startup_event():
-    """Start scheduler on app startup"""
-    scheduler_manager.start()
-    scheduler_manager.reschedule_pending_from_db()
-    await asyncio.to_thread(try_start_ngrok_tunnel_on_startup)
+    """Non-blocking startup: triggers background tasks so server starts listening immediately"""
+    asyncio.create_task(_background_initialization())
 
 @app.on_event("shutdown")
 async def shutdown_event():

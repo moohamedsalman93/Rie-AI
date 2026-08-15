@@ -84,6 +84,11 @@ fn kill_backend_processes() {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn();
+        let _ = Command::new("taskkill")
+            .args(["/F", "/IM", "rie-backend-x86_64-pc-windows-msvc.exe", "/T"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
     #[cfg(not(target_os = "windows"))]
     {

@@ -16,11 +16,6 @@ from openai import APIConnectionError
 from pydantic import BaseModel, Field
 
 from langchain.agents import create_agent
-from langchain_groq import ChatGroq
-from langchain_google_vertexai import ChatVertexAI
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -281,8 +276,9 @@ class RotatingChatGroq(BaseChatModel):
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "groq"))
 
-    def _get_model_with_index(self) -> tuple[ChatGroq, int]:
+    def _get_model_with_index(self) -> tuple[Any, int]:
         """Get a ChatGroq instance with the next API key in the rotation and return (model, key_index)"""
+        from langchain_groq import ChatGroq
         key, idx = self._rotator.next_key()
         kwargs = {
             "api_key": key,
@@ -299,6 +295,7 @@ class RotatingChatGroq(BaseChatModel):
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
+        from langchain_groq import ChatGroq
         kwargs.setdefault("parallel_tool_calls", True)
         dummy_kwargs = {
             "api_key": self.api_keys[0],
@@ -469,8 +466,9 @@ class RotatingChatOpenAI(BaseChatModel):
         super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "openai"))
 
-    def _get_model_with_index(self) -> tuple[ChatOpenAI, int]:
+    def _get_model_with_index(self) -> tuple[Any, int]:
         """Get a ChatOpenAI instance with the next API key in the rotation and return (model, key_index)"""
+        from langchain_openai import ChatOpenAI
         key, idx = self._rotator.next_key()
         kwargs = {
             "openai_api_key": key,
@@ -488,6 +486,7 @@ class RotatingChatOpenAI(BaseChatModel):
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
+        from langchain_openai import ChatOpenAI
         kwargs.setdefault("parallel_tool_calls", True)
         dummy_kwargs = {
             "openai_api_key": self.api_keys[0],
@@ -714,25 +713,37 @@ def _sanitize_gemini_tool_declarations(tools_spec: Any) -> Any:
     return tools_spec
 
 
-class SafeChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
-    """ChatGoogleGenerativeAI with automatic Gemini schema sanitization on _prepare_request and bind_tools."""
+_SafeChatGoogleGenerativeAICls = None
 
-    def _prepare_request(self, messages: List[BaseMessage], **kwargs: Any) -> Any:
-        request = super()._prepare_request(messages, **kwargs)
-        if hasattr(request, "tools") and request.tools:
-            for tool_obj in request.tools:
-                if hasattr(tool_obj, "function_declarations") and tool_obj.function_declarations:
-                    for fd in tool_obj.function_declarations:
-                        if hasattr(fd, "parameters") and fd.parameters:
-                            _sanitize_proto_schema(fd.parameters)
-        return request
 
-    def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
-        bound = super().bind_tools(tools, **kwargs)
-        if hasattr(bound, "kwargs") and isinstance(bound.kwargs, dict):
-            if "tools" in bound.kwargs:
-                bound.kwargs["tools"] = _sanitize_gemini_tool_declarations(bound.kwargs["tools"])
-        return bound
+def _get_safe_chat_google_generative_ai_cls():
+    """Lazily import and subclass ChatGoogleGenerativeAI with automatic Gemini schema sanitization."""
+    global _SafeChatGoogleGenerativeAICls
+    if _SafeChatGoogleGenerativeAICls is None:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        class _SafeChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
+            """ChatGoogleGenerativeAI with automatic Gemini schema sanitization on _prepare_request and bind_tools."""
+
+            def _prepare_request(self, messages: List[BaseMessage], **kwargs: Any) -> Any:
+                request = super()._prepare_request(messages, **kwargs)
+                if hasattr(request, "tools") and request.tools:
+                    for tool_obj in request.tools:
+                        if hasattr(tool_obj, "function_declarations") and tool_obj.function_declarations:
+                            for fd in tool_obj.function_declarations:
+                                if hasattr(fd, "parameters") and fd.parameters:
+                                    _sanitize_proto_schema(fd.parameters)
+                return request
+
+            def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+                bound = super().bind_tools(tools, **kwargs)
+                if hasattr(bound, "kwargs") and isinstance(bound.kwargs, dict):
+                    if "tools" in bound.kwargs:
+                        bound.kwargs["tools"] = _sanitize_gemini_tool_declarations(bound.kwargs["tools"])
+                return bound
+
+        _SafeChatGoogleGenerativeAICls = _SafeChatGoogleGenerativeAI
+    return _SafeChatGoogleGenerativeAICls
 
 
 class RotatingChatGoogleGenerativeAI(BaseChatModel):
@@ -747,8 +758,9 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         super().__init__(api_keys=api_keys, model_name=model, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, "gemini"))
 
-    def _get_model_with_index(self) -> tuple[SafeChatGoogleGenerativeAI, int]:
+    def _get_model_with_index(self) -> tuple[Any, int]:
         """Get a SafeChatGoogleGenerativeAI instance with the next API key in the rotation and return (model, key_index)"""
+        SafeCls = _get_safe_chat_google_generative_ai_cls()
         key, idx = self._rotator.next_key()
         kwargs = {
             "google_api_key": key,
@@ -758,13 +770,14 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
         try:
-            return SafeChatGoogleGenerativeAI(**kwargs), idx
+            return SafeCls(**kwargs), idx
         except Exception:
             kwargs.pop("reasoning_effort", None)
-            return SafeChatGoogleGenerativeAI(**kwargs), idx
+            return SafeCls(**kwargs), idx
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
         """Required for agents that use tools"""
+        SafeCls = _get_safe_chat_google_generative_ai_cls()
         kwargs.setdefault("parallel_tool_calls", True)
         dummy_kwargs = {
             "google_api_key": self.api_keys[0],
@@ -774,10 +787,10 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
         if self.reasoning_effort:
             dummy_kwargs["reasoning_effort"] = self.reasoning_effort
         try:
-            dummy = SafeChatGoogleGenerativeAI(**dummy_kwargs)
+            dummy = SafeCls(**dummy_kwargs)
         except Exception:
             dummy_kwargs.pop("reasoning_effort", None)
-            dummy = SafeChatGoogleGenerativeAI(**dummy_kwargs)
+            dummy = SafeCls(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
         new_kwargs = getattr(bound, "kwargs", {})
         if "tools" in new_kwargs:
@@ -1796,6 +1809,7 @@ class AgentManager:
                     reasoning_effort=reasoning_effort,
                 )
             else:
+                from langchain_groq import ChatGroq
                 kwargs = {
                     "api_key": keys[0],
                     "model": settings.GROQ_MODEL,
@@ -1836,6 +1850,7 @@ class AgentManager:
                     reasoning_effort=reasoning_effort,
                 )
             else:
+                SafeCls = _get_safe_chat_google_generative_ai_cls()
                 kwargs = {
                     "google_api_key": keys[0],
                     "model": settings.GEMINI_MODEL,
@@ -1844,11 +1859,11 @@ class AgentManager:
                 if reasoning_effort:
                     kwargs["reasoning_effort"] = reasoning_effort
                 try:
-                    llm = SafeChatGoogleGenerativeAI(**kwargs)
+                    llm = SafeCls(**kwargs)
                 except Exception as e:
                     print(f"DEBUG: Fallback without reasoning_effort for SafeChatGoogleGenerativeAI: {e}")
                     kwargs.pop("reasoning_effort", None)
-                    llm = SafeChatGoogleGenerativeAI(**kwargs)
+                    llm = SafeCls(**kwargs)
             print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL} (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
@@ -1857,7 +1872,7 @@ class AgentManager:
             traceback.print_exc()
             return None
 
-    def _create_vertex_llm(self, speed_mode: str = "thinking") -> Optional[ChatVertexAI]:
+    def _create_vertex_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return a Vertex AI (Gemini) LLM instance"""
         if settings.VERTEX_CREDENTIALS_PATH:
              import os
@@ -1871,6 +1886,7 @@ class AgentManager:
         reasoning_effort = self._get_reasoning_effort(speed_mode)
 
         try:
+            from langchain_google_vertexai import ChatVertexAI
             kwargs = {
                 "model": settings.VERTEX_MODEL,
                 "project": settings.VERTEX_PROJECT,
@@ -1914,6 +1930,7 @@ class AgentManager:
                     reasoning_effort=reasoning_effort,
                 )
             else:
+                from langchain_openai import ChatOpenAI
                 kwargs = {
                     "model_name": settings.OPENAI_MODEL,
                     "openai_api_key": keys[0],
@@ -1938,6 +1955,7 @@ class AgentManager:
         """Create and return a Rie LLM instance (OpenAI compatible)"""
         reasoning_effort = self._get_reasoning_effort(speed_mode)
         try:
+            from langchain_openai import ChatOpenAI
             kwargs = {
                 "model_name": settings.RIE_MODEL,
                 "openai_api_key": settings.RIE_ACCESS_TOKEN,
@@ -1964,6 +1982,7 @@ class AgentManager:
             return None
         reasoning_effort = self._get_reasoning_effort(speed_mode)
         try:
+            from langchain_openai import ChatOpenAI
             api_key = settings.OLLAMA_API_KEY or "ollama"
             kwargs = {
                 "model_name": settings.OLLAMA_MODEL,

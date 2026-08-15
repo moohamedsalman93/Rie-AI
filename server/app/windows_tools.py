@@ -26,9 +26,6 @@ logger = logging.getLogger(__name__)
 # Initialize core components
 desktop = Desktop()
 watch_cursor = WatchCursor()
-windows_version = desktop.get_windows_version()
-default_language = desktop.get_default_language()
-screen_width, screen_height = desktop.get_resolution()
 
 # Start cursor watching in background (if needed)
 try:

@@ -2280,10 +2280,10 @@ function MainApp() {
           } catch (e) {
             attempts++;
             // Log every 5 seconds to avoid flooding console
-            if (attempts % 10 === 0) {
+            if (attempts % 25 === 0) {
               console.log("Waiting for backend to wake up...");
             }
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 200));
           }
         }
 
@@ -2340,9 +2340,9 @@ function MainApp() {
           ttsVoiceRef.current = settings.tts_voice;
         }
 
-        // Artificial delay for premium feel
+        // Smooth minimal transition delay
         const elapsed = Date.now() - startTime;
-        const remainingDelay = Math.max(0, 1500 - elapsed);
+        const remainingDelay = Math.max(0, 300 - elapsed);
         setTimeout(() => {
           setIsAppInitializing(false);
         }, remainingDelay);

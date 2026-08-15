@@ -281,5 +281,14 @@ class SchedulerManager:
             except Exception as e:
                 logger.error("Failed to remove job %s during clear all: %s", job.id, e)
 
+    @property
+    def is_ready(self) -> bool:
+        """Return True if scheduler is running and initialized."""
+        return bool(self.scheduler and self.scheduler.running)
+
 
 scheduler_manager = SchedulerManager()
+
+def is_scheduler_ready() -> bool:
+    """Return True if the scheduler subsystem is active."""
+    return scheduler_manager.is_ready

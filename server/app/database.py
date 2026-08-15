@@ -13,6 +13,40 @@ import hashlib
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
+import threading
+import asyncio
+
+_db_initialized_event = threading.Event()
+_db_initialized_success: bool = False
+_db_initialization_error: Optional[Exception] = None
+
+def is_db_ready() -> bool:
+    """Return True if database initialization has completed successfully."""
+    return _db_initialized_event.is_set() and _db_initialized_success
+
+def get_db_initialization_status() -> str:
+    """Return 'READY', 'INITIALIZING', or 'ERROR'."""
+    if not _db_initialized_event.is_set():
+        return "INITIALIZING"
+    return "READY" if _db_initialized_success else "ERROR"
+
+def wait_for_db(timeout: Optional[float] = 10.0) -> bool:
+    """Wait for database initialization to complete. Returns True if successfully initialized."""
+    finished = _db_initialized_event.wait(timeout=timeout)
+    if not finished or not _db_initialized_success:
+        if _db_initialization_error:
+            raise RuntimeError(f"Database initialization failed: {_db_initialization_error}")
+        return False
+    return True
+
+async def ensure_db_ready(timeout: float = 10.0) -> bool:
+    """Async helper to await DB readiness without blocking the asyncio event loop."""
+    if _db_initialized_event.is_set():
+        if not _db_initialized_success and _db_initialization_error:
+            raise RuntimeError(f"Database initialization failed: {_db_initialization_error}")
+        return _db_initialized_success
+    return await asyncio.to_thread(wait_for_db, timeout)
+
 
 def get_db_path() -> Path:
     """Get the path to the SQLite database file"""
@@ -70,6 +104,20 @@ def vacuum_checkpoint_db() -> dict:
 
 def init_db():
     """Initialize the database and create tables if they don't exist"""
+    global _db_initialized_success, _db_initialization_error
+    try:
+        _init_db_tables()
+        _db_initialized_success = True
+        _db_initialization_error = None
+    except Exception as e:
+        _db_initialized_success = False
+        _db_initialization_error = e
+        logging.getLogger(__name__).exception("Database schema initialization failed: %s", e)
+        raise
+    finally:
+        _db_initialized_event.set()
+
+def _init_db_tables():
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
