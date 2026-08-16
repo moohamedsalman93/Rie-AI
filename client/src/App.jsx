@@ -32,6 +32,9 @@ import {
 import { useWindowManager } from "./hooks/useWindowManager";
 import { useAttachments } from "./hooks/useAttachments";
 import { useKnowledgeAttachment } from "./hooks/useKnowledgeAttachment";
+import { normalizeQuestionPayload } from "./utils/questionNormalizer";
+import { parseMessageContentToBlocks } from "./utils/messageParser";
+export { parseMessageContentToBlocks };
 
 
 
@@ -66,38 +69,6 @@ function cleanTextForSpeech(text) {
   return clean;
 }
 
-/**
- * Parse a raw assistant message content string into blocks (e.g. separating <think>...</think> from text).
- * @param {string} content
- * @returns {Array<{type: string, text: string, isThinking?: boolean}>}
- */
-export function parseMessageContentToBlocks(content) {
-  if (!content || typeof content !== "string") return [{ type: "text", text: "" }];
-
-  const thinkRegex = /<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/gi;
-  const blocks = [];
-  let lastIndex = 0;
-  let match;
-
-  while ((match = thinkRegex.exec(content)) !== null) {
-    const textBefore = content.slice(lastIndex, match.index);
-    if (textBefore.trim()) {
-      blocks.push({ type: "text", text: textBefore });
-    }
-    const thoughtText = match[1].trim();
-    if (thoughtText) {
-      blocks.push({ type: "thought", text: thoughtText, isThinking: false });
-    }
-    lastIndex = thinkRegex.lastIndex;
-  }
-
-  const remaining = content.slice(lastIndex);
-  if (remaining.trim() || blocks.length === 0) {
-    blocks.push({ type: "text", text: remaining });
-  }
-
-  return blocks;
-}
 
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
 function mergeScheduleNotificationLog(prev, incoming) {
@@ -822,7 +793,38 @@ function MainApp() {
           }
         }
 
-        if (!firstToolMinimizedRef.current && toolName !== "run_terminal_command" && windowMode !== "normal") {
+        if (toolName === "ask_question") {
+          const qPayload = normalizeQuestionPayload(first.args, `q_call_${botMessageId}`);
+          if (qPayload) {
+            setSessions((prev) => {
+              const newSessions = { ...prev };
+              if (newSessions[threadId]) {
+                newSessions[threadId] = newSessions[threadId].map((m) => {
+                  if (m.id === botMessageId) {
+                    const blocks = m.blocks || [];
+                    const existingIdx = blocks.findIndex((b) => b.type === "question" || b.type === "ask_question");
+                    if (existingIdx !== -1) {
+                      const updatedBlocks = [...blocks];
+                      updatedBlocks[existingIdx] = {
+                        ...updatedBlocks[existingIdx],
+                        data: qPayload,
+                      };
+                      return { ...m, blocks: updatedBlocks };
+                    }
+                    return {
+                      ...m,
+                      blocks: [...blocks, { type: "question", id: qPayload.id, data: qPayload, isAnswered: false }],
+                    };
+                  }
+                  return m;
+                });
+              }
+              return newSessions;
+            });
+          }
+        }
+
+        if (!firstToolMinimizedRef.current && toolName !== "run_terminal_command" && toolName !== "ask_question" && windowMode !== "normal") {
           firstToolMinimizedRef.current = true;
           minimizeToBottomCenter();
         }
@@ -957,6 +959,38 @@ function MainApp() {
         const content = msg.content;
         if (content && typeof content === "string") {
           const toolName = msg.name || currentTool;
+
+          if (toolName === "ask_question") {
+            const qPayload = normalizeQuestionPayload(content, `q_tool_${botMessageId}`);
+            if (qPayload) {
+              setSessions((prev) => {
+                const newSessions = { ...prev };
+                if (newSessions[threadId]) {
+                  newSessions[threadId] = newSessions[threadId].map((m) => {
+                    if (m.id === botMessageId) {
+                      const blocks = m.blocks || [];
+                      const existingIdx = blocks.findIndex((b) => b.type === "question" || b.type === "ask_question");
+                      if (existingIdx !== -1) {
+                        const updatedBlocks = [...blocks];
+                        updatedBlocks[existingIdx] = {
+                          ...updatedBlocks[existingIdx],
+                          data: qPayload,
+                        };
+                        return { ...m, blocks: updatedBlocks };
+                      }
+                      return {
+                        ...m,
+                        blocks: [...blocks, { type: "question", id: qPayload.id, data: qPayload, isAnswered: false }],
+                      };
+                    }
+                    return m;
+                  });
+                }
+                return newSessions;
+              });
+            }
+            return;
+          }
 
           // Append tool output to the visible chat message as a ToolChip block
           setSessions((prev) => {
@@ -1334,6 +1368,38 @@ function MainApp() {
       await performSend();
     }
   }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, attachedKnowledge, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread, getNewKnowledgeIds, markAllLocked, loadThreadKnowledge]);
+
+  const handleAnswerQuestion = useCallback((blockId, formattedText, submittedAnswers) => {
+    const threadId = activeThreadId;
+    if (threadId) {
+      setSessions((prev) => {
+        if (!prev[threadId]) return prev;
+        return {
+          ...prev,
+          [threadId]: prev[threadId].map((m) => {
+            if (!m.blocks) return m;
+            const hasBlock = m.blocks.some((b) => (b.type === "question" || b.type === "ask_question") && (b.id === blockId || !blockId));
+            if (!hasBlock) return m;
+            return {
+              ...m,
+              blocks: m.blocks.map((b) => {
+                if ((b.type === "question" || b.type === "ask_question") && (b.id === blockId || !blockId)) {
+                  return {
+                    ...b,
+                    isAnswered: true,
+                    submittedAnswers,
+                    submittedText: formattedText,
+                  };
+                }
+                return b;
+              }),
+            };
+          }),
+        };
+      });
+    }
+    handleSend(formattedText, false);
+  }, [activeThreadId, handleSend]);
 
   const startRecording = useCallback(async () => {
     try {
@@ -2495,6 +2561,8 @@ function MainApp() {
           settings.groq_api_key ||
           settings.vertex_project ||
           settings.openai_api_key ||
+          settings.deepseek_api_key ||
+          settings.glm_api_key ||
           settings.anthropic_api_key;
 
         if (!settings.llm_provider && !hasAnyKey) {
@@ -2641,6 +2709,8 @@ function MainApp() {
     const fieldMap = {
       GEMINI_MODEL: "gemini_model",
       OPENAI_MODEL: "openai_model",
+      DEEPSEEK_MODEL: "deepseek_model",
+      GLM_MODEL: "glm_model",
       GROQ_MODEL: "groq_model",
       OLLAMA_MODEL: "ollama_model",
       VERTEX_MODEL: "vertex_model",
@@ -3402,6 +3472,7 @@ function MainApp() {
                     isLoading={isLoading}
                     streamingThreads={streamingThreads}
                     onSend={handleSend}
+                    onAnswerQuestion={handleAnswerQuestion}
                     onCancel={handleCancelRequest}
                     onSelectThread={handleSelectThread}
                     onDeleteThread={handleDeleteThread}
@@ -3557,6 +3628,7 @@ function MainApp() {
               onPickProjectPath={handlePickProjectPath}
               onAttachClipboard={handleAttachClipboard}
               onSend={handleSend}
+              onAnswerQuestion={handleAnswerQuestion}
               onCancelRequest={handleCancelRequest}
               textareaRef={textareaRef}
               terminalLogs={terminalLogs}

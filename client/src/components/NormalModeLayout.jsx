@@ -34,8 +34,9 @@ import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
 import { LlmProviderSelector } from './LlmProviderSelector';
 import { ThinkingBlock } from './ThinkingBlock';
+import { QuestionBlock } from './QuestionBlock';
 
-function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion) {
     if (!blocks || blocks.length === 0) return null;
 
     const elements = [];
@@ -65,6 +66,18 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
                     key={`thought-${idx}`}
                     block={block}
                     isStreaming={isStreaming && block.isThinking}
+                />
+            );
+        } else if (block.type === 'question' || block.type === 'ask_question') {
+            flushToolGroup();
+            elements.push(
+                <QuestionBlock
+                    key={block.id || `question-${idx}`}
+                    block={block}
+                    onAnswer={(answerText, rawAnswers) => {
+                        onAnswerQuestion?.(block.id, answerText, rawAnswers);
+                    }}
+                    disabled={isStreaming}
                 />
             );
         } else {
@@ -99,6 +112,7 @@ export function NormalModeLayout({
     isLoading,
     streamingThreads = new Set(),
     onSend,
+    onAnswerQuestion,
     onCancel,
     onSelectThread,
     onDeleteThread = () => { },
@@ -941,7 +955,8 @@ export function NormalModeLayout({
                                                                 {renderMessageBlocks(
                                                                     m.blocks || [{ type: 'text', text: m.text }],
                                                                     toolTooltipPlacement,
-                                                                    m.id === streamingBotMessageId
+                                                                    m.id === streamingBotMessageId,
+                                                                    onAnswerQuestion || ((_id, text) => onSend(text))
                                                                 )}
                                                             </div>
                                                         ) : (

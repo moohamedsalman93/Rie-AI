@@ -212,6 +212,8 @@ class SettingsResponse(BaseModel):
     groq_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    deepseek_api_key: Optional[str] = None
+    glm_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
     brave_search_api_key: Optional[str] = None
@@ -228,8 +230,12 @@ class SettingsResponse(BaseModel):
     groq_model: str = "moonshotai/kimi-k2-instruct-0905"
     gemini_model: str = "gemini-1.5-pro"
     vertex_model: str = "gemini-1.5-pro"
-    openai_model: str = "glm-4.5-flash"
-    openai_base_url: str = "https://api.z.ai/api/paas/v4/"
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_base_url: str = "https://api.deepseek.com"
+    glm_model: str = "glm-4.7-flash"
+    glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
     
     # Rie Settings
     rie_access_token: Optional[str] = None

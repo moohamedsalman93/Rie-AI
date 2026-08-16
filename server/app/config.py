@@ -78,11 +78,65 @@ class Settings:
 
     @property
     def OPENAI_MODEL(self) -> str:
-        return self._get("OPENAI_MODEL", "glm-4.5-flash")
+        return self._get("OPENAI_MODEL", "gpt-4o-mini")
 
     @property
     def OPENAI_BASE_URL(self) -> str:
-        return self._get("OPENAI_BASE_URL", "https://api.z.ai/api/paas/v4/")
+        return self._get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+    # DeepSeek configuration
+    @property
+    def DEEPSEEK_API_KEY_STRING(self) -> Optional[str]:
+        """Raw string of DeepSeek API keys as stored in DB"""
+        return self._get("DEEPSEEK_API_KEY")
+
+    @property
+    def DEEPSEEK_API_KEYS(self) -> list[str]:
+        """List of DeepSeek API keys for rotation"""
+        keys_str = self.DEEPSEEK_API_KEY_STRING
+        if not keys_str:
+            return []
+        return [k.strip() for k in keys_str.replace('\n', ',').split(',') if k.strip()]
+
+    @property
+    def DEEPSEEK_API_KEY(self) -> Optional[str]:
+        keys = self.DEEPSEEK_API_KEYS
+        return keys[0] if keys else None
+
+    @property
+    def DEEPSEEK_MODEL(self) -> str:
+        return self._get("DEEPSEEK_MODEL", "deepseek-chat")
+
+    @property
+    def DEEPSEEK_BASE_URL(self) -> str:
+        return self._get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+    # GLM (Zhipu AI) configuration
+    @property
+    def GLM_API_KEY_STRING(self) -> Optional[str]:
+        """Raw string of GLM API keys as stored in DB"""
+        return self._get("GLM_API_KEY") or self._get("ZHIPU_API_KEY")
+
+    @property
+    def GLM_API_KEYS(self) -> list[str]:
+        """List of GLM API keys for rotation"""
+        keys_str = self.GLM_API_KEY_STRING
+        if not keys_str:
+            return []
+        return [k.strip() for k in keys_str.replace('\n', ',').split(',') if k.strip()]
+
+    @property
+    def GLM_API_KEY(self) -> Optional[str]:
+        keys = self.GLM_API_KEYS
+        return keys[0] if keys else None
+
+    @property
+    def GLM_MODEL(self) -> str:
+        return self._get("GLM_MODEL", "glm-4.7-flash")
+
+    @property
+    def GLM_BASE_URL(self) -> str:
+        return self._get("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/")
 
     @property
     def TAVILY_API_KEY(self) -> Optional[str]:
@@ -470,6 +524,10 @@ class Settings:
             return bool(self.GOOGLE_API_KEYS)
         elif provider == "openai":
             return bool(self.OPENAI_API_KEYS)
+        elif provider == "deepseek":
+            return bool(self.DEEPSEEK_API_KEYS)
+        elif provider == "glm":
+            return bool(self.GLM_API_KEYS)
         elif provider == "rie":
             return bool(self.RIE_ACCESS_TOKEN)
         elif provider == "ollama":

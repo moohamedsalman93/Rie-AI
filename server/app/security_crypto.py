@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -19,27 +20,80 @@ except ImportError:
     HAS_FERNET = False
 
 
+def _get_master_key_file_path() -> Path:
+    """Get the path to the persistent master key file."""
+    if getattr(sys, 'frozen', False):
+        base_dir = Path(os.getenv('LOCALAPPDATA', os.path.expanduser('~'))) / 'Rie-AI'
+    else:
+        base_dir = Path(os.getenv('LOCALAPPDATA', str(Path(__file__).parent.parent))) / 'Rie-AI'
+    try:
+        base_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return base_dir / '.master_key'
+
+
+def _get_machine_seed() -> str:
+    """Generate a consistent machine-bound seed string."""
+    try:
+        home_path = os.path.expanduser("~")
+        platform_str = sys.platform + os.name
+        user_name = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+        return f"rie-ai-salt-{home_path}-{platform_str}-{user_name}"
+    except Exception:
+        return "rie-ai-default-local-encryption-seed-key"
+
+
 def _get_encryption_key() -> bytes:
-    """Generate or retrieve Fernet secret key for token encryption."""
-    # Check for Cloud KMS / Environment encryption key override first
+    """
+    Generate or retrieve Fernet secret key for token encryption.
+    Guarantees persistence across restarts so saved credentials are never lost.
+    """
+    # 1. Check for Cloud KMS / Environment encryption key override first
     kms_override = os.environ.get("RIE_ENCRYPTION_KEY", "")
     if kms_override:
         key_hash = hashlib.sha256(kms_override.encode("utf-8")).digest()
         return base64.urlsafe_b64encode(key_hash)
 
-    # Use environment token or system platform details as seed for desktop local storage
-    seed = os.environ.get("RIE_APP_TOKEN", "")
-    if not seed:
-        try:
-            # Use user home path + platform details for machine-bound key
-            home_path = os.path.expanduser("~")
-            platform_str = sys.platform + os.name
-            seed = f"rie-ai-salt-{home_path}-{platform_str}"
-        except Exception:
-            seed = "rie-ai-default-local-encryption-seed-key"
+    # 2. Check for persistent master key file on disk
+    try:
+        key_path = _get_master_key_file_path()
+        if key_path.exists():
+            stored_key = key_path.read_text(encoding="utf-8").strip()
+            if stored_key:
+                return stored_key.encode("utf-8")
 
-    key_hash = hashlib.sha256(seed.encode("utf-8")).digest()
-    return base64.urlsafe_b64encode(key_hash)
+        # If not present, generate and save persistent key
+        seed = _get_machine_seed()
+        key_hash = hashlib.sha256(seed.encode("utf-8")).digest()
+        derived_key = base64.urlsafe_b64encode(key_hash)
+
+        try:
+            key_path.write_text(derived_key.decode("utf-8"), encoding="utf-8")
+        except Exception as write_err:
+            logger.debug(f"Could not persist master key file ({write_err}), using in-memory derived key.")
+
+        return derived_key
+    except Exception as e:
+        logger.warning(f"Error accessing master key file: {e}")
+        seed = _get_machine_seed()
+        key_hash = hashlib.sha256(seed.encode("utf-8")).digest()
+        return base64.urlsafe_b64encode(key_hash)
+
+
+def _get_fallback_keys() -> list:
+    """Provide fallback keys for decrypting legacy/alternative encrypted payloads."""
+    keys = []
+    try:
+        home_path = os.path.expanduser("~")
+        platform_str = sys.platform + os.name
+        seed1 = f"rie-ai-salt-{home_path}-{platform_str}"
+        keys.append(base64.urlsafe_b64encode(hashlib.sha256(seed1.encode("utf-8")).digest()))
+        seed2 = "rie-ai-default-local-encryption-seed-key"
+        keys.append(base64.urlsafe_b64encode(hashlib.sha256(seed2.encode("utf-8")).digest()))
+    except Exception:
+        pass
+    return keys
 
 
 def encrypt_secret(data: str) -> str:
@@ -69,8 +123,19 @@ def decrypt_secret(encrypted_data: str) -> str:
         if encrypted_data.startswith("fernet:") and HAS_FERNET:
             raw_token = encrypted_data[7:].encode("utf-8")
             key = _get_encryption_key()
-            f = Fernet(key)
-            return f.decrypt(raw_token).decode("utf-8")
+            try:
+                f = Fernet(key)
+                return f.decrypt(raw_token).decode("utf-8")
+            except Exception:
+                # Try fallback keys if primary key fails (e.g. legacy machine seeds)
+                for fallback_k in _get_fallback_keys():
+                    if fallback_k != key:
+                        try:
+                            f = Fernet(fallback_k)
+                            return f.decrypt(raw_token).decode("utf-8")
+                        except Exception:
+                            continue
+                raise
         elif encrypted_data.startswith("b64:"):
             raw_token = encrypted_data[4:].encode("utf-8")
             return base64.urlsafe_b64decode(raw_token).decode("utf-8")

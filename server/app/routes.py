@@ -703,6 +703,8 @@ async def get_settings():
         groq_api_key=mask_key(settings.GROQ_API_KEY_STRING),
         google_api_key=mask_key(settings.GOOGLE_API_KEY_STRING),
         openai_api_key=mask_key(settings.OPENAI_API_KEY_STRING),
+        deepseek_api_key=mask_key(settings.DEEPSEEK_API_KEY_STRING),
+        glm_api_key=mask_key(settings.GLM_API_KEY_STRING),
         anthropic_api_key=mask_key(settings.ANTHROPIC_API_KEY),
         tavily_api_key=mask_key(settings.TAVILY_API_KEY),
         brave_search_api_key=mask_key(settings.BRAVE_SEARCH_API_KEY),
@@ -720,6 +722,10 @@ async def get_settings():
         vertex_model=settings.VERTEX_MODEL,
         openai_model=settings.OPENAI_MODEL,
         openai_base_url=settings.OPENAI_BASE_URL,
+        deepseek_model=settings.DEEPSEEK_MODEL,
+        deepseek_base_url=settings.DEEPSEEK_BASE_URL,
+        glm_model=settings.GLM_MODEL,
+        glm_base_url=settings.GLM_BASE_URL,
         
         enabled_tools=settings.ENABLED_TOOLS,
         terminal_restrictions=settings.TERMINAL_RESTRICTIONS,
@@ -785,7 +791,7 @@ def _looks_like_masked_secret(value: str) -> bool:
 
 
 _SECRET_SETTING_KEYS = frozenset({
-    "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY",
+    "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY",
     "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY", "LANGSMITH_API_KEY",
     "RIE_ACCESS_TOKEN", "OLLAMA_API_KEY", "CONNECTIVITY_NGROK_AUTH_TOKEN",
 })
@@ -798,12 +804,13 @@ async def update_settings(data: SettingsUpdate):
     """
     # Allowed keys to prevent arbitrary DB writes
     ALLOWED_KEYS = {
-        "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", 
+        "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY",
         "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY",
         "WEB_SEARCH_PROVIDER",
         "VERTEX_PROJECT", "VERTEX_LOCATION", "VERTEX_CREDENTIALS_PATH",
         "LLM_PROVIDER", "FALLBACK_LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
+        "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "GLM_MODEL", "GLM_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
         "VOICE_REPLY", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "CAPTURE_SCREEN_AS_TEXT", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",

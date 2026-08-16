@@ -7,8 +7,9 @@ import { HITLApproval } from "./HITLApproval";
 import { LinkPreview } from "./LinkPreview";
 import { KnowledgeChatBanner } from "./KnowledgeAttachmentChips";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { QuestionBlock } from "./QuestionBlock";
 
-function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion) {
   if (!blocks || blocks.length === 0) return null;
 
   const elements = [];
@@ -40,6 +41,18 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
           isStreaming={isStreaming && block.isThinking}
         />
       );
+    } else if (block.type === "question" || block.type === "ask_question") {
+      flushToolGroup();
+      elements.push(
+        <QuestionBlock
+          key={block.id || `question-${idx}`}
+          block={block}
+          onAnswer={(answerText, rawAnswers) => {
+            onAnswerQuestion?.(block.id, answerText, rawAnswers);
+          }}
+          disabled={isStreaming}
+        />
+      );
     } else {
       flushToolGroup();
       elements.push(
@@ -66,6 +79,7 @@ function ChatMessagesImpl({
   onActionDecision,
   onDeleteMessage,
   onSend,
+  onAnswerQuestion,
   onOpenInNewChat,
   activeFriendMeta = null,
   attachedKnowledge = [],
@@ -197,7 +211,8 @@ function ChatMessagesImpl({
                     {renderMessageBlocks(
                       m.blocks || [{ type: "text", text: m.text }],
                       toolTooltipPlacement,
-                      isLoading && m.id === streamingBotMessageId
+                      isLoading && m.id === streamingBotMessageId,
+                      onAnswerQuestion || ((_id, text) => onSend(text))
                     )}
                     {pendingAction && m.id === messages[messages.length - 1].id && m.from === "bot" && (
                       <HITLApproval

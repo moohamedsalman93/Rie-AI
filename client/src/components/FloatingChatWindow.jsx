@@ -62,6 +62,7 @@ export function FloatingChatWindow({
   onPickProjectPath,
   onAttachClipboard,
   onSend,
+  onAnswerQuestion,
   onCancelRequest,
   chatMode,
   setChatMode,
@@ -235,6 +236,7 @@ export function FloatingChatWindow({
                 onActionDecision={onActionDecision}
                 onDeleteMessage={onDeleteMessage}
                 onSend={onSend}
+                onAnswerQuestion={onAnswerQuestion}
                 onOpenInNewChat={onOpenMessageInNewChat}
                 activeFriendMeta={activeFriendMeta}
                 attachedKnowledge={attachedKnowledge}

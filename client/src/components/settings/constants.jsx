@@ -1,6 +1,8 @@
 import { Sparkles, Cloud, Zap } from 'lucide-react';
 import logo from '../../assets/logo.png';
 import geminiIcon from '../../assets/gemini-color.svg';
+import deepseekIcon from '../../assets/deepseek-icon.svg';
+import glmIcon from '../../assets/glm-color.svg';
 
 const OpenaiIcon = (props) => (
   <svg fill="currentColor" fillRule="evenodd" viewBox="0 0 24 24" className={props.className} xmlns="http://www.w3.org/2000/svg">
@@ -22,6 +24,8 @@ export const PROVIDERS = {
   vertex: { label: 'Vertex AI', icon: <Cloud className="w-5 h-5" /> },
   groq: { label: 'Groq', icon: <Zap className="w-5 h-5" /> },
   openai: { label: 'OpenAI', icon: <OpenaiIcon className="w-5 h-5" /> },
+  deepseek: { label: 'DeepSeek', icon: <img src={deepseekIcon} alt="DeepSeek" className="w-5 h-5 object-contain" /> },
+  glm: { label: 'GLM (Zhipu AI)', icon: <img src={glmIcon} alt="GLM" className="w-5 h-5 object-contain" /> },
   ollama: { label: 'Ollama', icon: <OllamaIcon className="w-5 h-5" /> },
 };
 

@@ -44,6 +44,10 @@ export function LlmProviderSelector({
         return Boolean(settings?.google_api_key);
       case 'openai':
         return Boolean(settings?.openai_api_key);
+      case 'deepseek':
+        return Boolean(settings?.deepseek_api_key);
+      case 'glm':
+        return Boolean(settings?.glm_api_key);
       case 'groq':
         return Boolean(settings?.groq_api_key);
       case 'vertex':

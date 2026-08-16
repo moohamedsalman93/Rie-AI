@@ -333,6 +333,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       case 'vertex': return !!settings.vertex_project;
       case 'groq': return !!settings.groq_api_key;
       case 'openai': return !!settings.openai_api_key;
+      case 'deepseek': return !!settings.deepseek_api_key;
+      case 'glm': return !!settings.glm_api_key;
       case 'rie': return !!rieToken;
       case 'ollama': return !!settings.ollama_model;
       default: return false;
@@ -738,6 +740,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       if (key === 'GOOGLE_API_KEY') autoProvider = 'gemini';
       else if (key === 'GROQ_API_KEY') autoProvider = 'groq';
       else if (key === 'OPENAI_API_KEY') autoProvider = 'openai';
+      else if (key === 'DEEPSEEK_API_KEY') autoProvider = 'deepseek';
+      else if (key === 'GLM_API_KEY') autoProvider = 'glm';
       else if (key === 'VERTEX_PROJECT' || key === 'VERTEX_CREDENTIALS_PATH') autoProvider = 'vertex';
 
       if (autoProvider) {
@@ -1562,7 +1566,10 @@ key2,
                                         isSaving={isSavingAll}
                                         isSecret
                                         type="textarea"
-                                        placeholder="Enter keys separated by commas or lines:\nkey1,\nkey2,\n..."
+                                        placeholder="Enter keys separated by commas or lines:
+sk-...,
+sk-...,
+..."
                                       />
                                       <p className="text-[10px] text-neutral-500 mt-1">
                                         Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
@@ -1573,7 +1580,7 @@ key2,
                                         value={settings.openai_base_url}
                                         onSave={handleLocalSettingChange}
                                         isSaving={isSavingAll}
-                                        placeholder="https://api.z.ai/api/paas/v4/"
+                                        placeholder="https://api.openai.com/v1"
                                       />
                                       <SettingInput
                                         label="Model Name"
@@ -1581,7 +1588,81 @@ key2,
                                         value={settings.openai_model}
                                         onSave={handleLocalSettingChange}
                                         isSaving={isSavingAll}
-                                        placeholder="glm-4.5-flash"
+                                        placeholder="gpt-4o-mini"
+                                      />
+                                    </>
+                                  )}
+
+                                  {key === 'deepseek' && (
+                                    <>
+                                      <SettingInput
+                                        label="DeepSeek API Key"
+                                        dbKey="DEEPSEEK_API_KEY"
+                                        value={settings.deepseek_api_key}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        isSecret
+                                        type="textarea"
+                                        placeholder="Enter keys separated by commas or lines:
+sk-...,
+sk-...,
+..."
+                                      />
+                                      <p className="text-[10px] text-neutral-500 mt-1">
+                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
+                                      </p>
+                                      <SettingInput
+                                        label="Base URL"
+                                        dbKey="DEEPSEEK_BASE_URL"
+                                        value={settings.deepseek_base_url}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="https://api.deepseek.com"
+                                      />
+                                      <SettingInput
+                                        label="Model Name"
+                                        dbKey="DEEPSEEK_MODEL"
+                                        value={settings.deepseek_model}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="deepseek-chat"
+                                      />
+                                    </>
+                                  )}
+
+                                  {key === 'glm' && (
+                                    <>
+                                      <SettingInput
+                                        label="GLM (Zhipu AI) API Key"
+                                        dbKey="GLM_API_KEY"
+                                        value={settings.glm_api_key}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        isSecret
+                                        type="textarea"
+                                        placeholder="Enter keys separated by commas or lines:
+key1,
+key2,
+..."
+                                      />
+                                      <p className="text-[10px] text-neutral-500 mt-1">
+                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
+                                      </p>
+                                      <SettingInput
+                                        label="Base URL"
+                                        dbKey="GLM_BASE_URL"
+                                        value={settings.glm_base_url}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="https://open.bigmodel.cn/api/paas/v4/"
+                                      />
+                                      <SettingInput
+                                        label="Model Name"
+                                        dbKey="GLM_MODEL"
+                                        value={settings.glm_model}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="glm-4.7-flash"
                                       />
                                     </>
                                   )}

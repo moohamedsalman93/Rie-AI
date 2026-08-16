@@ -2,6 +2,7 @@
 Tools available for the Deep Agent
 """
 from app.web_search import search as web_search
+from app.question_tools import ask_question, normalize_question_payload
 
 
 def internet_search(
@@ -21,3 +22,4 @@ def internet_search(
         include_raw_content=include_raw_content,
         include_images=include_images,
     )
+

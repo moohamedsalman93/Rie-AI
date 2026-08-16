@@ -42,6 +42,7 @@ from app.database import get_checkpoint_db_path
 from app.config import settings
 from app.tools import (
     internet_search,
+    ask_question,
 )
 from app.windows_tools import WINDOWS_TOOLS
 from app.mcp_client import mcp_manager
@@ -229,6 +230,9 @@ DOMAIN_RULES: dict[str, str] = {
     ),
     "jira": (
         "- Jira Integration: Use `jira_*` tools directly for tracking sprints, stories, epics, and issues."
+    ),
+    "question": (
+        "- Interactive Questions & Clarifications: Whenever you need user preferences, choices (e.g. tailoring options, configuration choices, technology stack preferences), or clarifying answers before proceeding, ALWAYS invoke the `ask_question` tool. Pass selectable options in `options` or a list of questions in `questions`. Do NOT ask multiple choice questions in raw plain text when you can use `ask_question`."
     ),
 }
 
@@ -502,9 +506,9 @@ class RotatingChatOpenAI(BaseChatModel):
     reasoning_effort: Optional[str] = None
     _rotator: Any = None
 
-    def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: float = 0.7, reasoning_effort: Optional[str] = None, **kwargs: Any):
+    def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: float = 0.7, reasoning_effort: Optional[str] = None, provider_name: str = "openai", **kwargs: Any):
         super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
-        object.__setattr__(self, '_rotator', KeyRotator(api_keys, "openai"))
+        object.__setattr__(self, '_rotator', KeyRotator(api_keys, provider_name))
 
     def _get_model_with_index(self) -> tuple[Any, int]:
         """Get a ChatOpenAI instance with the next API key in the rotation and return (model, key_index)"""
@@ -2505,6 +2509,10 @@ class AgentManager:
                 provider = "gemini"
             elif settings.OPENAI_API_KEY:
                 provider = "openai"
+            elif settings.DEEPSEEK_API_KEY:
+                provider = "deepseek"
+            elif settings.GLM_API_KEY:
+                provider = "glm"
         return provider
 
     def _create_llm_for_peer(self) -> Optional[BaseChatModel]:
@@ -2781,6 +2789,10 @@ class AgentManager:
             return self._create_groq_llm(speed_mode=speed_mode)
         elif provider == "openai":
             return self._create_openai_llm(speed_mode=speed_mode)
+        elif provider == "deepseek":
+            return self._create_deepseek_llm(speed_mode=speed_mode)
+        elif provider == "glm":
+            return self._create_glm_llm(speed_mode=speed_mode)
         elif provider == "rie":
             return self._create_rie_llm(speed_mode=speed_mode)
         elif provider == "ollama":
@@ -2957,6 +2969,92 @@ class AgentManager:
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create OpenAI LLM: {e}")
+            return None
+
+    def _create_deepseek_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
+        """Create and return a DeepSeek LLM instance (OpenAI-compatible, potentially rotating)"""
+        keys = settings.DEEPSEEK_API_KEYS
+        if not keys:
+            print("ERROR: No DeepSeek API keys configured")
+            return None
+
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
+
+        try:
+            if len(keys) > 1:
+                print(f"DEBUG: Creating RotatingChatOpenAI for DeepSeek with {len(keys)} keys (reasoning_effort={reasoning_effort})")
+                llm = RotatingChatOpenAI(
+                    api_keys=keys,
+                    model=settings.DEEPSEEK_MODEL,
+                    base_url=settings.DEEPSEEK_BASE_URL,
+                    temperature=0.7,
+                    reasoning_effort=reasoning_effort,
+                    provider_name="deepseek",
+                )
+            else:
+                from langchain_openai import ChatOpenAI
+                kwargs = {
+                    "model_name": settings.DEEPSEEK_MODEL,
+                    "openai_api_key": keys[0],
+                    "base_url": settings.DEEPSEEK_BASE_URL,
+                    "temperature": 0.7,
+                    "stream_usage": True,
+                }
+                if reasoning_effort:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                try:
+                    llm = ChatOpenAI(**kwargs)
+                except Exception as e:
+                    print(f"DEBUG: Fallback without reasoning_effort for ChatOpenAI (DeepSeek): {e}")
+                    kwargs.pop("reasoning_effort", None)
+                    llm = ChatOpenAI(**kwargs)
+            print(f"DEBUG: DeepSeek LLM created successfully with model: {settings.DEEPSEEK_MODEL} and base_url: {settings.DEEPSEEK_BASE_URL} (reasoning_effort={reasoning_effort})")
+            return llm
+        except Exception as e:
+            print(f"ERROR: Failed to create DeepSeek LLM: {e}")
+            return None
+
+    def _create_glm_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
+        """Create and return a GLM (Zhipu AI) LLM instance (OpenAI-compatible, potentially rotating)"""
+        keys = settings.GLM_API_KEYS
+        if not keys:
+            print("ERROR: No GLM API keys configured")
+            return None
+
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
+
+        try:
+            if len(keys) > 1:
+                print(f"DEBUG: Creating RotatingChatOpenAI for GLM with {len(keys)} keys (reasoning_effort={reasoning_effort})")
+                llm = RotatingChatOpenAI(
+                    api_keys=keys,
+                    model=settings.GLM_MODEL,
+                    base_url=settings.GLM_BASE_URL,
+                    temperature=0.7,
+                    reasoning_effort=reasoning_effort,
+                    provider_name="glm",
+                )
+            else:
+                from langchain_openai import ChatOpenAI
+                kwargs = {
+                    "model_name": settings.GLM_MODEL,
+                    "openai_api_key": keys[0],
+                    "base_url": settings.GLM_BASE_URL,
+                    "temperature": 0.7,
+                    "stream_usage": True,
+                }
+                if reasoning_effort:
+                    kwargs["reasoning_effort"] = reasoning_effort
+                try:
+                    llm = ChatOpenAI(**kwargs)
+                except Exception as e:
+                    print(f"DEBUG: Fallback without reasoning_effort for ChatOpenAI (GLM): {e}")
+                    kwargs.pop("reasoning_effort", None)
+                    llm = ChatOpenAI(**kwargs)
+            print(f"DEBUG: GLM LLM created successfully with model: {settings.GLM_MODEL} and base_url: {settings.GLM_BASE_URL} (reasoning_effort={reasoning_effort})")
+            return llm
+        except Exception as e:
+            print(f"ERROR: Failed to create GLM LLM: {e}")
             return None
 
     def _create_rie_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
@@ -3136,6 +3234,7 @@ class AgentManager:
         # Define baseline available tools
         all_tools_map = {
             "internet_search": internet_search,
+            "ask_question": ask_question,
             "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
             "read_knowledge_asset": read_knowledge_asset,
@@ -3281,10 +3380,12 @@ class AgentManager:
 
         # Filter tools based on chat_mode + orchestration mode.
         if effective_chat_mode == "chat":
-            # Chat mode: internet_search + LTM + scheduling + knowledge tool + connected plugins
+            # Chat mode: internet_search + ask_question + LTM + scheduling + knowledge tool + connected plugins
             tools_to_use = []
             if "internet_search" in all_tools_map:
                 tools_to_use.append(all_tools_map["internet_search"])
+            if "ask_question" in all_tools_map:
+                tools_to_use.append(all_tools_map["ask_question"])
             if "schedule_chat_task" in all_tools_map:
                 tools_to_use.append(all_tools_map["schedule_chat_task"])
             if "remote_friend_ask" in all_tools_map:
@@ -3335,9 +3436,10 @@ class AgentManager:
                         tools_to_use.append(extra_tool)
                         existing_tool_names.add(t_name)
 
-        # Always ensure core system tools (search, LTM, knowledge, scheduling, remote friends) are available
+        # Always ensure core system tools (search, questions, LTM, knowledge, scheduling, remote friends) are available
         core_tool_names = [
             "internet_search",
+            "ask_question",
             "save_memory",
             "get_memory",
             "search_memory",
@@ -3421,7 +3523,7 @@ class AgentManager:
                 if hitl_mode == "always":
                     # For "Always Ask", we interrupt on all tools except safe/read-only ones.
                     safe_tools = {
-                        "internet_search", "get_desktop_state", "list_dir", "read_file", 
+                        "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file", 
                         "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
                         "schedule_chat_task"
                     }
@@ -3445,7 +3547,7 @@ class AgentManager:
                     # Build a regular HITL middleware map to avoid passing raw dicts
                     # into create_agent(..., middleware=[...]), which crashes.
                     safe_tools = {
-                        "internet_search", "get_desktop_state", "list_dir", "read_file",
+                        "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file",
                         "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
                         "schedule_chat_task"
                     }
