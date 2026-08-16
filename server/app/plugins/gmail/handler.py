@@ -14,12 +14,7 @@ Gmail Integration Plugin Handler with extended full-suite automation:
 import base64
 import os
 import re
-import mimetypes
 import httpx
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 from typing import Dict, Any, Tuple, Optional, List
 from app.plugins.base import BasePluginHandler
 
@@ -151,37 +146,57 @@ def _create_raw_mime_message(
     """Construct RFC 2822 base64url encoded raw email string with optional file attachments."""
     valid_attachments = [f for f in (attachments or []) if f and os.path.isfile(f)]
 
-    if valid_attachments:
-        msg = MIMEMultipart()
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-        for file_path in valid_attachments:
-            try:
-                filename = os.path.basename(file_path)
-                ctype, encoding = mimetypes.guess_type(file_path)
-                if ctype is None or encoding is not None:
-                    ctype = "application/octet-stream"
-                maintype, subtype = ctype.split("/", 1)
+    try:
+        import mimetypes
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.base import MIMEBase
+        from email import encoders
 
-                with open(file_path, "rb") as fp:
-                    part = MIMEBase(maintype, subtype)
-                    part.set_payload(fp.read())
+        if valid_attachments:
+            msg = MIMEMultipart()
+            msg.attach(MIMEText(body, "plain", "utf-8"))
+            for file_path in valid_attachments:
+                try:
+                    filename = os.path.basename(file_path)
+                    ctype, encoding = mimetypes.guess_type(file_path)
+                    if ctype is None or encoding is not None:
+                        ctype = "application/octet-stream"
+                    maintype, subtype = ctype.split("/", 1)
 
-                encoders.encode_base64(part)
-                part.add_header("Content-Disposition", "attachment", filename=filename)
-                msg.attach(part)
-            except Exception as e:
-                print(f"Warning: Failed to attach file '{file_path}': {e}")
-    else:
-        msg = MIMEText(body, "plain", "utf-8")
+                    with open(file_path, "rb") as fp:
+                        part = MIMEBase(maintype, subtype)
+                        part.set_payload(fp.read())
 
-    msg["To"] = to
-    msg["Subject"] = subject
-    if in_reply_to:
-        msg["In-Reply-To"] = in_reply_to
-        msg["References"] = in_reply_to
+                    encoders.encode_base64(part)
+                    part.add_header("Content-Disposition", "attachment", filename=filename)
+                    msg.attach(part)
+                except Exception as e:
+                    print(f"Warning: Failed to attach file '{file_path}': {e}")
+        else:
+            msg = MIMEText(body, "plain", "utf-8")
 
-    raw_bytes = msg.as_bytes()
-    return base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
+        msg["To"] = to
+        msg["Subject"] = subject
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+            msg["References"] = in_reply_to
+
+        raw_bytes = msg.as_bytes()
+        return base64.urlsafe_b64encode(raw_bytes).decode("utf-8")
+    except Exception as err:
+        # Fallback to pure RFC 2822 formatting if email.mime is not bundled
+        header_lines = [
+            f"To: {to}",
+            f"Subject: {subject}",
+            "Content-Type: text/plain; charset=utf-8",
+            "MIME-Version: 1.0"
+        ]
+        if in_reply_to:
+            header_lines.append(f"In-Reply-To: {in_reply_to}")
+            header_lines.append(f"References: {in_reply_to}")
+        raw_msg = "\r\n".join(header_lines) + "\r\n\r\n" + body
+        return base64.urlsafe_b64encode(raw_msg.encode("utf-8")).decode("utf-8")
 
 
 class GmailPluginHandler(BasePluginHandler):
@@ -247,11 +262,11 @@ class GmailPluginHandler(BasePluginHandler):
 
             # 3. Send Email
             elif tool_name == "gmail_send_email":
-                to = args.get("to", "").strip()
-                subject = args.get("subject", "").strip()
-                body = args.get("body", "").strip()
-                attachments = args.get("attachments", [])
-                thread_id = args.get("thread_id")
+                to = (args.get("to") or "").strip()
+                subject = (args.get("subject") or "").strip()
+                body = (args.get("body") or "").strip()
+                attachments = args.get("attachments") or []
+                thread_id = args.get("thread_id") or None
 
                 if not to or not subject or not body:
                     return "Error: Parameters 'to', 'subject', and 'body' are required to send an email."
@@ -271,11 +286,11 @@ class GmailPluginHandler(BasePluginHandler):
 
             # 4. Create Draft
             elif tool_name == "gmail_create_draft":
-                to = args.get("to", "").strip()
-                subject = args.get("subject", "").strip()
-                body = args.get("body", "").strip()
-                attachments = args.get("attachments", [])
-                thread_id = args.get("thread_id")
+                to = (args.get("to") or "").strip()
+                subject = (args.get("subject") or "").strip()
+                body = (args.get("body") or "").strip()
+                attachments = args.get("attachments") or []
+                thread_id = args.get("thread_id") or None
 
                 if not to or not subject or not body:
                     return "Error: Parameters 'to', 'subject', and 'body' are required to create a draft."
@@ -295,12 +310,12 @@ class GmailPluginHandler(BasePluginHandler):
 
             # 5. Reply Email
             elif tool_name == "gmail_reply_email":
-                m_id = args.get("message_id")
-                to = args.get("to", "").strip()
-                subject = args.get("subject", "").strip()
-                body = args.get("body", "").strip()
-                attachments = args.get("attachments", [])
-                thread_id = args.get("thread_id")
+                m_id = args.get("message_id") or ""
+                to = (args.get("to") or "").strip()
+                subject = (args.get("subject") or "").strip()
+                body = (args.get("body") or "").strip()
+                attachments = args.get("attachments") or []
+                thread_id = args.get("thread_id") or None
 
                 if not m_id or not to or not subject or not body:
                     return "Error: Parameters 'message_id', 'to', 'subject', and 'body' are required to reply."

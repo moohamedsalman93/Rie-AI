@@ -119,8 +119,24 @@ def init_db():
 
 def _init_db_tables():
     db_path = get_db_path()
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Failed to configure PRAGMAs on settings.db: %s", exc)
     cursor = conn.cursor()
+
+    # Also configure WAL mode and busy timeout on checkpoints.db
+    try:
+        cp_path = get_checkpoint_db_path()
+        with sqlite3.connect(cp_path, timeout=30.0) as cp_conn:
+            cp_conn.execute("PRAGMA journal_mode=WAL;")
+            cp_conn.execute("PRAGMA busy_timeout=30000;")
+            cp_conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Failed to configure PRAGMAs on checkpoints.db: %s", exc)
     
     # Create settings table
     cursor.execute('''

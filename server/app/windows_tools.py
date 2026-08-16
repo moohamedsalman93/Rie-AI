@@ -36,8 +36,11 @@ except Exception as e:
 # --- Tool Input Schemas ---
 
 class AppToolInput(BaseModel):
-    mode: Literal['launch', 'resize', 'switch'] = Field(..., description="Mode of operation")
-    name: Optional[str] = Field(None, description="Application name")
+    mode: Literal['launch', 'resize', 'switch'] = Field(
+        ...,
+        description="Mode of operation: 'launch' to open/start an application (e.g. 'Notepad', 'Settings'), 'switch' to focus an existing window, 'resize' for window dimensions.",
+    )
+    name: Optional[str] = Field(None, description="Application name (e.g. 'Notepad', 'Settings', 'Calculator')")
     window_loc: Optional[List[int]] = Field(None, description="Window location coordinates [x, y]")
     window_size: Optional[List[int]] = Field(None, description="Window size [width, height]")
 
@@ -60,10 +63,17 @@ class ClickToolInput(BaseModel):
     clicks: int = Field(1, description="Number of clicks")
 
 class TypeToolInput(BaseModel):
-    loc: List[int] = Field(..., description="Coordinates [x, y] to click before typing")
     text: str = Field(..., description="Text to type")
-    clear: bool = Field(False, description="Clear existing text first")
-    press_enter: bool = Field(False, description="Press enter after typing")
+    loc: Optional[List[int]] = Field(
+        None,
+        description=(
+            "Optional screen coordinates [x, y] to click before typing. "
+            "If omitted or null, types directly into the currently focused element/active window. "
+            "To find exact coordinates for an input field or button, use 'get_desktop_state' first."
+        ),
+    )
+    clear: bool = Field(False, description="Clear existing text first (Ctrl+A followed by Backspace)")
+    press_enter: bool = Field(False, description="Press Enter key after typing")
 
 class ScrollToolInput(BaseModel):
     loc: Optional[List[int]] = Field(None, description="Coordinates to scroll at")
@@ -90,6 +100,12 @@ class ScrapeToolInput(BaseModel):
 # --- Tool Implementation Functions ---
 
 def app_tool(mode, name=None, window_loc=None, window_size=None):
+    if isinstance(mode, str):
+        normalized_mode = mode.lower().strip()
+        if normalized_mode in ("open", "start", "run"):
+            mode = "launch"
+        elif normalized_mode in ("focus", "bring_to_front"):
+            mode = "switch"
     pythoncom.CoInitialize()
     try:
         return desktop.app(mode, name, window_loc, window_size)
@@ -222,6 +238,7 @@ def state_tool(use_vision: bool = False, use_dom: bool = False):
     try:
         # Calculate scale factor to cap resolution at 1080p
         max_width, max_height = 1920, 1080
+        screen_width, screen_height = pg.size()
         scale_width = max_width / screen_width if screen_width > max_width else 1.0
         scale_height = max_height / screen_height if screen_height > max_height else 1.0
         scale = min(scale_width, scale_height)
@@ -231,10 +248,11 @@ def state_tool(use_vision: bool = False, use_dom: bool = False):
         scrollable_elements = desktop_state.tree_state.scrollable_elements_to_string()
         apps = desktop_state.apps_to_string()
         active_app = desktop_state.active_app_to_string()
+        default_lang = desktop.get_default_language() if hasattr(desktop, "get_default_language") else "en-US"
         
         result_text = dedent(f'''
         Default Language of User:
-        {default_language} with encoding: {desktop.encoding}
+        {default_lang} with encoding: {desktop.encoding}
                                 
         Focused App:
         {active_app}
@@ -277,12 +295,17 @@ def click_tool(loc, button='left', clicks=1):
     finally:
         pythoncom.CoUninitialize()
 
-def type_tool(loc, text, clear=False, press_enter=False):
+def type_tool(text: str, loc: Optional[List[int]] = None, clear: bool = False, press_enter: bool = False):
     pythoncom.CoInitialize()
     try:
-        if len(loc) != 2: raise ValueError("loc must be [x, y]")
-        desktop.type(loc=loc, text=text, clear='true' if clear else 'false', press_enter='true' if press_enter else 'false')
-        return f"Typed '{text}' at {loc}"
+        if loc is not None:
+            if len(loc) != 2:
+                raise ValueError("loc must be [x, y] coordinates")
+            desktop.type(loc=tuple(loc), text=text, clear='true' if clear else 'false', press_enter='true' if press_enter else 'false')
+            return f"Typed '{text}' at {loc}"
+        else:
+            desktop.type(loc=None, text=text, clear='true' if clear else 'false', press_enter='true' if press_enter else 'false')
+            return f"Typed '{text}' into focused element"
     finally:
         pythoncom.CoUninitialize()
 
@@ -346,7 +369,7 @@ WINDOWS_TOOLS = {
     "app_control": StructuredTool.from_function(
         func=app_tool,
         name="app_control",
-        description="Launch, resize, or switch Windows applications.",
+        description="Launch, switch, or resize Windows desktop applications. Use mode='launch' to start/open an application.",
         args_schema=AppToolInput,
     ),
     "run_terminal_command": StructuredTool.from_function(
@@ -374,7 +397,12 @@ WINDOWS_TOOLS = {
     "keyboard_type": StructuredTool.from_function(
         func=type_tool,
         name="keyboard_type",
-        description="Type text at specific coordinates.",
+        description=(
+            "Type text into an application. "
+            "If 'loc' [x, y] is provided, clicks at that coordinate before typing. "
+            "If 'loc' is omitted or null, types directly into the currently active/focused window or cursor position. "
+            "Use 'get_desktop_state' beforehand if you need to determine coordinates for a specific input field."
+        ),
         args_schema=TypeToolInput,
     ),
     "scroll_mouse": StructuredTool.from_function(

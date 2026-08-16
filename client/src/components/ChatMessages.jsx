@@ -6,6 +6,7 @@ import { ToolChip, ToolCallGroup } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
 import { LinkPreview } from "./LinkPreview";
 import { KnowledgeChatBanner } from "./KnowledgeAttachmentChips";
+import { ThinkingBlock } from "./ThinkingBlock";
 
 function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
   if (!blocks || blocks.length === 0) return null;
@@ -30,6 +31,15 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming) {
   blocks.forEach((block, idx) => {
     if (block.type === "tool") {
       currentToolGroup.push(block);
+    } else if (block.type === "thought") {
+      flushToolGroup();
+      elements.push(
+        <ThinkingBlock
+          key={`thought-${idx}`}
+          block={block}
+          isStreaming={isStreaming && block.isThinking}
+        />
+      );
     } else {
       flushToolGroup();
       elements.push(
@@ -67,10 +77,13 @@ function ChatMessagesImpl({
   const toolTooltipPlacement = botReplyCount <= 2 ? "bottom" : "top";
   const hasStreamingContent = messages.some((msg) => {
     if (msg.from !== "bot" || msg.id !== streamingBotMessageId) return false;
-    const hasTextBlocks = (msg.blocks || []).some(
-      (block) => block.type === "text" && block.text && block.text.trim()
+    const hasActiveBlocks = (msg.blocks || []).some(
+      (block) =>
+        (block.type === "text" && block.text && block.text.trim()) ||
+        (block.type === "thought" && block.text && block.text.trim()) ||
+        block.type === "tool"
     );
-    return hasTextBlocks || (msg.text && msg.text.trim());
+    return hasActiveBlocks || (msg.text && msg.text.trim());
   });
   const shouldShowThinkingShimmer = Boolean((isLoading && !hasStreamingContent) || retryStatus?.message);
 

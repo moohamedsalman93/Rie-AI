@@ -8,7 +8,7 @@ class WatchCursor:
         self._thread = None
 
     def start(self):
-        self._thread = threading.Thread(target=self._run)
+        self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self):

@@ -27,7 +27,23 @@ class PluginRegistry:
         Scan plugins directory and register all valid plugin manifests and handlers.
         """
         if not plugins_dir:
-            plugins_dir = Path(__file__).parent
+            import sys
+            if getattr(sys, "frozen", False):
+                candidates = [
+                    Path(getattr(sys, "_MEIPASS", "")) / "app" / "plugins",
+                    Path(sys.executable).parent / "_internal" / "app" / "plugins",
+                    Path(sys.executable).parent / "app" / "plugins",
+                    Path(__file__).resolve().parent,
+                ]
+                for cand in candidates:
+                    try:
+                        if cand.exists() and any(cand.iterdir()):
+                            plugins_dir = cand
+                            break
+                    except Exception:
+                        pass
+            if not plugins_dir:
+                plugins_dir = Path(__file__).resolve().parent
 
         self.manifests = {}
         self.handlers = {}
@@ -48,33 +64,36 @@ class PluginRegistry:
 
                         manifest = PluginManifestSpec(**manifest_data)
                         plugin_id = manifest.id
+                        self.manifests[plugin_id] = manifest
 
                         handler_instance = None
                         if handler_file.exists():
-                            import importlib.util
-                            spec = importlib.util.spec_from_file_location(f"rie_plugin_{item.name}", str(handler_file))
-                            if spec and spec.loader:
-                                module = importlib.util.module_from_spec(spec)
-                                spec.loader.exec_module(module)
-                                
-                                # Find class inheriting from BasePluginHandler
-                                for attr_name in dir(module):
-                                    attr = getattr(module, attr_name)
-                                    if (
-                                        isinstance(attr, type)
-                                        and issubclass(attr, BasePluginHandler)
-                                        and attr is not BasePluginHandler
-                                    ):
-                                        handler_instance = attr(manifest)
-                                        break
+                            try:
+                                import importlib.util
+                                spec = importlib.util.spec_from_file_location(f"rie_plugin_{item.name}", str(handler_file))
+                                if spec and spec.loader:
+                                    module = importlib.util.module_from_spec(spec)
+                                    spec.loader.exec_module(module)
+                                    
+                                    # Find class inheriting from BasePluginHandler
+                                    for attr_name in dir(module):
+                                        attr = getattr(module, attr_name)
+                                        if (
+                                            isinstance(attr, type)
+                                            and issubclass(attr, BasePluginHandler)
+                                            and attr is not BasePluginHandler
+                                        ):
+                                            handler_instance = attr(manifest)
+                                            break
+                            except Exception as h_err:
+                                logger.error(f"Failed to load handler for plugin '{plugin_id}': {h_err}", exc_info=True)
 
-                        self.manifests[plugin_id] = manifest
                         if handler_instance:
                             self.handlers[plugin_id] = handler_instance
                         
                         logger.info(f"Successfully loaded plugin '{plugin_id}' ({manifest.displayName}) with {len(manifest.tools)} tools.")
                     except Exception as e:
-                        logger.error(f"Failed to load plugin from {item}: {e}", exc_info=True)
+                        logger.error(f"Failed to load plugin manifest from {item}: {e}", exc_info=True)
 
         self._loaded = True
 

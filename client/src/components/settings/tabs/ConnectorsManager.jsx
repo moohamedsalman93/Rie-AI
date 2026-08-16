@@ -18,6 +18,22 @@ import {
   Lock,
   Search
 } from 'lucide-react';
+import { getAppToken } from '../../../services/chatApi';
+
+function getHeaders(extraHeaders = {}) {
+  const headers = { ...extraHeaders };
+  try {
+    const token = localStorage.getItem('rie_token');
+    if (token) headers.Authorization = `Bearer ${token}`;
+  } catch {
+    /* ignore */
+  }
+  const appToken = getAppToken();
+  if (appToken) {
+    headers['X-Rie-App-Token'] = appToken;
+  }
+  return headers;
+}
 
 const BRAND_LOGOS = {
   github: 'https://raw.githubusercontent.com/gilbarbara/logos/main/logos/github-icon.svg',
@@ -86,10 +102,15 @@ export function ConnectorsManager() {
   const fetchCatalog = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://127.0.0.1:14300/api/plugins/catalog');
+      const res = await fetch('http://127.0.0.1:14300/api/plugins/catalog', {
+        headers: getHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         setPlugins(data.plugins || []);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.warn('Catalog fetch failed:', res.status, errData);
       }
     } catch (err) {
       console.error('Failed to fetch plugin catalog:', err);
@@ -123,7 +144,10 @@ export function ConnectorsManager() {
         url += `?custom_client_id=${encodeURIComponent(customClientId)}`;
       }
 
-      const res = await fetch(url, { method: 'POST' });
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: getHeaders()
+      });
       const data = await res.json();
 
       if (data.status === 'ok' && data.auth_url) {
@@ -151,7 +175,10 @@ export function ConnectorsManager() {
   const handleDisconnect = async (pluginId) => {
     try {
       setLoading(true);
-      const res = await fetch(`http://127.0.0.1:14300/api/plugins/${pluginId}/disconnect`, { method: 'POST' });
+      const res = await fetch(`http://127.0.0.1:14300/api/plugins/${pluginId}/disconnect`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
       if (res.ok) {
         setMessage({ type: 'info', text: `Disconnected ${pluginId}.` });
         await fetchCatalog();
@@ -170,7 +197,10 @@ export function ConnectorsManager() {
   const handleSync = async (pluginId) => {
     try {
       setMessage({ type: 'info', text: `Testing connection for ${pluginId}...` });
-      const res = await fetch(`http://127.0.0.1:14300/api/plugins/${pluginId}/sync`, { method: 'POST' });
+      const res = await fetch(`http://127.0.0.1:14300/api/plugins/${pluginId}/sync`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
       if (res.ok) {
         setMessage({ type: 'success', text: `${pluginId} connection verified!` });
         await fetchCatalog();
@@ -190,7 +220,10 @@ export function ConnectorsManager() {
         `http://127.0.0.1:14300/api/plugins/${pluginId}/capabilities?capability=${encodeURIComponent(
           capability
         )}&enabled=${!currentEnabled}`,
-        { method: 'POST' }
+        {
+          method: 'POST',
+          headers: getHeaders()
+        }
       );
       if (res.ok) {
         setMessage({ type: 'info', text: `Updated capability '${capability}'.` });

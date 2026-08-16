@@ -1,8 +1,16 @@
+import os
+import sys
+
+# Windows BLAS thread limiter: Prevents OpenBLAS memory allocation failures on Windows
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+
+import asyncio
 import logging
 import logging.config
-import sys
-import os
-import asyncio
 from pathlib import Path
 
 # Fix for Windows subprocess: explicitly set ProactorEventLoop
@@ -11,37 +19,16 @@ if sys.platform == 'win32':
 
 from app.config import settings
 
-# Set up logging configuration
-LOG_CONFIG = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "default": {
-            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        },
-        "access": {
-            "format": '%(asctime)s - %(name)s - %(levelname)s - %(client_addr)s - "%(request_line)s" %(status_code)s',
-        },
-    },
-    "handlers": {
-        "file": {
-            "class": "logging.FileHandler",
-            "filename": str(settings.LOG_FILE),
-            "mode": "w",
-            "formatter": "default",
-        },
-    },
-    "loggers": {
-        "": {"handlers": ["file"], "level": "INFO"},
-        "uvicorn": {"handlers": ["file"], "level": "INFO", "propagate": False},
-        "uvicorn.error": {"level": "INFO", "propagate": True},
-        "uvicorn.access": {"handlers": ["file"], "level": "INFO", "propagate": False},
-    },
-}
-
-# Apply logging configuration
-logging.config.dictConfig(LOG_CONFIG)
-logger = logging.getLogger(__name__)
+# Set up application logging (console and file output)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(str(settings.LOG_FILE), mode="a", encoding="utf-8"),
+    ]
+)
+logger = logging.getLogger("main")
 logger.info(f"Backend starting up... Logging to: {settings.LOG_FILE}")
 
 from fastapi import FastAPI
@@ -58,6 +45,25 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     debug=settings.DEBUG
+)
+
+# Configure CORS middleware immediately so all endpoints and error handlers are covered
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:14200",
+        "http://127.0.0.1:14200",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "tauri://localhost",
+        "https://tauri.localhost",
+        "http://tauri.localhost",
+    ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|tauri\.localhost)(:\d+)?",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Subsystem background status tracker
@@ -152,20 +158,11 @@ async def shutdown_event():
     except Exception:
         logger.exception("Unexpected error while shutting down scheduler.")
 
-# Configure CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:14200",  # Tauri/Vite dev server
-        "http://127.0.0.1:14200",
-        "tauri://localhost",  # Tauri production
-        "https://tauri.localhost",  # Tauri production HTTPS
-        "http://tauri.localhost",  # Tauri production HTTP
-    ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
+    try:
+        from app.agent import agent_manager
+        await asyncio.wait_for(agent_manager.shutdown(), timeout=5)
+    except Exception:
+        logger.exception("Unexpected error while shutting down agent checkpointer.")
 
 from app.security import verify_app_token
 from fastapi import Depends
@@ -211,7 +208,6 @@ if __name__ == "__main__":
         port=14300,
         reload=settings.DEBUG if not is_frozen else False,
         use_colors=not is_frozen,  # Disable colors in frozen/windowed mode
-        log_config=LOG_CONFIG,
         # Force ProactorEventLoop on Windows even with --reload.
         # uvicorn defaults to SelectorEventLoop when use_subprocess=True,
         # but Playwright/Camoufox need ProactorEventLoop for subprocess spawning.

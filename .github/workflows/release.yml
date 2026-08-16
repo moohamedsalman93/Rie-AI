@@ -16,12 +16,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. Restore cached Python Sidecar Executable (checks cache first)
+      # 1. Restore cached Python Sidecar Executable & Companion Files (checks cache first)
       - name: Cache Python Sidecar Binary
         id: sidecar-cache
         uses: actions/cache@v4
         with:
-          path: client/src-tauri/bin/rie-backend-x86_64-pc-windows-msvc.exe
+          path: |
+            client/src-tauri/bin/rie-backend-x86_64-pc-windows-msvc.exe
+            client/src-tauri/bin/_internal
           key: ${{ runner.os }}-sidecar-${{ hashFiles('server/**/*.py', 'server/poetry.lock', 'server/rie-backend.spec', 'update-backend.ps1') }}
 
       # 2. Python Environment & Sidecar Build (ONLY if sidecar cache misses)

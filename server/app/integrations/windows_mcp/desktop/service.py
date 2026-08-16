@@ -284,9 +284,10 @@ class Desktop:
         x,y=loc
         pg.click(x,y,button=button,clicks=clicks,duration=0.1)
 
-    def type(self,loc:tuple[int,int],text:str,caret_position:Literal['start','end','none']='none',clear:Literal['true','false']='false',press_enter:Literal['true','false']='false'):
-        x,y=loc
-        pg.leftClick(x,y)
+    def type(self,loc:Optional[tuple[int,int]]=None,text:str='',caret_position:Literal['start','end','none']='none',clear:Literal['true','false']='false',press_enter:Literal['true','false']='false'):
+        if loc is not None:
+            x,y=loc
+            pg.leftClick(x,y)
         if caret_position == 'start':
             pg.press('home')
         elif caret_position == 'end':
@@ -481,12 +482,16 @@ class Desktop:
         width, height = uia.GetScreenSize()
         return Size(width=width,height=height)
 
-    def get_screenshot(self)->Image.Image:
-        from PIL import ImageGrab
+    def get_screenshot(self):
+        from PIL import ImageGrab, Image as PILImage
         try:
             return ImageGrab.grab()
         except Exception:
-            return pg.screenshot()
+            try:
+                return pg.screenshot()
+            except Exception:
+                # Safe fallback if desktop screen grab is unavailable
+                return PILImage.new("RGB", (1920, 1080), color=(30, 30, 30))
     
     @contextmanager
     def auto_minimize(self):

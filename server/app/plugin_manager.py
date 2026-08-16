@@ -132,9 +132,9 @@ class PluginManager:
                         "boolean": bool,
                         "object": dict
                     }.get(item_type_str, str)
-                    prop_type = List[item_py_type]
+                    base_type = List[item_py_type]
                 else:
-                    prop_type = {
+                    base_type = {
                         "integer": int,
                         "number": float,
                         "boolean": bool,
@@ -142,12 +142,17 @@ class PluginManager:
                     }.get(schema_type, str)
 
                 prop_description = prop_info.get("description", "")
-                prop_default = ... if prop_name in required else prop_info.get("default", None)
+                is_required = prop_name in required
 
-                fields[prop_name] = (
-                    prop_type,
-                    Field(..., description=prop_description) if prop_default is ... else Field(default=prop_default, description=prop_description)
-                )
+                if is_required:
+                    prop_type = base_type
+                    field_obj = Field(..., description=prop_description)
+                else:
+                    prop_type = Optional[base_type]
+                    prop_default = prop_info.get("default", None)
+                    field_obj = Field(default=prop_default, description=prop_description)
+
+                fields[prop_name] = (prop_type, field_obj)
 
             class EmptyInput(BaseModel):
                 pass

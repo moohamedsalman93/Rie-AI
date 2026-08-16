@@ -131,6 +131,7 @@ import io
 import base64
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _friend_stream_lock = asyncio.Lock()
 _friend_stream_registry: Dict[str, Dict[str, Any]] = {}
@@ -2833,7 +2834,7 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
     Best‑effort serialization of a LangChain / LangGraph message object into JSON‑safe data.
 
     This is intentionally shallow – the goal is to surface enough structure so the UI
-    can understand when tools are being called (tool name, args, etc.).
+    can understand when tools are being called (tool name, args, etc.) and stream LLM thoughts.
     """
     # Fall back to string if it's already a simple type
     if isinstance(msg, (str, int, float, bool)) or msg is None:
@@ -2846,16 +2847,51 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
         if hasattr(msg, attr):
             data[attr] = getattr(msg, attr)
 
-    # Content / text
-    if hasattr(msg, "content"):
-        content = getattr(msg, "content")
-        if isinstance(content, list):
-            # Pass through the list of content blocks
-            data["content"] = content
-        else:
-            data["content"] = content
-    elif hasattr(msg, "text"):
-        data["content"] = getattr(msg, "text")
+    # Content / text / thought extraction
+    reasoning_content = None
+    add_kwargs = getattr(msg, "additional_kwargs", None)
+    if isinstance(add_kwargs, dict):
+        reasoning_content = (
+            add_kwargs.get("reasoning_content")
+            or add_kwargs.get("reasoning")
+            or add_kwargs.get("thought")
+            or add_kwargs.get("thinking")
+        )
+    if not reasoning_content:
+        resp_meta = getattr(msg, "response_metadata", None)
+        if isinstance(resp_meta, dict):
+            reasoning_content = (
+                resp_meta.get("reasoning_content")
+                or resp_meta.get("reasoning")
+                or resp_meta.get("thought")
+                or resp_meta.get("thinking")
+            )
+
+    raw_content = getattr(msg, "content", None) if hasattr(msg, "content") else getattr(msg, "text", None)
+    if isinstance(raw_content, list):
+        thought_parts = []
+        text_parts = []
+        for part in raw_content:
+            if isinstance(part, dict):
+                p_type = str(part.get("type", "")).lower()
+                if p_type in ("thought", "thinking", "reasoning", "reasoning_content") or part.get("thought") is True:
+                    t_val = part.get("thought") or part.get("thinking") or part.get("text") or ""
+                    if isinstance(t_val, str) and t_val:
+                        thought_parts.append(t_val)
+                elif p_type == "text" or "text" in part:
+                    text_parts.append(part.get("text", ""))
+                else:
+                    text_parts.append(str(part))
+            elif isinstance(part, str):
+                text_parts.append(part)
+        if thought_parts:
+            reasoning_content = (reasoning_content or "") + "".join(thought_parts)
+        data["content"] = "".join(text_parts)
+    else:
+        data["content"] = raw_content if raw_content is not None else ""
+
+    if reasoning_content:
+        data["reasoning_content"] = reasoning_content
 
     # Streaming chunks report AIMessageChunk — normalize so the UI treats them like "ai"
     if data.get("type") == "AIMessageChunk":
@@ -2879,8 +2915,8 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
             if tc_name not in LTM_TOOL_NAMES:
                 serialized_calls.append(tc_data or str(tc))
         
-        if not serialized_calls and not data.get("content"):
-             # If it's an AI message with no non-LTM tool calls and no content, hide it
+        if not serialized_calls and not data.get("content") and not data.get("reasoning_content"):
+             # If it's an AI message with no non-LTM tool calls, no content, and no reasoning, hide it
              return None
              
         data["tool_calls"] = serialized_calls
@@ -3683,6 +3719,7 @@ async def toggle_plugin_capability(plugin_id: str, capability: str, enabled: boo
     )
 
     await plugin_manager.initialize()
+    agent_manager.invalidate_agent()
     return {"status": "ok", "plugin_id": plugin_id, "disabled_capabilities": list(disabled_caps)}
 
 
@@ -3803,8 +3840,9 @@ async def plugin_oauth_callback(
             config="{}"
         )
 
-        # Re-initialize plugin manager tools
+        # Re-initialize plugin manager tools and invalidate cached agent graph
         await plugin_manager.initialize()
+        agent_manager.invalidate_agent()
 
         # Render ultra-premium glassmorphic landing page
         html_content = render_oauth_success_html(
@@ -3830,6 +3868,7 @@ async def disconnect_plugin(plugin_id: str):
     success = delete_plugin_integration(plugin_id)
     if success:
         await plugin_manager.initialize()
+        agent_manager.invalidate_agent()
         return {"status": "ok", "message": f"Plugin '{plugin_id}' disconnected."}
     return {"status": "error", "message": f"Failed to disconnect plugin '{plugin_id}'."}
 
@@ -3841,7 +3880,8 @@ async def sync_plugin(plugin_id: str):
     if not record:
         raise HTTPException(status_code=404, detail=f"Plugin '{plugin_id}' is not installed.")
 
-    # Re-initialize plugin tools
+    # Re-initialize plugin tools and invalidate cached agent grap
     await plugin_manager.initialize()
+    agent_manager.invalidate_agent()
     return {"status": "ok", "plugin": record}
 

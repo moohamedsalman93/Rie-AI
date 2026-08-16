@@ -6,10 +6,11 @@ import logging
 import os
 import re
 import threading
+import uuid
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Iterator, AsyncIterator, Annotated
-from collections.abc import Generator
+from typing import Any, List, Optional, Iterator, AsyncIterator, Annotated, Callable, Awaitable, Generator
 
 import httpx
 from openai import APIConnectionError
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field
 from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_core.outputs import ChatResult, ChatGenerationChunk
 from langchain.agents.middleware import (
     TodoListMiddleware,
@@ -27,10 +28,10 @@ from langchain.agents.middleware import (
     AgentMiddleware,
     ModelRequest,
     ModelResponse,
+    ToolCallRequest,
 )
 from langchain.tools import tool, ToolRuntime
 from langchain_core.tools import InjectedToolArg
-from typing import Callable, Awaitable
 from deepagents.middleware.subagents import SubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
@@ -54,6 +55,11 @@ from app.remote_friend_tools import remote_friend_ask_tool
 from app.browser import LANGGRAPH_BROWSER_TOOLS, browser_service, InteractionMode
 from app.runtime_context import set_agent_context, reset_agent_context
 from app.knowledge import read_knowledge_asset
+from app.trajectory import trajectory_store, TaskEvent
+from app.error_classifier import classify_tool_error, ErrorCategory
+from app.hitl import hitl_manager, ActionRiskLevel
+from app.capability_resolver import capability_resolver, capability_catalog, CapabilitySource
+from app.batched_executor import execute_batched_plan, batched_tool_registry
 
 
 
@@ -171,34 +177,64 @@ def _client_device_system_content(
     return "\n".join(parts)
 
 
-# System prompt to steer the agent to be an expert researcher
-SYSTEM_PROMPT = """
-You are Rie, an autonomous AI assistant specialized in technical tasks.
+# System prompt definitions: Base conversational prompt vs technical execution rules
+BASE_SYSTEM_PROMPT = """
+You are Rie, an autonomous AI assistant specialized in technical tasks and conversation.
 
-Priorities: accuracy and adherence to specific instructions first, direct efficient tool execution second.
+Priorities: accuracy and adherence to specific instructions first, direct efficient execution second.
 
-Rules:
-- Connected Integration Plugins: If dynamic plugin integration tools (e.g. `gmail_search_emails`, `gmail_get_email`, `gmail_send_email`, `github_*`, `jira_*`) are available in your toolset, you MUST prioritize these native plugin tools over browser automation or loading browser skills (`CamoFox Browser`, `Computer Use Guide`). Use `gmail_*` tools directly for reading, searching, or drafting emails.
-- Email Body Formatting: When displaying email body text or email content to the user, render it as normal plain text paragraphs and bullet points. Do NOT wrap email body text inside code blocks (` ``` `) or backticks (` ` `).
-- Specialized Skills & Instructions: When specialized skills or instructions are pre-injected into your context, adhere to them directly and execute the task immediately without delay. If you ever need additional skill details not present in context, call the `load_skill` tool. If native integration plugin tools (e.g. `gmail_*`, `github_*`) already exist for the task, invoke them directly rather than searching for alternative skills.
-- Web & Browser Tasks: When performing web browsing, page navigation, web searching, or web interactions, if browser tools (such as `browser_open`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_close`) are available in your toolset, you MUST prioritize `browser_*` tools over desktop GUI tools (`windows_mouse_click`, `windows_key_press`, `get_desktop_state`, `app_control`). Use `browser_*` tools for all web interactions.
+Core Rules:
 - Prefer verified information and reasoning over assumptions.
-- Select and invoke the most specific and efficient tools for the task rather than chaining generic tools or writing scripts needlessly (e.g. use dedicated file/search tools rather than launching terminal scripts when possible).
-- Parallel Execution: When multiple independent information-gathering or tool actions are needed (e.g. searching for multiple items, checking LTM context alongside web search, reading multiple files), invoke all relevant tools in parallel within a single turn rather than executing them one-by-one sequentially.
-- When executing terminal commands on Windows, you MUST write correct and native Windows/PowerShell commands. Never use Linux commands (e.g. do not use `cat`, `touch`, `rm`, `cp`, `mv`, or `/` slash path separators; instead use `Get-Content`/`type`, `New-Item`/`echo`, `Remove-Item`, `Copy-Item`, `Move-Item`, and use backslashes `\\` for file paths).
-- NEVER wrap PowerShell commands inside `powershell -Command "..."` or `powershell -NoProfile -Command "..."`. You are already inside a PowerShell terminal. Wrapping creates nested-quote parser errors (`TerminatorExpectedAtEndOfString`) because backslash (`\\`) is NOT a valid PowerShell escape character. Always run commands directly as bare statements. If a command is complex (hashtables, nested quotes, loops), write it to a temp .ps1 script file first, then execute it with `& "$env:TEMP\\script.ps1"` — this completely avoids quoting issues.
-- Use the coding_specialist sub agent for any code-related tasks and do not use the your tool for coding tasks, like codebase analysis, code review, etc.
-- Reminders and timed tasks inside Rie (anything that should appear in the app's "Scheduled" sidebar or notify through Rie): you MUST call the tool schedule_chat_task with run_at_iso in ISO 8601 and the correct intent. Do not use run_terminal_command, schtasks, PowerShell, or Windows Task Scheduler for user reminders — those will NOT register in Rie and the user will see "Nothing scheduled".
-- Only tell the user you scheduled or set a reminder after schedule_chat_task returns successfully (or the tool output confirms it). Never invent a fake task name or claim a PowerShell popup was created for this.
-- When a system message states the user's device local date and time, treat it as the true current moment for that conversation (do not assume a different year or day).
-- Only use `use_vision=True` when standard textual state info is insufficient, for complex UI interactions, or when troubleshooting problems.
-- When the user asks for an image, photo, picture, or wallpaper: call internet_search with include_images=True (or rely on image intent in the query), then show results inline using markdown images `![short description](direct_image_url)` from the search `images` field. Do not reply with only a table of website links.
-- When running a script file (.py, .sh, .bash), use run_terminal_command with the appropriate interpreter: Python via `python "path\\to\\script.py"` (or `py -3 "..."` if python is unavailable); shell scripts via `bash "path/to/script.sh"` (Git Bash or WSL on Windows). Prefer Python or Bash for scripts; use raw PowerShell only for one-off Windows tasks (registry, services, Get-*, etc.).
+- Long-Term Memory (LTM):
+  * Proactive Context: Relevant user facts, preferences, and background are automatically recalled from memory by middleware and injected into your system prompt under "Recalled Long-Term Memories (Proactive Context)". When relevant user facts are already present there, use them directly in your answer. Do NOT call `search_memory` for information that is already provided in the system prompt.
+  * Storing Memory: Whenever the user shares new personal details (e.g. their name, preferences, background, or explicitly asks you to remember something), invoke `save_memory` to persist it across conversations.
+  * Explicit Retrieval: Invoke `search_memory` or `get_memory` ONLY when the required context is not already present in the proactive memory section, is insufficient, or when the user explicitly asks to search their past conversation records or notes.
+- Select and invoke the most specific and efficient tools for the task rather than chaining generic tools or writing scripts needlessly.
+- Parallel Execution: When multiple independent information-gathering or tool actions are needed, invoke all relevant tools in parallel within a single turn rather than executing them one-by-one sequentially.
+- When a system message states the user's device local date and time, treat it as the true current moment for that conversation.
 
 Style:
 - Be friendly in general interactions; use emojis when appropriate 🙂
 - Stay serious and precise for technical or critical tasks.
 """
+
+DOMAIN_RULES: dict[str, str] = {
+    "email": (
+        "- Connected Integration Plugins: Prioritize native plugin tools (`gmail_*`) for reading, searching, drafting, replying, or sending emails.\n"
+        "- Email Body Formatting: When displaying email body text or email content to the user, render it as normal plain text paragraphs and bullet points. Do NOT wrap email body text inside code blocks or backticks."
+    ),
+    "system": (
+        "- When executing terminal commands on Windows, you MUST write correct and native Windows/PowerShell commands (e.g. Get-Content/type, New-Item/echo, Remove-Item, Copy-Item, Move-Item, and backslashes for file paths).\n"
+        "- NEVER wrap PowerShell commands inside `powershell -Command \"...\"`. Always run commands directly as bare statements. If complex, write to a temp .ps1 script and execute with `& \"$env:TEMP\\script.ps1\"`.\n"
+        "- When running a script file (.py, .sh, .bash), use run_terminal_command with the appropriate interpreter (Python via `python \"path\\to\\script.py\"`; shell via `bash \"path/to/script.sh\"`)."
+    ),
+    "desktop": (
+        "- Desktop & App Automation: When interacting with desktop windows and apps, prioritize app_control and desktop state inspection before sending mouse/keyboard events.\n"
+        "- Only use `use_vision=True` when standard textual state info is insufficient or for complex UI interactions."
+    ),
+    "browser": (
+        "- Web & Browser Tasks: When performing web browsing, page navigation, web searching, or web interactions, prioritize browser tools (`browser_*`) over desktop GUI tools."
+    ),
+    "search": (
+        "- When the user asks for an image, photo, picture, or wallpaper: call internet_search with include_images=True, then show results inline using markdown images `![short description](direct_image_url)` from the search images field."
+    ),
+    "scheduler": (
+        "- Reminders and timed tasks inside Rie: you MUST call the tool schedule_chat_task with run_at_iso in ISO 8601 and the correct intent. Only tell the user after schedule_chat_task returns successfully."
+    ),
+    "mcp": (
+        "- MCP Registry: Use MCP registry tools (`list_mcp_servers`, `add_mcp_server`, `update_mcp_server`, `delete_mcp_server`) to configure and manage external MCP server configurations."
+    ),
+    "github": (
+        "- GitHub Integration: Use `github_*` tools directly for managing repositories, issues, and pull requests."
+    ),
+    "jira": (
+        "- Jira Integration: Use `jira_*` tools directly for tracking sprints, stories, epics, and issues."
+    ),
+}
+
+TECHNICAL_RULES_PROMPT = "Technical & Tool Execution Rules:\n" + "\n\n".join(DOMAIN_RULES.values())
+
+SYSTEM_PROMPT = BASE_SYSTEM_PROMPT.strip() + "\n\n" + TECHNICAL_RULES_PROMPT.strip()
 
 SUBAGENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{2,64}$")
 
@@ -284,6 +320,7 @@ class RotatingChatGroq(BaseChatModel):
             "api_key": key,
             "model": self.model_name,
             "temperature": self.temperature,
+            "reasoning_format": "parsed",
         }
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
@@ -291,6 +328,7 @@ class RotatingChatGroq(BaseChatModel):
             return ChatGroq(**kwargs), idx
         except Exception:
             kwargs.pop("reasoning_effort", None)
+            kwargs.pop("reasoning_format", None)
             return ChatGroq(**kwargs), idx
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
@@ -301,6 +339,7 @@ class RotatingChatGroq(BaseChatModel):
             "api_key": self.api_keys[0],
             "model": self.model_name,
             "temperature": self.temperature,
+            "reasoning_format": "parsed",
         }
         if self.reasoning_effort:
             dummy_kwargs["reasoning_effort"] = self.reasoning_effort
@@ -308,6 +347,7 @@ class RotatingChatGroq(BaseChatModel):
             dummy = ChatGroq(**dummy_kwargs)
         except Exception:
             dummy_kwargs.pop("reasoning_effort", None)
+            dummy_kwargs.pop("reasoning_format", None)
             dummy = ChatGroq(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
         
@@ -475,6 +515,7 @@ class RotatingChatOpenAI(BaseChatModel):
             "model_name": self.model_name,
             "base_url": self.base_url,
             "temperature": self.temperature,
+            "stream_usage": True,
         }
         if self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
@@ -493,6 +534,7 @@ class RotatingChatOpenAI(BaseChatModel):
             "model_name": self.model_name,
             "base_url": self.base_url,
             "temperature": self.temperature,
+            "stream_usage": True,
         }
         if self.reasoning_effort:
             dummy_kwargs["reasoning_effort"] = self.reasoning_effort
@@ -768,11 +810,16 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
             "temperature": self.temperature,
         }
         if self.reasoning_effort:
-            kwargs["reasoning_effort"] = self.reasoning_effort
+            kwargs["include_thoughts"] = True
+            kwargs["thinking_budget"] = -1
+        else:
+            kwargs["include_thoughts"] = False
+            kwargs["thinking_budget"] = 0
         try:
             return SafeCls(**kwargs), idx
         except Exception:
-            kwargs.pop("reasoning_effort", None)
+            kwargs.pop("include_thoughts", None)
+            kwargs.pop("thinking_budget", None)
             return SafeCls(**kwargs), idx
 
     def bind_tools(self, tools: List[Any], **kwargs: Any) -> BaseChatModel:
@@ -785,11 +832,16 @@ class RotatingChatGoogleGenerativeAI(BaseChatModel):
             "temperature": self.temperature,
         }
         if self.reasoning_effort:
-            dummy_kwargs["reasoning_effort"] = self.reasoning_effort
+            dummy_kwargs["include_thoughts"] = True
+            dummy_kwargs["thinking_budget"] = -1
+        else:
+            dummy_kwargs["include_thoughts"] = False
+            dummy_kwargs["thinking_budget"] = 0
         try:
             dummy = SafeCls(**dummy_kwargs)
         except Exception:
-            dummy_kwargs.pop("reasoning_effort", None)
+            dummy_kwargs.pop("include_thoughts", None)
+            dummy_kwargs.pop("thinking_budget", None)
             dummy = SafeCls(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
         new_kwargs = getattr(bound, "kwargs", {})
@@ -1036,38 +1088,13 @@ def load_skill(skill_name: str, runtime: Annotated[ToolRuntime, InjectedToolArg]
     return f"Skill '{skill_name}' not found."
 
 
-class DynamicToolRoutingMiddleware(AgentMiddleware):
+class ToolNeedMiddleware(AgentMiddleware):
     """
-    Middleware that dynamically scopes the tool schema presented to the model per turn
-    based on the user's intent and recent conversation tool interactions.
-    This prevents schema overload (e.g. 35+ tools down to 3-10 tools per turn) and
-    improves model execution speed and tool selection accuracy.
+    Binary Tool-Need Gate:
+    - Answers only: "Can this request be completed using an external capability/action?"
+    - False (Pure Casual / Greeting / Identity): passes tools = [] (0 tool schema overhead, ultra-fast response).
+    - True (Agent Mode / Action): passes ALL session tools to LangGraph ReAct without fine-grained keyword slicing.
     """
-
-    DOMAIN_PREFIXES: dict[str, tuple[str, ...]] = {
-        "email": ("gmail_",),
-        "browser": ("browser_", "camofox_"),
-        "desktop": (
-            "windows_",
-            "app_control",
-            "get_desktop_state",
-            "run_terminal_command",
-        ),
-        "github": ("github_",),
-        "jira": ("jira_",),
-    }
-
-    ALWAYS_AVAILABLE_TOOLS: set[str] = {
-        "internet_search",
-        "read_knowledge_asset",
-        "schedule_chat_task",
-        "remote_friend_ask",
-        "load_skill",
-        "write_todos",
-        "get_ltm_context",
-        "search_ltm",
-        "set_ltm_context",
-    }
 
     @staticmethod
     def _extract_query_and_history(messages: list[Any]) -> tuple[str, set[str]]:
@@ -1103,115 +1130,332 @@ class DynamicToolRoutingMiddleware(AgentMiddleware):
                         if isinstance(part, dict) and part.get("type") == "text":
                             user_texts.append(part.get("text", ""))
 
-        query = " ".join(user_texts).lower()
-        return query, invoked_tool_names
+        latest_query = user_texts[-1].strip() if user_texts else ""
+        return latest_query, invoked_tool_names
 
     @classmethod
-    def _classify_domains(cls, query: str, invoked_tool_names: set[str]) -> set[str]:
-        """Classify active domains based on query intent and recent tool usage."""
-        active_domains: set[str] = set()
-
-        # 1. Maintain domain continuity if a tool from that domain was recently invoked
-        for tool_name in invoked_tool_names:
-            for domain, prefixes in cls.DOMAIN_PREFIXES.items():
-                if any(tool_name.startswith(p) or tool_name == p for p in prefixes):
-                    active_domains.add(domain)
-
-        # 2. Intent keywords matching
-        EMAIL_KEYWORDS = (
-            "email", "gmail", "inbox", "mail", "draft", "reply", "sent mail", 
-            "unread", "archive email", "trash email", "send email", "subject:", 
-            "to:", "from:", "cc:", "bcc:", "forward email", "check my email", 
-            "find email", "search email", "read email"
-        )
-        BROWSER_KEYWORDS = (
-            "browser", "open website", "navigate to", "url", "scrape", "http://", "https://",
-            "web page", "webpage", "apply to job", "fill form", "click on page", "snapshot",
-            "camofox", "camoufox", "playwright", "open browser", "visit "
-        )
-        DESKTOP_KEYWORDS = (
-            "mouse", "keyboard", "press key", "click at", "window", "desktop",
-            "powershell", "terminal", "screen", "screenshot", "taskbar", "minimize",
-            "maximize", "notepad", "calculator", "explorer", "uia", "app_control"
-        )
-        GITHUB_KEYWORDS = ("github", "pull request", "pr #", "issue #", "repo", "commit", "clone")
-        JIRA_KEYWORDS = ("jira", "sprint", "backlog", "story", "epic", "ticket")
-
-        if any(kw in query for kw in EMAIL_KEYWORDS):
-            active_domains.add("email")
-        if any(kw in query for kw in BROWSER_KEYWORDS):
-            active_domains.add("browser")
-        if any(kw in query for kw in DESKTOP_KEYWORDS):
-            active_domains.add("desktop")
-        if any(kw in query for kw in GITHUB_KEYWORDS):
-            active_domains.add("github")
-        if any(kw in query for kw in JIRA_KEYWORDS):
-            active_domains.add("jira")
-
-        return active_domains
+    def _has_active_tool_history(cls, messages: list[Any]) -> bool:
+        """Check if message context contains in-progress or recent tool activity."""
+        if not messages:
+            return False
+        recent = messages[-6:] if len(messages) > 6 else messages
+        for msg in recent:
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            if isinstance(role, str) and role in ("tool", "tool_result", "function"):
+                return True
+            tool_calls = getattr(msg, "tool_calls", None)
+            if isinstance(tool_calls, list) and len(tool_calls) > 0:
+                return True
+            msg_name = getattr(msg, "name", None)
+            if isinstance(msg_name, str) and msg_name:
+                return True
+        return False
 
     @classmethod
-    def _filter_tools(cls, tools: list[Any], active_domains: set[str]) -> list[Any]:
-        """Filter the tools list down to active domains + core tools."""
-        if not tools or not active_domains:
-            return tools
+    def _is_obviously_casual(cls, query: str) -> bool:
+        """
+        Check if query is highly likely to be pure conversation / greeting / identity question
+        with NO need for external tool execution.
+        Conservative rule: 'True' ONLY when highly confident it is casual.
+        """
+        if not query:
+            return True
 
-        filtered: list[Any] = []
-        for t in tools:
-            t_name = getattr(t, "name", str(t))
+        q_lower = query.lower().strip()
+        import re
+        normalized_q = re.sub(r"[^\w\s]", "", q_lower).strip()
 
-            # 1. Always keep core tools
-            if t_name in cls.ALWAYS_AVAILABLE_TOOLS:
-                filtered.append(t)
-                continue
+        # Action verbs/indicators that MUST route to Agent mode (never casual)
+        ACTION_TRIGGERS = (
+            "open ", "launch ", "start ", "run ", "execute ", "search ", "google ",
+            "find ", "look up", "check ", "read ", "get ", "send ", "draft ",
+            "create ", "write ", "delete ", "remove ", "kill ", "stop ", "schedule ",
+            "remind ", "remember ", "save ", "store ", "turn on", "turn off", "switch ",
+            "click ", "type ", "press ", "scroll ", "drag ", "download ", "install ",
+            "wallpaper", "wifi", "wi-fi", "battery", "cpu", "ram", "memory usage",
+            "process", "taskmgr", "task manager", "settings", "control panel",
+            "email", "gmail", "github", "jira", "mcp", "terminal", "powershell",
+            "cmd", "browser", "weather", "temperature", "forecast", "news",
+        )
 
-            # 2. Keep tools belonging to active domain(s)
-            in_active_domain = False
-            for domain in active_domains:
-                prefixes = cls.DOMAIN_PREFIXES.get(domain, ())
-                if any(t_name.startswith(p) or t_name == p for p in prefixes):
-                    in_active_domain = True
-                    break
+        for act in ACTION_TRIGGERS:
+            if act in q_lower:
+                return False
 
-            if in_active_domain:
-                filtered.append(t)
-                continue
+        # Strictly casual / conversational patterns
+        CASUAL_PATTERNS = (
+            "hi", "hello", "hey", "greetings", "good morning", "good afternoon",
+            "good evening", "good night", "whats my name", "what is my name",
+            "who are you", "who am i", "what is your name", "whats your name",
+            "tell me a joke", "thank you", "thanks", "ok", "okay", "cool",
+            "bye", "goodbye", "help", "how are you", "what can you do",
+            "nice to meet you", "howdy", "sup", "yo",
+        )
 
-            # 3. Check if tool belongs to an inactive domain
-            in_inactive_domain = False
-            for domain, prefixes in cls.DOMAIN_PREFIXES.items():
-                if domain not in active_domains:
-                    if any(t_name.startswith(p) or t_name == p for p in prefixes):
-                        in_inactive_domain = True
-                        break
+        if any(normalized_q == p or normalized_q.startswith(p + " ") or normalized_q.endswith(" " + p) for p in CASUAL_PATTERNS):
+            return True
 
-            # 4. If not part of any recognized heavy domain (e.g. custom tool or MCP tool), keep it
-            if not in_inactive_domain:
-                filtered.append(t)
+        if MemoryRetrievalMiddleware._is_low_information_query(query):
+            return True
 
-        return filtered
+        # Any complex, domain, or ambiguous request defaults to False (needs tools / agent mode)
+        return False
+
+    @classmethod
+    def _needs_tools(cls, query: str, messages: list[Any]) -> bool:
+        """
+        Conservative binary gate:
+        - True if in active ReAct loop or if any tool/external capability might be needed.
+        - False ONLY if highly confident it is pure casual chat.
+        """
+        if cls._has_active_tool_history(messages):
+            return True
+
+        if cls._is_obviously_casual(query):
+            return False
+
+        return True
+
+    def _apply_tool_gating(self, request: ModelRequest) -> ModelRequest:
+        tools = getattr(request, "tools", []) or []
+        query, _ = self._extract_query_and_history(request.messages or [])
+
+        needs_tools = self._needs_tools(query, request.messages or [])
+
+        overrides: dict[str, Any] = {}
+        if not needs_tools:
+            _logger.debug("[ToolNeedMiddleware] Turn classified as CASUAL CHAT -> providing 0 tools")
+            overrides["tools"] = []
+        else:
+            _logger.debug(
+                "[ToolNeedMiddleware] Turn classified as AGENT MODE -> providing ALL %d session tools",
+                len(tools),
+            )
+            # In agent mode, all session tools remain bound; no bloated technical rules injected
+
+        if overrides:
+            return request.override(**overrides)
+        return request
 
     def wrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        if not hasattr(request, "tools") or not request.tools:
-            return handler(request)
+        modified_request = self._apply_tool_gating(request)
+        return handler(modified_request)
 
-        query, invoked_tools = self._extract_query_and_history(request.messages or [])
-        active_domains = self._classify_domains(query, invoked_tools)
-        filtered_tools = self._filter_tools(request.tools, active_domains)
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        modified_request = self._apply_tool_gating(request)
+        return await handler(modified_request)
 
-        if len(filtered_tools) != len(request.tools):
-            _logger.debug(
-                "[DynamicToolRouting] Filtered tools from %d to %d (domains: %s)",
-                len(request.tools),
-                len(filtered_tools),
-                list(active_domains),
-            )
-            request = request.override(tools=filtered_tools)
+    # --- Legacy Helpers for backward compatibility with existing tests ---
+    DOMAIN_PREFIXES: dict[str, tuple[str, ...]] = {
+        "search": ("internet_search",),
+        "email": ("gmail_",),
+        "browser": ("browser_", "camofox_", "scrape_web"),
+        "desktop": (
+            "windows_", "app_control", "get_desktop_state", "run_terminal_command",
+            "mouse_click", "keyboard_type", "scroll_mouse", "drag_mouse", "move_mouse",
+            "press_keys", "wait", "scrape_web",
+        ),
+        "system": ("run_terminal_command", "windows_", "app_control", "get_desktop_state"),
+        "mcp": ("list_mcp_servers", "add_mcp_server", "update_mcp_server", "delete_mcp_server", "get_mcp_tool_info"),
+        "scheduler": ("schedule_chat_task",),
+        "remote_friend": ("remote_friend_ask",),
+        "knowledge": ("read_knowledge_asset",),
+        "memory": ("get_memory", "search_memory"),
+        "github": ("github_",),
+        "jira": ("jira_",),
+    }
+    ALWAYS_AVAILABLE_TOOLS: set[str] = {"save_memory"}
 
+    @classmethod
+    def _classify_domains(cls, query: str, invoked_tool_names: set[str]) -> set[str]:
+        active_domains: set[str] = set()
+        for tool_name in invoked_tool_names:
+            for domain, prefixes in cls.DOMAIN_PREFIXES.items():
+                if any(tool_name.startswith(p) or tool_name == p for p in prefixes):
+                    active_domains.add(domain)
+        q = query.lower()
+        if any(k in q for k in ("wifi", "ip address", "powershell", "terminal command", "cpu usage", "ram usage", "process", "task list", "run script")):
+            active_domains.add("system")
+        if any(k in q for k in ("settings", "wallpaper", "display", "notepad", "calculator", "app_control", "mouse click", "keyboard", "open ", "launch ")):
+            active_domains.add("desktop")
+        if any(k in q for k in ("email", "gmail", "inbox", "mail", "draft", "read email")):
+            active_domains.add("email")
+        if any(k in q for k in ("weather", "search web", "google", "search online", "temperature")):
+            active_domains.add("search")
+        if any(k in q for k in ("browser", "open website", "navigate to", "url", "scrape", "http://", "https://")):
+            active_domains.add("browser")
+        if any(k in q for k in ("github", "pull request", "pr #", "issue #", "repo")):
+            active_domains.add("github")
+        if any(k in q for k in ("jira", "sprint", "backlog", "story", "ticket")):
+            active_domains.add("jira")
+        return active_domains
+
+    @classmethod
+    def _filter_tools(cls, tools: list[Any], active_domains: set[str], query: str = "") -> list[Any]:
+        if not tools:
+            return []
+        if not active_domains and query and cls._is_obviously_casual(query):
+            return []
+        if not active_domains and query:
+            q = query.lower().strip()
+            if "remember" in q or "save memory" in q:
+                return [t for t in tools if getattr(t, "name", str(t)) in ("save_memory", "get_memory", "search_memory")]
+            if "remind" in q or "schedule" in q:
+                return [t for t in tools if getattr(t, "name", str(t)) in ("schedule_chat_task",)]
+        filtered = []
+        all_domain_prefixes = [p for prefixes in cls.DOMAIN_PREFIXES.values() for p in prefixes]
+        for t in tools:
+            t_name = getattr(t, "name", getattr(t, "__name__", str(t)))
+            if t_name in cls.ALWAYS_AVAILABLE_TOOLS:
+                filtered.append(t)
+                continue
+            in_active = False
+            for domain in active_domains:
+                prefixes = cls.DOMAIN_PREFIXES.get(domain, ())
+                if any(t_name.startswith(p) or t_name == p for p in prefixes):
+                    in_active = True
+                    break
+            if in_active:
+                filtered.append(t)
+                continue
+            in_any_domain = any(t_name.startswith(p) or t_name == p for p in all_domain_prefixes)
+            if not in_any_domain:
+                filtered.append(t)
+        return filtered
+
+    @classmethod
+    def _build_technical_rules(cls, active_domains: set[str], filtered_tools: list[Any]) -> str:
+        domain_set = set(active_domains)
+        rules: list[str] = []
+        for domain in sorted(domain_set):
+            if domain in DOMAIN_RULES:
+                rules.append(DOMAIN_RULES[domain])
+        return "\n\n".join(rules)
+
+    def _apply_dynamic_routing(self, request: ModelRequest) -> ModelRequest:
+        return self._apply_tool_gating(request)
+
+
+# Backwards compatibility alias
+DynamicToolRoutingMiddleware = ToolNeedMiddleware
+
+
+class ContextProjectionMiddleware(AgentMiddleware):
+    """
+    Non-destructive model context projection middleware:
+    - Never mutates the underlying checkpoint, thread store, or trajectory ledger.
+    - Projects a compact view of historical tool results and message payloads into the model request:
+      * Latest ToolMessage: Retained in 100% full raw detail so LLM can immediately reason on it.
+      * Older ToolMessages: Compacted (summarizing candidate search lists, truncating raw historical dumps
+        once subsequent steps have processed them) to prevent monotonic ReAct token accumulation.
+    """
+
+    MAX_HISTORICAL_TOOL_RESULT_CHARS: int = 350
+
+    @classmethod
+    def _compact_tool_content(cls, tool_name: str, raw_content: str) -> str:
+        """Compact older/historical tool content while preserving essential identifiers and status."""
+        if not raw_content or len(raw_content) <= cls.MAX_HISTORICAL_TOOL_RESULT_CHARS:
+            return raw_content
+
+        import json
+        clean_content = raw_content.strip()
+
+        # 1. Search results compaction (e.g. gmail_search_emails, internet_search)
+        if any(k in tool_name for k in ("search_emails", "internet_search", "search")):
+            try:
+                parsed = json.loads(clean_content)
+                if isinstance(parsed, list):
+                    items_summary = []
+                    for idx, item in enumerate(parsed[:4], 1):
+                        if isinstance(item, dict):
+                            id_val = item.get("id") or item.get("message_id") or item.get("key") or ""
+                            subj = item.get("subject") or item.get("title") or item.get("name") or ""
+                            sender = item.get("from") or item.get("sender") or ""
+                            summary_line = f"Item {idx}: id={id_val}"
+                            if subj:
+                                summary_line += f", subject='{subj[:40]}'"
+                            if sender:
+                                summary_line += f", from='{sender[:30]}'"
+                            items_summary.append(summary_line)
+                    return f"[Found {len(parsed)} results]\n" + "\n".join(items_summary) + f"\n... [{len(parsed)} results total; detailed content processed in trajectory]"
+                elif isinstance(parsed, dict) and "results" in parsed:
+                    results = parsed.get("results") or []
+                    return f"[Found {len(results)} results]\n" + clean_content[:cls.MAX_HISTORICAL_TOOL_RESULT_CHARS] + "\n... [truncated for context]"
+            except Exception:
+                pass
+
+        # 2. Email or page fetch compaction (once subsequent actions are in progress)
+        if any(k in tool_name for k in ("get_email", "scrape_web", "read_knowledge")):
+            lines = clean_content.splitlines()
+            header_lines = [l for l in lines[:5] if any(l.lower().startswith(h) for h in ("from:", "subject:", "to:", "date:", "title:", "url:"))]
+            header_block = "\n".join(header_lines) if header_lines else clean_content[:150]
+            return f"{header_block}\n[Full content body fetched and processed; retained in task trajectory]"
+
+        # 3. Generic truncation for other verbose outputs
+        return clean_content[:cls.MAX_HISTORICAL_TOOL_RESULT_CHARS] + "\n... [earlier tool output truncated for context]"
+
+    @classmethod
+    def _project_messages(cls, messages: list[Any]) -> list[Any]:
+        """Project messages non-destructively for the LLM request."""
+        if not messages:
+            return messages
+
+        # Find the index of the latest ToolMessage
+        latest_tool_idx = -1
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            if role in ("tool", "tool_result", "function") or isinstance(msg, ToolMessage):
+                latest_tool_idx = idx
+                break
+
+        projected: list[Any] = []
+        for idx, msg in enumerate(messages):
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            is_tool = role in ("tool", "tool_result", "function") or isinstance(msg, ToolMessage)
+
+            # If it's a ToolMessage and NOT the latest one, project/compact it
+            if is_tool and idx != latest_tool_idx:
+                tool_name = getattr(msg, "name", "") or ""
+                raw_content = getattr(msg, "content", "")
+                if isinstance(raw_content, str) and len(raw_content) > cls.MAX_HISTORICAL_TOOL_RESULT_CHARS:
+                    compacted_content = cls._compact_tool_content(tool_name, raw_content)
+                    try:
+                        projected_msg = ToolMessage(
+                            content=compacted_content,
+                            name=getattr(msg, "name", None),
+                            tool_call_id=getattr(msg, "tool_call_id", ""),
+                            status=getattr(msg, "status", "success"),
+                            id=getattr(msg, "id", None),
+                            additional_kwargs=dict(getattr(msg, "additional_kwargs", {}) or {}),
+                        )
+                        projected.append(projected_msg)
+                        continue
+                    except Exception:
+                        pass
+
+            projected.append(msg)
+
+        return projected
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        messages = getattr(request, "messages", []) or []
+        projected = self._project_messages(messages)
+        if len(projected) == len(messages) and projected != messages:
+            request = request.override(messages=projected)
         return handler(request)
 
     async def awrap_model_call(
@@ -1219,22 +1463,222 @@ class DynamicToolRoutingMiddleware(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        if not hasattr(request, "tools") or not request.tools:
-            return await handler(request)
+        messages = getattr(request, "messages", []) or []
+        projected = self._project_messages(messages)
+        if len(projected) == len(messages) and projected != messages:
+            request = request.override(messages=projected)
+        return await handler(request)
 
-        query, invoked_tools = self._extract_query_and_history(request.messages or [])
-        active_domains = self._classify_domains(query, invoked_tools)
-        filtered_tools = self._filter_tools(request.tools, active_domains)
 
-        if len(filtered_tools) != len(request.tools):
-            _logger.debug(
-                "[DynamicToolRouting] Filtered tools from %d to %d (domains: %s)",
-                len(request.tools),
-                len(filtered_tools),
-                list(active_domains),
-            )
-            request = request.override(tools=filtered_tools)
+class PromptCompositionDiagnosticMiddleware(AgentMiddleware):
+    """
+    Diagnostic middleware that calculates and logs the prompt and schema composition
+    immediately before model invocation to ensure complete visibility of input token distribution per turn.
+    """
 
+    @staticmethod
+    def _count_tokens(text: str) -> int:
+        if not text:
+            return 0
+        try:
+            import tiktoken
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(text))
+        except Exception:
+            return max(1, len(text.encode("utf-8")) // 4)
+
+    @classmethod
+    def _calculate_breakdown(cls, request: ModelRequest) -> dict[str, Any]:
+        import json
+        from langchain_core.utils.function_calling import convert_to_openai_tool
+
+        base_system_tok = 0
+        tech_rules_tok = 0
+        skills_tok = 0
+        ltm_tok = 0
+        runtime_ctx_tok = 0
+        user_msg_tok = 0
+        ai_msg_tok = 0
+        tool_res_tok = 0
+        tool_schema_tok = 0
+
+        # 1. System message breakdown
+        sys_msg = getattr(request, "system_message", None)
+        if sys_msg:
+            sys_text = ""
+            if isinstance(sys_msg.content, str):
+                sys_text = sys_msg.content
+            elif isinstance(sys_msg.content, list):
+                for block in sys_msg.content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        sys_text += block.get("text", "") + "\n"
+                    elif hasattr(block, "text"):
+                        sys_text += block.text + "\n"
+
+            if "Technical & Tool Execution Rules:" in sys_text:
+                tech_start = sys_text.find("Technical & Tool Execution Rules:")
+                next_indices = [
+                    idx for idx in (
+                        sys_text.find("Active Skill Instructions (Pre-loaded)", tech_start),
+                        sys_text.find("## Recalled Long-Term Memories", tech_start),
+                    ) if idx != -1
+                ]
+                tech_end = min(next_indices) if next_indices else len(sys_text)
+                tech_text = sys_text[tech_start:tech_end].strip()
+                tech_rules_tok = cls._count_tokens(tech_text)
+
+            if "Active Skill Instructions (Pre-loaded)" in sys_text:
+                skill_start = sys_text.find("Active Skill Instructions (Pre-loaded)")
+                next_indices = [
+                    idx for idx in (
+                        sys_text.find("## Recalled Long-Term Memories", skill_start),
+                        sys_text.find("Technical & Tool Execution Rules:", skill_start),
+                    ) if idx != -1
+                ]
+                skill_end = min(next_indices) if next_indices else len(sys_text)
+                skill_text = sys_text[skill_start:skill_end].strip()
+                skills_tok = cls._count_tokens(skill_text)
+
+            if "Recalled Long-Term Memories" in sys_text:
+                ltm_start = sys_text.find("Recalled Long-Term Memories")
+                ltm_end = sys_text.find("End Recalled Long-Term Memories")
+                ltm_text = sys_text[ltm_start:ltm_end] if ltm_end != -1 else sys_text[ltm_start:]
+                ltm_tok = cls._count_tokens(ltm_text)
+
+            total_sys_tok = cls._count_tokens(sys_text)
+            base_system_tok = max(0, total_sys_tok - tech_rules_tok - skills_tok - ltm_tok)
+
+        # 2. Messages breakdown
+        messages = getattr(request, "messages", []) or []
+        tool_results_list = []
+        for msg in messages:
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            content = getattr(msg, "content", "")
+            msg_text = content if isinstance(content, str) else str(content)
+            tool_calls = getattr(msg, "tool_calls", None) or []
+            tc_text = json.dumps(tool_calls) if tool_calls else ""
+
+            if role == "system":
+                runtime_ctx_tok += cls._count_tokens(msg_text)
+            elif role in ("human", "user"):
+                user_msg_tok += cls._count_tokens(msg_text)
+            elif role in ("ai", "assistant"):
+                ai_msg_tok += cls._count_tokens(msg_text) + (cls._count_tokens(tc_text) if tc_text else 0)
+            elif role in ("tool", "tool_result", "function"):
+                tok = cls._count_tokens(msg_text)
+                tool_res_tok += tok
+                tool_name = getattr(msg, "name", "tool")
+                tool_results_list.append((tool_name, tok))
+            else:
+                user_msg_tok += cls._count_tokens(msg_text)
+
+        # 3. Tool schemas breakdown
+        tools = getattr(request, "tools", []) or []
+        tool_names = []
+        tool_schemas_list = []
+        for t in tools:
+            t_name = getattr(t, "name", getattr(t, "__name__", str(t)))
+            tool_names.append(t_name)
+            try:
+                schema = convert_to_openai_tool(t)
+                schema_json = json.dumps(schema)
+                tok = cls._count_tokens(schema_json)
+                tool_schema_tok += tok
+                tool_schemas_list.append((t_name, tok))
+            except Exception:
+                pass
+
+        total_messages_tok = user_msg_tok + ai_msg_tok + tool_res_tok
+        total_tok = (
+            base_system_tok
+            + tech_rules_tok
+            + skills_tok
+            + ltm_tok
+            + runtime_ctx_tok
+            + total_messages_tok
+            + tool_schema_tok
+        )
+
+        # 4. Turn calculation
+        step_count = 0
+        for msg in messages:
+            if getattr(msg, "type", "") in ("ai", "assistant") or isinstance(msg, AIMessage):
+                if getattr(msg, "tool_calls", None):
+                    step_count += 1
+        turn_number = step_count + 1
+
+        return {
+            "turn_number": turn_number,
+            "base_system": base_system_tok,
+            "technical_rules": tech_rules_tok,
+            "skills": skills_tok,
+            "ltm_context": ltm_tok,
+            "runtime_context": runtime_ctx_tok,
+            "messages": total_messages_tok,
+            "user_messages": user_msg_tok,
+            "ai_messages": ai_msg_tok,
+            "tool_results": tool_res_tok,
+            "tool_results_list": tool_results_list,
+            "tool_schema": tool_schema_tok,
+            "tool_schemas_list": tool_schemas_list,
+            "tool_count": len(tools),
+            "tool_names": tool_names,
+            "total": total_tok,
+        }
+
+    @classmethod
+    def _log_breakdown(cls, request: ModelRequest) -> None:
+        b = cls._calculate_breakdown(request)
+        messages = getattr(request, "messages", []) or []
+        query, _ = ToolNeedMiddleware._extract_query_and_history(messages)
+        needs_tools = ToolNeedMiddleware._needs_tools(query, messages)
+        mode_label = f"AGENT ({b['tool_count']} tools bound)" if needs_tools else "CHAT (0 tools bound)"
+
+        provider = settings.LLM_PROVIDER or "rie"
+        model_name = getattr(request.model, "model_name", getattr(request.model, "model", str(type(request.model).__name__)))
+        model_cls = type(request.model).__name__
+        plugin_tools = [t for t in b["tool_names"] if any(t.startswith(p) for p in ("gmail_", "github_", "jira_"))]
+
+        print("\n" + "=" * 60)
+        print(f"MODEL TURN {b['turn_number']} | Mode: {mode_label}")
+        print("-" * 60)
+        print(f"system tokens:        {b['base_system']:5d}")
+        print(f"technical rules:      {b['technical_rules']:5d}")
+        print(f"skills:               {b['skills']:5d}")
+        print(f"LTM:                  {b['ltm_context']:5d}")
+        print(f"runtime:              {b['runtime_context']:5d}")
+        print(f"messages:             {b['messages']:5d}  (user: {b['user_messages']}, ai: {b['ai_messages']}, tool results: {b['tool_results']})")
+        if b.get("tool_results_list"):
+            for tr_name, tr_tok in b["tool_results_list"]:
+                print(f"   ↳ [tool result] {tr_name}: {tr_tok:4d} tokens")
+        print(f"tool schemas:         {b['tool_schema']:5d}  ({b['tool_count']} tools)")
+        if b.get("tool_schemas_list"):
+            top_schemas = sorted(b["tool_schemas_list"], key=lambda x: x[1], reverse=True)
+            for ts_name, ts_tok in top_schemas[:5]:
+                print(f"   ↳ [schema] {ts_name}: {ts_tok:4d} tokens")
+        print("-" * 60)
+        print(f"TOTAL:                {b['total']:5d} tokens")
+        print("=" * 60)
+        print(f"Model: {model_cls} ({model_name}) | Provider: {provider}")
+        if plugin_tools:
+            print(f"Plugin Tools:   {plugin_tools}")
+        print(f"Bound Tools:    {b['tool_names']}")
+        print("=" * 60 + "\n")
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        self._log_breakdown(request)
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        self._log_breakdown(request)
         return await handler(request)
 
 
@@ -1269,27 +1713,49 @@ class SkillMiddleware(AgentMiddleware):
             return False
         q = query.lower()
         lower_name = skill_name.lower()
+        lower_desc = skill_desc.lower() if skill_desc else ""
 
         # Skill-specific keyword triggers
         SKILL_TRIGGERS: dict[str, tuple[str, ...]] = {
             "job application assistant": ("job", "apply", "career", "resume", "linkedin", "greenhouse", "lever", "workday", "candidate"),
             "camofox browser": ("camofox", "camoufox", "firefox", "stealth browser", "headless browser"),
-            "powershell style & scripting": ("powershell", "ps1", "posh", ".ps1", "cmdlet", "powershell script"),
-            "windows system tasks": ("windows service", "registry", "taskmgr", "task manager", "event log", "schtasks"),
-            "pdf generation expert": ("pdf", "generate pdf", "report pdf", "weasyprint", "fpdf"),
-            "file & directory operations": ("zip", "unzip", "tar", "archive file", "directory tree", "move files"),
-            "network & downloads": ("download file", "curl", "wget", "network test", "ping host", "dns lookup"),
+            "powershell style & scripting": ("powershell", "ps1", "posh", ".ps1", "cmdlet", "powershell script", "terminal script"),
+            "windows system tasks": (
+                "wallpaper", "desktop background", "background", "registry", "regedit",
+                "windows service", "services", "taskmgr", "task manager", "event log",
+                "schtasks", "scheduled task", "display settings", "resolution", "startup", "p/invoke",
+                "cpu", "cpu usage", "ram", "kill process", "process", "processes"
+            ),
+            "computer use guide": (
+                "mouse", "click at", "keyboard", "press key", "type text", "uia",
+                "desktop state", "app_control", "shortcut"
+            ),
+            "pdf generation expert": ("pdf", "generate pdf", "report pdf", "weasyprint", "fpdf", "reportlab"),
+            "file & directory operations": (
+                "zip", "unzip", "tar", "archive file", "directory tree", "move files",
+                "copy file", "delete file", "rename file", "compress", "extract archive", "folder"
+            ),
+            "network & downloads": (
+                "download file", "download", "curl", "wget", "network test", "ping host", "ping ",
+                "dns lookup", "wifi", "wi-fi", "ip address", "port", "firewall", "adapter", "traceroute"
+            ),
         }
 
-        # Check explicit trigger keywords
+        # 1. Check explicit trigger keywords
         for key, triggers in SKILL_TRIGGERS.items():
             if key in lower_name:
                 if any(tr in q for tr in triggers):
                     return True
 
-        # Check if skill name itself appears in query
+        # 2. Check if skill name itself appears in query
         if lower_name in q:
             return True
+
+        # 3. Description keyword check for high-value system action objects
+        HIGH_VALUE_OBJECTS = ("wallpaper", "wifi", "wi-fi", "powershell", "registry", "scheduled task", "ip address")
+        for hvo in HIGH_VALUE_OBJECTS:
+            if hvo in q and hvo in lower_desc:
+                return True
 
         return False
 
@@ -1376,26 +1842,15 @@ class SkillMiddleware(AgentMiddleware):
 
     def _apply_skills_to_request(self, request: ModelRequest) -> ModelRequest:
         preloaded_sections, available_list = self._build_skills_sections(request)
-        if not preloaded_sections and not available_list:
+        if not preloaded_sections:
             return request
 
-        parts: list[str] = []
-        if preloaded_sections:
-            parts.append(
-                "## Active Skill Instructions (Pre-loaded)\n"
-                "The following specialized skill guidelines are directly loaded and active for your task. "
-                "Adhere to them immediately without calling `load_skill`:\n\n"
-                + "\n\n".join(preloaded_sections)
-            )
-
-        if available_list:
-            parts.append(
-                "## Available Skills\n"
-                "You have access to these additional skill packages if needed (use `load_skill` only if detailed guidelines for one of these are required):\n"
-                + "\n".join(available_list)
-            )
-
-        skills_addendum = "\n\n" + "\n\n".join(parts)
+        skills_addendum = (
+            "\n\n## Active Skill Instructions (Pre-loaded)\n"
+            "The following specialized skill guidelines are directly loaded and active for your task. "
+            "Adhere to them immediately without calling `load_skill`:\n\n"
+            + "\n\n".join(preloaded_sections)
+        )
         new_content = list(request.system_message.content_blocks) + [
             {"type": "text", "text": skills_addendum}
         ]
@@ -1419,6 +1874,489 @@ class SkillMiddleware(AgentMiddleware):
         return await handler(modified_request)
 
 
+class MemoryRetrievalMiddleware(AgentMiddleware):
+    """
+    Middleware that automatically retrieves relevant long-term memories (facts, user identity, preferences)
+    and pre-injects them directly into the system message for the current model turn.
+    This eliminates extra LLM round-trips for routine memory retrieval while retaining LTM tools
+    for explicit memory operations.
+    """
+
+    GREETING_TOKENS: frozenset[str] = frozenset({
+        "hi", "gi", "hey", "hello", "hola", "howdy", "sup", "yo",
+        "greetings", "good morning", "good evening", "good afternoon", "good night",
+        "ok", "okay", "thanks", "thank you", "thx", "ty", "k",
+        "bye", "goodbye", "cya", "see ya", "cool", "nice", "great",
+        "yes", "no", "yep", "nope", "sure", "fine", "how are you",
+        "what's up", "whats up"
+    })
+
+    @classmethod
+    def _is_low_information_query(cls, query: str) -> bool:
+        """Check if query is a simple greeting, acknowledgment, or non-informative short turn."""
+        import re
+        normalized = re.sub(r"[^\w\s]", "", query.strip().lower())
+        if not normalized or len(normalized) <= 2:
+            return True
+        if normalized in cls.GREETING_TOKENS:
+            return True
+        words = normalized.split()
+        if words and all(w in cls.GREETING_TOKENS for w in words):
+            return True
+        return False
+
+    @staticmethod
+    def _extract_query_text(messages: list[Any]) -> str:
+        """Extract latest user query text from messages."""
+        if not messages:
+            return ""
+        for msg in reversed(messages):
+            role = getattr(msg, "type", "") or getattr(msg, "role", "")
+            if role in ("human", "user"):
+                content = getattr(msg, "content", "")
+                if isinstance(content, str):
+                    return content.strip()
+                elif isinstance(content, list):
+                    parts = [
+                        p.get("text", "")
+                        for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    ]
+                    return " ".join(parts).strip()
+        return ""
+
+    def _build_memory_context(self, request: ModelRequest) -> str:
+        messages = getattr(request, "messages", []) or []
+        query_text = self._extract_query_text(messages)
+        if not query_text or self._is_low_information_query(query_text):
+            return ""
+
+        try:
+            from app.memory import memory_store
+
+            store = memory_store.get_store_sync()
+            user_id = "default_user"
+            namespace = ("users", user_id)
+
+            items = list(store.search(namespace, query=query_text, limit=4))
+            if not items:
+                return ""
+
+            is_explicit_identity_query = any(
+                kw in query_text.lower()
+                for kw in (
+                    "who am i",
+                    "my name",
+                    "my preference",
+                    "about me",
+                    "remember me",
+                    "what do you know about me",
+                    "what did i tell you",
+                )
+            )
+
+            recalled_facts = []
+            for item in items:
+                content = (item.value.get("content") or "").strip()
+                cat = item.value.get("category", "general")
+                score = item.metadata.get("score", 0.0) if hasattr(item, "metadata") else 0.0
+                if content and (
+                    score >= 0.60
+                    or (is_explicit_identity_query and cat in ("profile", "personal_info", "identity", "preferences"))
+                ):
+                    recalled_facts.append(f"- {content} [category: {cat}]")
+
+            if not recalled_facts:
+                return ""
+
+            return (
+                "## Recalled Long-Term Memories (Proactive Context)\n"
+                "The following facts about the user were automatically retrieved from long-term memory. "
+                "Use them directly to personalize your response without needing to invoke `search_memory`:\n"
+                + "\n".join(recalled_facts)
+            )
+        except Exception as e:
+            _logger.warning("Error in MemoryRetrievalMiddleware: %s", e)
+            return ""
+
+    def _apply_memory_to_request(self, request: ModelRequest) -> ModelRequest:
+        memory_ctx = self._build_memory_context(request)
+        if not memory_ctx:
+            return request
+
+        new_content = list(request.system_message.content_blocks) + [
+            {"type": "text", "text": "\n\n" + memory_ctx}
+        ]
+        new_system_message = SystemMessage(content=new_content)
+        return request.override(system_message=new_system_message)
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        modified_request = self._apply_memory_to_request(request)
+        return handler(modified_request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        modified_request = self._apply_memory_to_request(request)
+        return await handler(modified_request)
+
+
+@dataclass
+class TaskContext:
+    task_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    thread_id: str = "default_thread"
+    objective: str = ""
+    status: str = "running"  # "running", "completed", "budget_exhausted", "failed"
+    step_number: int = 0
+    max_steps: int = 15
+    started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    completed_at: Optional[str] = None
+    last_tool: Optional[str] = None
+    last_error: Optional[str] = None
+
+    # Granular Decision & Operational Metrics
+    capability_resolution_ms: float = 0.0
+    capabilities_considered: int = 0
+    capabilities_selected: int = 0
+    react_llm_round_trips: int = 0
+    batch_step_count: int = 0
+    approval_requests: int = 0
+    approval_wait_ms: float = 0.0
+    retry_count: int = 0
+    fatal_failures: int = 0
+    recoverable_failures: int = 0
+    checkpoint_writes: int = 0
+    checkpoint_restore_count: int = 0
+    duplicate_action_preventions: int = 0
+
+
+class TaskExecutionAccountingMiddleware(AgentMiddleware):
+    """
+    Middleware that manages TaskContext lifecycle, accounts for step budgets,
+    logs granular step telemetry, enforces the tool-free Grace Call when
+    the execution budget is reached, records full sanitized execution trajectories,
+    classifies tool errors with bounded retries, and enforces HITL approval boundaries.
+    """
+    def __init__(self, max_steps: int = 15):
+        super().__init__()
+        self.max_steps = max_steps
+        self.active_tasks: dict[str, TaskContext] = {}
+
+    def get_or_create_context(self, thread_id: str, objective: str = "") -> TaskContext:
+        if thread_id not in self.active_tasks:
+            self.active_tasks[thread_id] = TaskContext(
+                thread_id=thread_id,
+                objective=objective,
+                max_steps=self.max_steps
+            )
+        return self.active_tasks[thread_id]
+
+    @staticmethod
+    def _count_steps(messages: list[Any]) -> int:
+        """Count assistant tool call turns in trajectory."""
+        step_count = 0
+        for msg in messages:
+            if getattr(msg, "type", "") in ("ai", "assistant") or isinstance(msg, AIMessage):
+                if getattr(msg, "tool_calls", None):
+                    step_count += 1
+        return step_count
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse:
+        return handler(request)
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        import time
+        from langgraph.config import get_config
+        config = None
+        try:
+            config = get_config()
+        except Exception:
+            pass
+
+        thread_id = "default_thread"
+        if config and "configurable" in config:
+            thread_id = config["configurable"].get("thread_id", "default_thread")
+
+        messages = getattr(request, "messages", []) or []
+        step_num = self._count_steps(messages) + 1
+        
+        ctx = self.get_or_create_context(thread_id)
+        ctx.step_number = step_num
+
+        # Record task.started on initial turn
+        if step_num == 1:
+            trajectory_store.record_event(TaskEvent(
+                task_id=ctx.task_id,
+                thread_id=thread_id,
+                event_type="task.started",
+                step_number=step_num,
+                status="running",
+                metadata={"objective": ctx.objective or "user_query"}
+            ))
+
+        # Record model.started
+        model_name = getattr(request.model, "model_name", getattr(request.model, "model", str(type(request.model).__name__)))
+        trajectory_store.record_event(TaskEvent(
+            task_id=ctx.task_id,
+            thread_id=thread_id,
+            event_type="model.started",
+            step_number=step_num,
+            model=model_name,
+            status="running"
+        ))
+
+        # Check if budget is exhausted
+        if step_num > ctx.max_steps:
+            ctx.status = "budget_exhausted"
+            _logger.info("[GraceCall] Execution budget reached (%d/%d steps) for task %s.", step_num - 1, ctx.max_steps, ctx.task_id)
+            print(f"\n[GraceCall] (!) Execution budget reached ({step_num - 1}/{ctx.max_steps} steps) for task {ctx.task_id}.")
+            print("[GraceCall] INVARIANT ENFORCED: Setting tools=[] (tool-free Grace Call).")
+
+            grace_prompt = (
+                "\n\n[EXECUTION BUDGET EXHAUSTED]\n"
+                "You have reached your maximum execution budget. No more tools are available.\n"
+                "Please provide a final summary stating:\n"
+                "1. What actions/steps were completed\n"
+                "2. What remaining steps were not finished\n"
+                "3. Why execution stopped"
+            )
+            sys_msg = getattr(request, "system_message", None)
+            new_content = list(sys_msg.content_blocks) if sys_msg else []
+            new_content.append({"type": "text", "text": grace_prompt})
+
+            override_req = request.override(
+                tools=[],  # STRICT INVARIANT: Grace Call has NO tools
+                system_message=SystemMessage(content=new_content)
+            )
+
+            t0 = time.time()
+            resp = await handler(override_req)
+            dur = time.time() - t0
+            ctx.completed_at = datetime.now(timezone.utc).isoformat()
+            
+            trajectory_store.record_event(TaskEvent(
+                task_id=ctx.task_id,
+                thread_id=thread_id,
+                event_type="task.budget_exhausted",
+                step_number=step_num,
+                duration=dur,
+                status="budget_exhausted",
+                metadata={"max_steps": ctx.max_steps}
+            ))
+
+            print(f"[Telemetry] task={ctx.task_id} thread={thread_id} step={step_num} (GRACE) duration={dur:.2f}s status={ctx.status}\n")
+            return resp
+
+        # Normal execution turn
+        t0 = time.time()
+        resp = await handler(request)
+        dur = time.time() - t0
+
+        ai_msg = getattr(resp, "result", getattr(resp, "message", resp))
+        tool_calls = getattr(ai_msg, "tool_calls", []) or []
+        
+        # Record model.completed
+        trajectory_store.record_event(TaskEvent(
+            task_id=ctx.task_id,
+            thread_id=thread_id,
+            event_type="model.completed",
+            step_number=step_num,
+            model=model_name,
+            duration=dur,
+            status="ok",
+            metadata={"tool_calls_count": len(tool_calls)}
+        ))
+
+        if tool_calls:
+            tool_names = [tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "") for tc in tool_calls]
+            ctx.last_tool = ", ".join(tool_names)
+            ctx.status = "running"
+            print(f"[Telemetry] task={ctx.task_id} thread={thread_id} step={step_num}/{ctx.max_steps} model_dur={dur:.2f}s dispatched_tools={tool_names}")
+        else:
+            ctx.status = "completed"
+            ctx.completed_at = datetime.now(timezone.utc).isoformat()
+            
+            trajectory_store.record_event(TaskEvent(
+                task_id=ctx.task_id,
+                thread_id=thread_id,
+                event_type="task.completed",
+                step_number=step_num,
+                duration=dur,
+                status="completed"
+            ))
+            print(f"[Telemetry] task={ctx.task_id} thread={thread_id} step={step_num}/{ctx.max_steps} model_dur={dur:.2f}s status={ctx.status} (FINAL)")
+
+        return resp
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Any],
+    ) -> Any:
+        import time
+        tc = getattr(request, "tool_call", {}) or {}
+        tool_name = tc.get("name", "unknown_tool")
+        t0 = time.time()
+        try:
+            result = handler(request)
+            dur = time.time() - t0
+            print(f"[Telemetry] tool={tool_name} tool_dur={dur:.2f}s status=ok")
+            return result
+        except Exception as e:
+            dur = time.time() - t0
+            print(f"[Telemetry] tool={tool_name} tool_dur={dur:.2f}s status=error error={e}")
+            raise
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[Any]],
+    ) -> Any:
+        import time
+        import asyncio
+        from langgraph.config import get_config
+        config = None
+        try:
+            config = get_config()
+        except Exception:
+            pass
+
+        thread_id = "default_thread"
+        if config and "configurable" in config:
+            thread_id = config["configurable"].get("thread_id", "default_thread")
+
+        ctx = self.get_or_create_context(thread_id)
+        tc = getattr(request, "tool_call", {}) or {}
+        tool_name = tc.get("name", "unknown_tool")
+        tool_args = tc.get("args", {}) or {}
+        tool_call_id = tc.get("id", str(uuid.uuid4()))
+
+        # 1. HITL Safety Approval Boundary Check
+        approval_req = hitl_manager.is_approval_required(ctx.task_id, thread_id, tool_name, tool_args)
+        if approval_req:
+            trajectory_store.record_event(TaskEvent(
+                task_id=ctx.task_id,
+                thread_id=thread_id,
+                event_type="approval.requested",
+                step_number=ctx.step_number,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                status="awaiting_approval",
+                metadata={"approval_id": approval_req.approval_id, "reason": approval_req.reason}
+            ))
+            print(f"\n[HITL] Approval required for '{tool_name}' (Approval ID: {approval_req.approval_id}). Suspending execution.", flush=True)
+            return ToolMessage(
+                content=f"[APPROVAL REQUIRED] Operation '{tool_name}' requires explicit user authorization (Approval ID: {approval_req.approval_id}). Execution suspended.",
+                tool_call_id=tool_call_id
+            )
+
+        # 2. Record tool.started
+        trajectory_store.record_event(TaskEvent(
+            task_id=ctx.task_id,
+            thread_id=thread_id,
+            event_type="tool.started",
+            step_number=ctx.step_number,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            status="running"
+        ))
+
+        # 3. Execution with Bounded Retry Policy for TRANSIENT errors
+        retries = 0
+        max_retries = 2
+        while True:
+            t0 = time.time()
+            try:
+                result = await handler(request)
+                dur = time.time() - t0
+                result_content = getattr(result, "content", result)
+
+                # Check if tool returned transient error output
+                classification = classify_tool_error(tool_name, output=result_content)
+                if classification.category == ErrorCategory.TRANSIENT and classification.retry_recommended and retries < max_retries:
+                    retries += 1
+                    trajectory_store.record_event(TaskEvent(
+                        task_id=ctx.task_id,
+                        thread_id=thread_id,
+                        event_type="retry.decided",
+                        step_number=ctx.step_number,
+                        tool_name=tool_name,
+                        duration=dur,
+                        status="retrying",
+                        error=classification.reason,
+                        metadata={"retry_count": retries, "category": classification.category.value}
+                    ))
+                    print(f"[Telemetry] tool={tool_name} TRANSIENT failure, retrying ({retries}/{max_retries}) after {classification.backoff_seconds * retries:.1f}s backoff...", flush=True)
+                    await asyncio.sleep(classification.backoff_seconds * retries)
+                    continue
+
+                # Record tool.completed
+                trajectory_store.record_event(TaskEvent(
+                    task_id=ctx.task_id,
+                    thread_id=thread_id,
+                    event_type="tool.completed",
+                    step_number=ctx.step_number,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    tool_result=result_content,
+                    duration=dur,
+                    status="ok"
+                ))
+                print(f"[Telemetry] tool={tool_name} tool_dur={dur:.2f}s status=ok")
+                return result
+
+            except Exception as e:
+                dur = time.time() - t0
+                classification = classify_tool_error(tool_name, error=e)
+
+                if classification.category == ErrorCategory.TRANSIENT and classification.retry_recommended and retries < max_retries:
+                    retries += 1
+                    trajectory_store.record_event(TaskEvent(
+                        task_id=ctx.task_id,
+                        thread_id=thread_id,
+                        event_type="retry.decided",
+                        step_number=ctx.step_number,
+                        tool_name=tool_name,
+                        duration=dur,
+                        status="retrying",
+                        error=str(e),
+                        metadata={"retry_count": retries, "category": classification.category.value}
+                    ))
+                    print(f"[Telemetry] tool={tool_name} TRANSIENT exception ({e}), retrying ({retries}/{max_retries})...", flush=True)
+                    await asyncio.sleep(classification.backoff_seconds * retries)
+                    continue
+
+                # Fatal or unretryable tool failure
+                trajectory_store.record_event(TaskEvent(
+                    task_id=ctx.task_id,
+                    thread_id=thread_id,
+                    event_type="tool.failed",
+                    step_number=ctx.step_number,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    duration=dur,
+                    status="error",
+                    error=str(e),
+                    metadata={"category": classification.category.value, "fatal": classification.category == ErrorCategory.FATAL}
+                ))
+                print(f"[Telemetry] tool={tool_name} tool_dur={dur:.2f}s status=error error={e} category={classification.category.value}")
+                raise
+
+
 class AgentManager:
     """Manages the Deep Agent instance"""
     
@@ -1426,8 +2364,9 @@ class AgentManager:
         self._agent: Optional[object] = None
         self._llm: Optional[object] = None
         self._current_stream: Optional[Generator] = None
-        self._checkpointer: Optional[AsyncSqliteSaver] = None
-        self._checkpointer_cm : Optional[Any] = None
+        self._checkpointer: Optional[Any] = None
+        self._checkpointer_cm: Optional[Any] = None
+        self._checkpointer_pool: Optional[Any] = None
         self._init_lock = asyncio.Lock()
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._store: Optional[Any] = None
@@ -1438,15 +2377,83 @@ class AgentManager:
 
     async def _ensure_checkpoint_and_store(self) -> None:
         if not self._checkpointer:
-            import aiosqlite
-            if not hasattr(aiosqlite.Connection, "is_alive"):
-                def is_alive(self):
-                    return True
-                aiosqlite.Connection.is_alive = is_alive
-            self._checkpointer_cm = AsyncSqliteSaver.from_conn_string(get_checkpoint_db_path())
-            self._checkpointer = await self._checkpointer_cm.__aenter__()
+            pg_url = settings.LANGGRAPH_DATABASE_URL
+
+            # Fail-fast in production if PostgreSQL is not configured
+            if settings.IS_PRODUCTION and not pg_url:
+                raise RuntimeError(
+                    "Production environment detected, but 'LANGGRAPH_DATABASE_URL' is not configured. "
+                    "A dedicated PostgreSQL instance is required in production to support async concurrent checkpointing without SQLite lock contention."
+                )
+
+            if pg_url:
+                from psycopg_pool import AsyncConnectionPool
+                from psycopg.rows import dict_row
+                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+                safe_url = pg_url.split("@")[-1] if "@" in pg_url else "configured PostgreSQL"
+                _logger.info("Initializing LangGraph AsyncPostgresSaver with AsyncConnectionPool on %s", safe_url)
+
+                pool = AsyncConnectionPool(
+                    conninfo=pg_url,
+                    max_size=settings.LANGGRAPH_DB_POOL_MAX_SIZE,
+                    kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row}
+                )
+                await pool.open()
+                self._checkpointer_pool = pool
+                self._checkpointer = AsyncPostgresSaver(conn=pool)
+                await self._checkpointer.setup()
+                print(f"DEBUG [Checkpointer]: Initialized PostgreSQL pool saver id={id(self._checkpointer)} for pid={os.getpid()}")
+            else:
+                import aiosqlite
+                if not hasattr(aiosqlite.Connection, "is_alive"):
+                    def is_alive(self):
+                        return True
+                    aiosqlite.Connection.is_alive = is_alive
+                db_path = get_checkpoint_db_path()
+                try:
+                    import sqlite3
+                    with sqlite3.connect(db_path, timeout=30.0) as _cp_conn:
+                        _cp_conn.execute("PRAGMA journal_mode=WAL;")
+                        _cp_conn.execute("PRAGMA busy_timeout=30000;")
+                        _cp_conn.execute("PRAGMA synchronous=NORMAL;")
+                except Exception as _e:
+                    _logger.warning("Failed to configure PRAGMAs on checkpoints.db: %s", _e)
+
+                self._checkpointer_cm = AsyncSqliteSaver.from_conn_string(db_path)
+                self._checkpointer = await self._checkpointer_cm.__aenter__()
+                try:
+                    await self._checkpointer.conn.execute("PRAGMA busy_timeout=30000;")
+                    await self._checkpointer.conn.execute("PRAGMA journal_mode=WAL;")
+                    await self._checkpointer.conn.execute("PRAGMA synchronous=NORMAL;")
+                except Exception:
+                    pass
+                print(f"DEBUG [Checkpointer]: Initialized SQLite saver id={id(self._checkpointer)} for pid={os.getpid()} on {db_path}")
+
         if not self._store:
             self._store = await memory_store.get_store()
+
+    async def shutdown(self) -> None:
+        """Clean up checkpointer connection / pool on application shutdown."""
+        if self._checkpointer_pool is not None:
+            try:
+                await self._checkpointer_pool.close()
+                print(f"DEBUG [Checkpointer]: Closed PostgreSQL connection pool id={id(self._checkpointer_pool)}")
+            except Exception as e:
+                _logger.warning("Error closing PostgreSQL connection pool on shutdown: %s", e)
+            finally:
+                self._checkpointer_pool = None
+                self._checkpointer = None
+
+        if self._checkpointer_cm is not None:
+            try:
+                await self._checkpointer_cm.__aexit__(None, None, None)
+                print(f"DEBUG [Checkpointer]: Closed SQLite checkpointer saver id={id(self._checkpointer)}")
+            except Exception as e:
+                _logger.warning("Error closing SQLite checkpointer on shutdown: %s", e)
+            finally:
+                self._checkpointer = None
+                self._checkpointer_cm = None
 
     async def _async_load_all_tools_map(self) -> dict[str, Any]:
         """Runtime tool registry (baseline + MCP + external), for peer inbound policy."""
@@ -1503,21 +2510,10 @@ class AgentManager:
     def _create_llm_for_peer(self) -> Optional[BaseChatModel]:
         """Instantiate LLM for peer sessions (does not mutate self._llm)."""
         provider = self._resolve_provider()
-
-        if provider == "vertex":
-            return self._create_vertex_llm()
-        if provider == "gemini":
-            return self._create_gemini_llm()
-        if provider == "groq":
-            return self._create_llm()
-        if provider == "openai":
-            return self._create_openai_llm()
-        if provider == "rie":
-            return self._create_rie_llm()
-        if provider == "ollama":
-            return self._create_ollama_llm()
-        print("ERROR: No valid LLM provider selected or configured for peer inbound.")
-        return None
+        llm = self._create_llm_by_provider(provider, speed_mode="flash")
+        if not llm:
+            print("ERROR: No valid LLM provider selected or configured for peer inbound.")
+        return llm
 
     def _peer_system_prompt(self, receive_profile: str) -> str:
         eff = "chat" if receive_profile == "chat" else "agent"
@@ -1572,7 +2568,8 @@ class AgentManager:
 
         system_prompt = self._peer_system_prompt(receive_profile)
         middleware_stack = [
-            DynamicToolRoutingMiddleware(),
+            ToolNeedMiddleware(),
+            ContextProjectionMiddleware(),
             SummarizationMiddleware(
                 model=llm,
                 trigger=("tokens", 8000),
@@ -1781,7 +2778,7 @@ class AgentManager:
         elif provider == "gemini":
             return self._create_gemini_llm(speed_mode=speed_mode)
         elif provider == "groq":
-            return self._create_llm(speed_mode=speed_mode)
+            return self._create_groq_llm(speed_mode=speed_mode)
         elif provider == "openai":
             return self._create_openai_llm(speed_mode=speed_mode)
         elif provider == "rie":
@@ -1790,7 +2787,7 @@ class AgentManager:
             return self._create_ollama_llm(speed_mode=speed_mode)
         return None
 
-    def _create_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
+    def _create_groq_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return a Groq LLM instance (potentially rotating)"""
         keys = settings.GROQ_API_KEYS
         if not keys:
@@ -1814,14 +2811,16 @@ class AgentManager:
                     "api_key": keys[0],
                     "model": settings.GROQ_MODEL,
                     "temperature": 0,
+                    "reasoning_format": "parsed",
                 }
                 if reasoning_effort:
                     kwargs["reasoning_effort"] = reasoning_effort
                 try:
                     llm = ChatGroq(**kwargs)
                 except Exception as e:
-                    print(f"DEBUG: Fallback without reasoning_effort for ChatGroq: {e}")
+                    print(f"DEBUG: Fallback without reasoning params for ChatGroq: {e}")
                     kwargs.pop("reasoning_effort", None)
+                    kwargs.pop("reasoning_format", None)
                     llm = ChatGroq(**kwargs)
             print(f"DEBUG: Groq LLM created successfully with model: {settings.GROQ_MODEL} (reasoning_effort={reasoning_effort})")
             return llm
@@ -1830,6 +2829,9 @@ class AgentManager:
             import traceback
             traceback.print_exc()
             return None
+
+    # Backward-compatibility alias
+    _create_llm = _create_groq_llm
 
     def _create_gemini_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
         """Create and return a direct Gemini LLM instance (Generative AI API)"""
@@ -1857,12 +2859,17 @@ class AgentManager:
                     "temperature": 0,
                 }
                 if reasoning_effort:
-                    kwargs["reasoning_effort"] = reasoning_effort
+                    kwargs["include_thoughts"] = True
+                    kwargs["thinking_budget"] = -1
+                else:
+                    kwargs["include_thoughts"] = False
+                    kwargs["thinking_budget"] = 0
                 try:
                     llm = SafeCls(**kwargs)
                 except Exception as e:
-                    print(f"DEBUG: Fallback without reasoning_effort for SafeChatGoogleGenerativeAI: {e}")
-                    kwargs.pop("reasoning_effort", None)
+                    print(f"DEBUG: Fallback without thinking kwargs for SafeChatGoogleGenerativeAI: {e}")
+                    kwargs.pop("include_thoughts", None)
+                    kwargs.pop("thinking_budget", None)
                     llm = SafeCls(**kwargs)
             print(f"DEBUG: Gemini LLM (Generative AI API) created successfully with model: {settings.GEMINI_MODEL} (reasoning_effort={reasoning_effort})")
             return llm
@@ -1936,6 +2943,7 @@ class AgentManager:
                     "openai_api_key": keys[0],
                     "base_url": settings.OPENAI_BASE_URL,
                     "temperature": 0.7,
+                    "stream_usage": True,
                 }
                 if reasoning_effort:
                     kwargs["reasoning_effort"] = reasoning_effort
@@ -1961,6 +2969,7 @@ class AgentManager:
                 "openai_api_key": settings.RIE_ACCESS_TOKEN,
                 "base_url": settings.RIE_API_URL,
                 "temperature": 0.7,
+                "stream_usage": True,
             }
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
@@ -1989,6 +2998,7 @@ class AgentManager:
                 "openai_api_key": api_key,
                 "base_url": f"{settings.OLLAMA_API_URL.rstrip('/')}/v1",
                 "temperature": 0.7,
+                "stream_usage": True,
             }
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
@@ -2109,22 +3119,8 @@ class AgentManager:
     async def _initialize_agent_async(self, chat_mode: Optional[str] = None, speed_mode: Optional[str] = None) -> None:
         """Initialize the Deep Agent if API keys are configured (Async)"""
         
-        # Initialize AsyncSqliteSaver for persistence across restarts
-        if not self._checkpointer:
-            # Monkeypatch aiosqlite Connection to add missing is_alive method
-            # This is a workaround for a compatibility issue with aiosqlite 0.22.0+
-            import aiosqlite
-            if not hasattr(aiosqlite.Connection, "is_alive"):
-                def is_alive(self):
-                    return True
-                aiosqlite.Connection.is_alive = is_alive
-
-            self._checkpointer_cm = AsyncSqliteSaver.from_conn_string(get_checkpoint_db_path())
-            self._checkpointer = await self._checkpointer_cm.__aenter__()
-
-        # Initialize LTM Store
-        if not self._store:
-            self._store = await memory_store.get_store()
+        # Ensure singleton checkpointer and LTM store are initialized
+        await self._ensure_checkpoint_and_store()
 
         # LangSmith Tracing Configuration
         if settings.LANGSMITH_TRACING and settings.LANGSMITH_API_KEY:
@@ -2187,7 +3183,11 @@ class AgentManager:
                 "[End Planner Main Instruction]"
             )
 
-        final_system_prompt = SYSTEM_PROMPT + mode_instructions + planner_main_section
+        final_system_prompt = (
+            BASE_SYSTEM_PROMPT.strip()
+            + mode_instructions
+            + (planner_main_section if effective_chat_mode != "chat" else "")
+        )
 
         system_prompt = final_system_prompt
 
@@ -2240,6 +3240,22 @@ class AgentManager:
             if tool_name:
                 all_tools_map[tool_name] = tool
 
+        # Register Programmatic Batched Execution Tool
+        all_tools_map["execute_batched_plan"] = execute_batched_plan
+        batched_tool_registry.clear()
+        batched_tool_registry.update(all_tools_map)
+
+        # Populate Dynamic Capability Resolver
+        try:
+            capability_resolver.populate_from_runtime(
+                base_tools=list(all_tools_map.values()),
+                plugins={"gmail": loaded_plugin_tools},
+                mcp_tools=loaded_mcp_tools,
+                user_apis=loaded_external_tools
+            )
+        except Exception as e:
+            _logger.warning("Failed to populate capability resolver: %s", e)
+
         def _resolve_tools_from_ids(tool_ids: list[str]) -> list[Any]:
             resolved: list[Any] = []
             seen: set[str] = set()
@@ -2265,7 +3281,7 @@ class AgentManager:
 
         # Filter tools based on chat_mode + orchestration mode.
         if effective_chat_mode == "chat":
-            # Chat mode: internet_search + LTM + scheduling + knowledge tool
+            # Chat mode: internet_search + LTM + scheduling + knowledge tool + connected plugins
             tools_to_use = []
             if "internet_search" in all_tools_map:
                 tools_to_use.append(all_tools_map["internet_search"])
@@ -2276,16 +3292,34 @@ class AgentManager:
             if "read_knowledge_asset" in all_tools_map:
                 tools_to_use.append(all_tools_map["read_knowledge_asset"])
             tools_to_use.extend(LTM_TOOLS)
-            print(f"DEBUG: Chat mode active - using limited tools: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
+            # Include connected plugin tools so DynamicToolRoutingMiddleware can route them when requested
+            existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
+            for extra_tool in loaded_plugin_tools:
+                t_name = getattr(extra_tool, "name", getattr(extra_tool, "__name__", str(extra_tool)))
+                if t_name and t_name not in existing_tool_names:
+                    tools_to_use.append(extra_tool)
+                    existing_tool_names.add(t_name)
+            print(f"DEBUG: Chat mode active - using limited tools + plugins: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
         elif orchestration_mode == "team":
             planner_graph = settings.SUBAGENT_PLANNER_GRAPH or {}
             main_tool_ids = planner_graph.get("main_tool_ids") if isinstance(planner_graph, dict) else []
             if not isinstance(main_tool_ids, list):
                 main_tool_ids = []
-            tools_to_use = _resolve_tools_from_ids(main_tool_ids)
+            if main_tool_ids:
+                tools_to_use = _resolve_tools_from_ids(main_tool_ids)
+            else:
+                # Default team mode: coordinator agent has access to all enabled runtime tools
+                enabled_tool_names = settings.ENABLED_TOOLS
+                if enabled_tool_names is None:
+                    tools_to_use = list(all_tools_map.values())
+                else:
+                    tools_to_use = _resolve_tools_from_ids(enabled_tool_names)
+            existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
             for extra_tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
-                if extra_tool not in tools_to_use:
+                t_name = getattr(extra_tool, "name", getattr(extra_tool, "__name__", str(extra_tool)))
+                if t_name and t_name not in existing_tool_names:
                     tools_to_use.append(extra_tool)
+                    existing_tool_names.add(t_name)
         else:
             # Solo mode: full catalog by default, with user-controlled disable list.
             enabled_tool_names = settings.ENABLED_TOOLS
@@ -2294,13 +3328,29 @@ class AgentManager:
             else:
                 tools_to_use = _resolve_tools_from_ids(enabled_tool_names)
                 # Automatically include dynamic MCP tools, external API tools, and plugin tools
+                existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
                 for extra_tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
-                    if extra_tool not in tools_to_use:
+                    t_name = getattr(extra_tool, "name", getattr(extra_tool, "__name__", str(extra_tool)))
+                    if t_name and t_name not in existing_tool_names:
                         tools_to_use.append(extra_tool)
+                        existing_tool_names.add(t_name)
 
-        # Always ensure core system tools like read_knowledge_asset are available
-        if "read_knowledge_asset" in all_tools_map and all_tools_map["read_knowledge_asset"] not in tools_to_use:
-            tools_to_use.append(all_tools_map["read_knowledge_asset"])
+        # Always ensure core system tools (search, LTM, knowledge, scheduling, remote friends) are available
+        core_tool_names = [
+            "internet_search",
+            "save_memory",
+            "get_memory",
+            "search_memory",
+            "read_knowledge_asset",
+            "schedule_chat_task",
+            "remote_friend_ask",
+        ]
+        existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
+        for ctn in core_tool_names:
+            core_t = all_tools_map.get(ctn)
+            if core_t and getattr(core_t, "name", getattr(core_t, "__name__", str(core_t))) not in existing_tool_names:
+                tools_to_use.append(core_t)
+                existing_tool_names.add(getattr(core_t, "name", getattr(core_t, "__name__", str(core_t))))
 
         print(
             "DEBUG: Initializing agent with orchestration_mode=%s and tools=%s"
@@ -2313,10 +3363,13 @@ class AgentManager:
         try:
             print(f"DEBUG: Creating deep agent with {provider}...")
 
-            # Core middleware stack: dynamic tool routing + skill preloading
+            # Core middleware stack: binary tool-need gate + context projection + skill preloading + memory retrieval + task accounting
             middleware_stack = [
-                DynamicToolRoutingMiddleware(),
+                ToolNeedMiddleware(),
+                ContextProjectionMiddleware(),
                 SkillMiddleware(),
+                MemoryRetrievalMiddleware(),
+                TaskExecutionAccountingMiddleware(),
             ]
             
             # Only add TodoListMiddleware in thinking mode (skip for flash)
@@ -2369,7 +3422,7 @@ class AgentManager:
                     # For "Always Ask", we interrupt on all tools except safe/read-only ones.
                     safe_tools = {
                         "internet_search", "get_desktop_state", "list_dir", "read_file", 
-                        "get_ltm_context", "search_ltm", "list_mcp_servers", "get_mcp_tool_info",
+                        "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
                         "schedule_chat_task"
                     }
                     interrupt_on = {}
@@ -2393,7 +3446,7 @@ class AgentManager:
                     # into create_agent(..., middleware=[...]), which crashes.
                     safe_tools = {
                         "internet_search", "get_desktop_state", "list_dir", "read_file",
-                        "get_ltm_context", "search_ltm", "list_mcp_servers", "get_mcp_tool_info",
+                        "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
                         "schedule_chat_task"
                     }
                     interrupt_on = {}
@@ -2409,6 +3462,9 @@ class AgentManager:
                         "DEBUG: HITL enabled in 'let_decide' mode "
                         "(safe tools auto-approved, others require approval)"
                     )
+
+            # Prompt & token composition diagnostic middleware placed at the end so it sees all injected tools & prompts
+            middleware_stack.append(PromptCompositionDiagnosticMiddleware())
 
             self._agent = create_agent(
                 model=self._llm,
@@ -2431,6 +3487,14 @@ class AgentManager:
 
 
     
+    def invalidate_agent(self) -> None:
+        """
+        Invalidate the cached compiled agent graph.
+        Forces the next request to rebuild the graph and re-discover plugin / MCP / external tools.
+        """
+        print("DEBUG: Invalidating cached agent graph (will recompile on next request)")
+        self._agent = None
+
     @property
     def agent(self):
         """Get the agent instance"""
@@ -2833,6 +3897,8 @@ class AgentManager:
         # "updates" yields graph-node completions (tools, interrupts).
         # "messages" yields LLM tokens as AIMessageChunk tuples — required for token streaming UI.
         stream_modes = ["updates", "messages"]
+
+        print(f"DEBUG [Graph Request]: pid={os.getpid()} thread_id={thread_id} saver_id={id(self._checkpointer)}")
 
         if config:
             stream_gen = self._agent.astream(

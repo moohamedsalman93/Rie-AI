@@ -43,6 +43,8 @@ import { useKnowledgeAttachment } from "./hooks/useKnowledgeAttachment";
 function cleanTextForSpeech(text) {
   if (!text) return "";
   let clean = text;
+  // Remove <think>...</think> or <thought>...</thought> blocks
+  clean = clean.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, "");
   // Remove code blocks ```...```
   clean = clean.replace(/```[\s\S]*?```/g, "");
   // Remove inline code `...`
@@ -62,6 +64,39 @@ function cleanTextForSpeech(text) {
   // Replace multiple spaces/newlines with single space
   clean = clean.replace(/\s+/g, " ").trim();
   return clean;
+}
+
+/**
+ * Parse a raw assistant message content string into blocks (e.g. separating <think>...</think> from text).
+ * @param {string} content
+ * @returns {Array<{type: string, text: string, isThinking?: boolean}>}
+ */
+export function parseMessageContentToBlocks(content) {
+  if (!content || typeof content !== "string") return [{ type: "text", text: "" }];
+
+  const thinkRegex = /<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/gi;
+  const blocks = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = thinkRegex.exec(content)) !== null) {
+    const textBefore = content.slice(lastIndex, match.index);
+    if (textBefore.trim()) {
+      blocks.push({ type: "text", text: textBefore });
+    }
+    const thoughtText = match[1].trim();
+    if (thoughtText) {
+      blocks.push({ type: "thought", text: thoughtText, isThinking: false });
+    }
+    lastIndex = thinkRegex.lastIndex;
+  }
+
+  const remaining = content.slice(lastIndex);
+  if (remaining.trim() || blocks.length === 0) {
+    blocks.push({ type: "text", text: remaining });
+  }
+
+  return blocks;
 }
 
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
@@ -259,7 +294,8 @@ function MainApp() {
   const audioChunksRef = useRef([]);
   const currentAudioRef = useRef(null);
   const accumulatedTextRef = useRef("");
-  const pendingStreamTextRef = useRef({});
+  const pendingStreamUpdatesRef = useRef({});
+  const streamParserStateRef = useRef({});
   const rafIdRef = useRef(null);
 
   const flushStreamText = useCallback(() => {
@@ -267,27 +303,67 @@ function MainApp() {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-    const entries = Object.entries(pendingStreamTextRef.current);
+    const entries = Object.entries(pendingStreamUpdatesRef.current);
     if (entries.length === 0) return;
-    const updates = { ...pendingStreamTextRef.current };
-    pendingStreamTextRef.current = {};
+    const updates = { ...pendingStreamUpdatesRef.current };
+    pendingStreamUpdatesRef.current = {};
 
     setSessions((prev) => {
       let changed = false;
       const nextSessions = { ...prev };
       Object.entries(updates).forEach(([tId, data]) => {
-        const { botMsgId, pendingText } = data;
-        if (!pendingText || !nextSessions[tId]) return;
+        const { botMsgId, pendingText, pendingThought, finishThinking, thoughtStartTime } = data;
+        if (!nextSessions[tId]) return;
+        if (!pendingText && !pendingThought && !finishThinking) return;
+
         changed = true;
         nextSessions[tId] = nextSessions[tId].map((m) => {
           if (m.id === botMsgId) {
-            const blocks = m.blocks || [];
-            const lastBlock = blocks[blocks.length - 1];
-            if (lastBlock && lastBlock.type === "text") {
-              return { ...m, blocks: [...blocks.slice(0, -1), { ...lastBlock, text: (lastBlock.text || "") + pendingText }] };
-            } else {
-              return { ...m, blocks: [...blocks, { type: "text", text: pendingText }] };
+            let blocks = m.blocks ? [...m.blocks] : [];
+
+            // 1. Append thought tokens
+            if (pendingThought) {
+              const lastBlock = blocks[blocks.length - 1];
+              if (lastBlock && lastBlock.type === "thought" && lastBlock.isThinking) {
+                blocks[blocks.length - 1] = {
+                  ...lastBlock,
+                  text: (lastBlock.text || "") + pendingThought,
+                };
+              } else {
+                blocks.push({
+                  type: "thought",
+                  text: pendingThought,
+                  isThinking: true,
+                  startTime: thoughtStartTime || Date.now(),
+                });
+              }
             }
+
+            // 2. Finish thinking if transitioning to text or explicitly finished
+            if (pendingText || finishThinking) {
+              blocks = blocks.map((b) => {
+                if (b.type === "thought" && b.isThinking) {
+                  const elapsed = b.startTime ? (Date.now() - b.startTime) : undefined;
+                  return { ...b, isThinking: false, elapsedMs: elapsed };
+                }
+                return b;
+              });
+            }
+
+            // 3. Append text tokens
+            if (pendingText) {
+              const lastBlock = blocks[blocks.length - 1];
+              if (lastBlock && lastBlock.type === "text") {
+                blocks[blocks.length - 1] = {
+                  ...lastBlock,
+                  text: (lastBlock.text || "") + pendingText,
+                };
+              } else {
+                blocks.push({ type: "text", text: pendingText });
+              }
+            }
+
+            return { ...m, blocks };
           }
           return m;
         });
@@ -525,6 +601,25 @@ function MainApp() {
   const processStreamChunk = useCallback((data, botMessageId, threadId, userMessageId) => {
     try {
       if (data.done || data.step === "end") {
+        if (streamParserStateRef.current[threadId]) {
+          const parser = streamParserStateRef.current[threadId];
+          if (parser.buffer) {
+            if (!pendingStreamUpdatesRef.current[threadId]) {
+              pendingStreamUpdatesRef.current[threadId] = { botMsgId: botMessageId, pendingText: "", pendingThought: "" };
+            }
+            if (parser.inThinkTag) {
+              pendingStreamUpdatesRef.current[threadId].pendingThought = (pendingStreamUpdatesRef.current[threadId].pendingThought || "") + parser.buffer;
+            } else {
+              pendingStreamUpdatesRef.current[threadId].pendingText = (pendingStreamUpdatesRef.current[threadId].pendingText || "") + parser.buffer;
+              accumulatedTextRef.current += parser.buffer;
+            }
+            parser.buffer = "";
+          }
+          delete streamParserStateRef.current[threadId];
+        }
+        if (pendingStreamUpdatesRef.current[threadId]) {
+          pendingStreamUpdatesRef.current[threadId].finishThinking = true;
+        }
         flushStreamText();
         setStreamingThreads(prev => {
           const next = new Set(prev);
@@ -534,6 +629,27 @@ function MainApp() {
         setCurrentTool(null);
         setRetryStatus(null);
         setIsTerminalOpen(false);
+
+        // Ensure any active thought blocks in sessions are finalized
+        setSessions((prev) => {
+          if (!prev[threadId]) return prev;
+          return {
+            ...prev,
+            [threadId]: prev[threadId].map((m) => {
+              if (m.id === botMessageId && m.blocks) {
+                return {
+                  ...m,
+                  blocks: m.blocks.map((b) =>
+                    b.type === "thought" && b.isThinking
+                      ? { ...b, isThinking: false, elapsedMs: b.startTime ? (Date.now() - b.startTime) : undefined }
+                      : b
+                  ),
+                };
+              }
+              return m;
+            }),
+          };
+        });
 
         // Flush & speak any remaining unspoken text left in sentenceBufferRef at the end of stream
         if (voiceReplyRef.current && lastTurnWasVoiceRef.current && sentenceBufferRef.current.trim()) {
@@ -714,13 +830,100 @@ function MainApp() {
 
       const isModelMessage = step === "model" && (msg.type === "ai" || msg.type === "assistant");
       if (isModelMessage) {
-        const content = typeof msg.content === "string" ? msg.content : "";
-        if (content) {
-          accumulatedTextRef.current += content;
+        const textChunk = typeof msg.content === "string" ? msg.content : "";
+        const thoughtChunk = typeof msg.reasoning_content === "string" ? msg.reasoning_content : (typeof msg.thought === "string" ? msg.thought : "");
 
-          // Real-time sentence-streaming for voice reply
-          if (voiceReplyRef.current && lastTurnWasVoiceRef.current) {
-            sentenceBufferRef.current += content;
+        if (!pendingStreamUpdatesRef.current[threadId]) {
+          pendingStreamUpdatesRef.current[threadId] = {
+            botMsgId: botMessageId,
+            pendingText: "",
+            pendingThought: "",
+            thoughtStartTime: Date.now(),
+          };
+        }
+
+        // 1. Explicit reasoning_content from provider
+        if (thoughtChunk) {
+          pendingStreamUpdatesRef.current[threadId].pendingThought = (pendingStreamUpdatesRef.current[threadId].pendingThought || "") + thoughtChunk;
+        }
+
+        // 2. Normal text and/or inline <think>...</think> tags parsing
+        if (textChunk) {
+          if (!streamParserStateRef.current[threadId]) {
+            streamParserStateRef.current[threadId] = { inThinkTag: false, buffer: "" };
+          }
+          const parser = streamParserStateRef.current[threadId];
+          parser.buffer += textChunk;
+
+          let speechNewText = "";
+
+          while (parser.buffer.length > 0) {
+            if (!parser.inThinkTag) {
+              const thinkIdx = parser.buffer.indexOf("<think>");
+              const altIdx = thinkIdx === -1 ? parser.buffer.indexOf("<thought>") : thinkIdx;
+              const tagLen = thinkIdx !== -1 ? 7 : (parser.buffer.indexOf("<thought>") !== -1 ? 9 : 0);
+              const tagIdx = thinkIdx !== -1 ? thinkIdx : (parser.buffer.indexOf("<thought>") !== -1 ? parser.buffer.indexOf("<thought>") : -1);
+
+              if (tagIdx !== -1) {
+                const textBefore = parser.buffer.slice(0, tagIdx);
+                if (textBefore) {
+                  pendingStreamUpdatesRef.current[threadId].pendingText = (pendingStreamUpdatesRef.current[threadId].pendingText || "") + textBefore;
+                  accumulatedTextRef.current += textBefore;
+                  speechNewText += textBefore;
+                }
+                parser.inThinkTag = true;
+                parser.buffer = parser.buffer.slice(tagIdx + tagLen);
+              } else {
+                const partialMatch = parser.buffer.match(/<(?:t(?:h(?:i(?:n(?:k)?)?)?|o(?:u(?:g(?:h(?:t)?)?)?)?)?)?$/);
+                if (partialMatch && partialMatch.index !== undefined && partialMatch.index > 0) {
+                  const safeText = parser.buffer.slice(0, partialMatch.index);
+                  pendingStreamUpdatesRef.current[threadId].pendingText = (pendingStreamUpdatesRef.current[threadId].pendingText || "") + safeText;
+                  accumulatedTextRef.current += safeText;
+                  speechNewText += safeText;
+                  parser.buffer = parser.buffer.slice(partialMatch.index);
+                  break;
+                } else if (partialMatch && partialMatch.index === 0) {
+                  break;
+                } else {
+                  pendingStreamUpdatesRef.current[threadId].pendingText = (pendingStreamUpdatesRef.current[threadId].pendingText || "") + parser.buffer;
+                  accumulatedTextRef.current += parser.buffer;
+                  speechNewText += parser.buffer;
+                  parser.buffer = "";
+                }
+              }
+            } else {
+              const thinkEndIdx = parser.buffer.indexOf("</think>");
+              const closeTagLen = thinkEndIdx !== -1 ? 8 : (parser.buffer.indexOf("</thought>") !== -1 ? 10 : 0);
+              const closeTagIdx = thinkEndIdx !== -1 ? thinkEndIdx : (parser.buffer.indexOf("</thought>") !== -1 ? parser.buffer.indexOf("</thought>") : -1);
+
+              if (closeTagIdx !== -1) {
+                const thoughtBefore = parser.buffer.slice(0, closeTagIdx);
+                if (thoughtBefore) {
+                  pendingStreamUpdatesRef.current[threadId].pendingThought = (pendingStreamUpdatesRef.current[threadId].pendingThought || "") + thoughtBefore;
+                }
+                parser.inThinkTag = false;
+                parser.buffer = parser.buffer.slice(closeTagIdx + closeTagLen);
+                pendingStreamUpdatesRef.current[threadId].finishThinking = true;
+              } else {
+                const partialClose = parser.buffer.match(/<\/(?:t(?:h(?:i(?:n(?:k)?)?)?|o(?:u(?:g(?:h(?:t)?)?)?)?)?)?$/);
+                if (partialClose && partialClose.index !== undefined && partialClose.index > 0) {
+                  const safeThought = parser.buffer.slice(0, partialClose.index);
+                  pendingStreamUpdatesRef.current[threadId].pendingThought = (pendingStreamUpdatesRef.current[threadId].pendingThought || "") + safeThought;
+                  parser.buffer = parser.buffer.slice(partialClose.index);
+                  break;
+                } else if (partialClose && partialClose.index === 0) {
+                  break;
+                } else {
+                  pendingStreamUpdatesRef.current[threadId].pendingThought = (pendingStreamUpdatesRef.current[threadId].pendingThought || "") + parser.buffer;
+                  parser.buffer = "";
+                }
+              }
+            }
+          }
+
+          // Real-time sentence-streaming for voice reply (strictly speaks final answer text only)
+          if (speechNewText && voiceReplyRef.current && lastTurnWasVoiceRef.current) {
+            sentenceBufferRef.current += speechNewText;
             let buffer = sentenceBufferRef.current;
             const sentenceRegex = /([^.!?\n]+[.!?\n]+(?:\s+|$))/g;
             let match;
@@ -736,22 +939,20 @@ function MainApp() {
               sentenceBufferRef.current = buffer.slice(lastIdx);
             }
           }
+        }
 
-          if (!pendingStreamTextRef.current[threadId]) {
-            pendingStreamTextRef.current[threadId] = { botMsgId: botMessageId, pendingText: "" };
-          }
-          pendingStreamTextRef.current[threadId].pendingText += content;
-
-          if (!rafIdRef.current) {
-            rafIdRef.current = requestAnimationFrame(() => {
-              rafIdRef.current = null;
-              flushStreamText();
-            });
-          }
+        if (!rafIdRef.current) {
+          rafIdRef.current = requestAnimationFrame(() => {
+            rafIdRef.current = null;
+            flushStreamText();
+          });
         }
       }
 
       if (step === "tools" || msg.type === "tool" || msg.role === "tool") {
+        if (pendingStreamUpdatesRef.current[threadId]) {
+          pendingStreamUpdatesRef.current[threadId].finishThinking = true;
+        }
         flushStreamText();
         const content = msg.content;
         if (content && typeof content === "string") {
@@ -1532,7 +1733,7 @@ function MainApp() {
           from: m.role === 'user' ? 'user' : 'bot',
           text: m.content,
           image_url: m.image_url,
-          blocks: m.role !== 'user' ? [{ type: 'text', text: m.content }] : undefined
+          blocks: m.role !== 'user' ? parseMessageContentToBlocks(m.content) : undefined
         }));
         setSessions(prev => ({ ...prev, [threadId]: formatted }));
       } else {
@@ -1828,7 +2029,7 @@ function MainApp() {
           from: m.role === "user" ? "user" : "bot",
           text: m.content,
           image_url: m.image_url,
-          blocks: m.role !== "user" ? [{ type: "text", text: m.content }] : undefined,
+          blocks: m.role !== "user" ? parseMessageContentToBlocks(m.content) : undefined,
         }));
         setSessions((prev) => ({ ...prev, [activeThreadId]: formatted }));
       } catch (e) {
@@ -2043,7 +2244,7 @@ function MainApp() {
             if (token) {
               localStorage.setItem("rie_token", token);
               updateSetting("RIE_ACCESS_TOKEN", token).then(() => {
-                checkApiHealth().then(status => setApiStatus(status));
+                checkApiHealth().then(health => setApiStatus(health?.agent_configured ? "online" : "offline"));
               });
             }
           } catch (e) {
@@ -2127,7 +2328,7 @@ function MainApp() {
               from: m.role === 'user' ? 'user' : 'bot',
               text: m.content,
               image_url: m.image_url,
-              blocks: m.role !== 'user' ? [{ type: 'text', text: m.content }] : undefined
+              blocks: m.role !== 'user' ? parseMessageContentToBlocks(m.content) : undefined
             }));
             setSessions(prev => ({ ...prev, [storedThreadId]: formatted }));
             setActiveThreadId(storedThreadId);

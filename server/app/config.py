@@ -94,8 +94,33 @@ class Settings:
 
     @property
     def WEB_SEARCH_PROVIDER(self) -> str:
-        """Web search provider: tavily, brave, or duckduckgo."""
-        return (self._get("WEB_SEARCH_PROVIDER") or "tavily").strip().lower()
+        """Active web search provider: 'tavily', 'brave', or 'duckduckgo' (default: 'tavily')."""
+        return (self._get("WEB_SEARCH_PROVIDER") or os.getenv("WEB_SEARCH_PROVIDER") or "tavily").strip().lower()
+
+    @property
+    def ENVIRONMENT(self) -> str:
+        """Environment name: 'development', 'production', 'test'."""
+        return (self._get("ENVIRONMENT") or os.getenv("ENVIRONMENT") or os.getenv("NODE_ENV") or "development").strip().lower()
+
+    @property
+    def IS_PRODUCTION(self) -> bool:
+        """True if running in production mode."""
+        return self.ENVIRONMENT in ("production", "prod")
+
+    @property
+    def LANGGRAPH_DATABASE_URL(self) -> Optional[str]:
+        """PostgreSQL connection string for LangGraph checkpoints (e.g. postgresql://user:pass@host:5432/dbname)"""
+        val = self._get("LANGGRAPH_DATABASE_URL") or os.getenv("LANGGRAPH_DATABASE_URL") or os.getenv("POSTGRES_URL")
+        return val.strip() if val and val.strip() else None
+
+    @property
+    def LANGGRAPH_DB_POOL_MAX_SIZE(self) -> int:
+        """Maximum connections in PostgreSQL pool for LangGraph checkpoints (default: 20)."""
+        try:
+            val = self._get("LANGGRAPH_DB_POOL_MAX_SIZE") or os.getenv("LANGGRAPH_DB_POOL_MAX_SIZE")
+            return int(val) if val else 20
+        except (ValueError, TypeError):
+            return 20
 
     @property
     def CAMOFOX_HEADLESS_MODE(self) -> str:

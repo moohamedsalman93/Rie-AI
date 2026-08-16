@@ -10,12 +10,13 @@ API_TOKEN = os.environ.get("RIE_APP_TOKEN")
 API_KEY_NAME = "X-Rie-App-Token"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# Connectivity peer routes are authenticated by known device id + fingerprint.
+# Routes exempt from internal desktop app token check (e.g. peer routes, browser OAuth callbacks)
 PEER_AUTH_EXEMPT_PATHS = (
     "/connectivity/peer/receive",
     "/connectivity/peer/receive/stream",
     "/connectivity/peer/receive/stream/cancel",
     "/connectivity/pair/finalize",
+    "/api/plugins/oauth/callback",
 )
 
 async def verify_app_token(request: Request = None, api_key: str = Security(api_key_header)):

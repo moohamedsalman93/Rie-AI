@@ -1,10 +1,12 @@
 """
-Unit tests for Dynamic Tool Routing and Skill Preloading
+Unit tests for Dynamic Tool Routing, Capability Matrix, and Hard Invariants.
 """
 import unittest
+import json
+from unittest.mock import MagicMock
 from langchain.tools import tool
 
-from app.agent import DynamicToolRoutingMiddleware, SkillMiddleware
+from app.agent import DynamicToolRoutingMiddleware, SkillMiddleware, ContextProjectionMiddleware
 
 
 # Mock tools for testing
@@ -53,6 +55,31 @@ def schedule_chat_task(text: str, run_at_iso: str) -> str:
     """Schedule a chat task."""
     return "scheduled"
 
+@tool
+def save_memory(fact: str) -> str:
+    """Save memory."""
+    return "saved"
+
+@tool
+def get_memory(query: str) -> str:
+    """Get memory."""
+    return "memory"
+
+@tool
+def github_create_pull_request(repo: str, title: str) -> str:
+    """Create GitHub PR."""
+    return "pr_created"
+
+@tool
+def jira_update_issue(issue_key: str, comment: str) -> str:
+    """Update Jira issue."""
+    return "jira_updated"
+
+@tool
+def custom_crm_user_api(user_id: str) -> str:
+    """Custom connected CRM external API tool."""
+    return "crm_data"
+
 
 ALL_TEST_TOOLS = [
     gmail_send_email,
@@ -64,31 +91,150 @@ ALL_TEST_TOOLS = [
     internet_search,
     read_knowledge_asset,
     schedule_chat_task,
+    save_memory,
+    get_memory,
+    github_create_pull_request,
+    jira_update_issue,
+    custom_crm_user_api,
 ]
 
 
 class TestDynamicToolRouting(unittest.TestCase):
 
-    def test_classify_email_domain(self):
-        query = "please send an email to alice@example.com with subject meeting"
+    def test_classify_search_weather_domain(self):
+        query = "what's the weather in Chennai?"
         domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
-        self.assertIn("email", domains)
-        self.assertNotIn("browser", domains)
-        self.assertNotIn("desktop", domains)
-
-    def test_classify_browser_domain(self):
-        query = "open https://example.com and fill form for me"
-        domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
-        self.assertIn("browser", domains)
+        self.assertIn("search", domains)
         self.assertNotIn("email", domains)
         self.assertNotIn("desktop", domains)
 
-    def test_classify_desktop_domain(self):
-        query = "click at coordinates 450, 600 on the desktop screen"
-        domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
-        self.assertIn("desktop", domains)
-        self.assertNotIn("email", domains)
-        self.assertNotIn("browser", domains)
+    def test_filter_weather_binds_internet_search(self):
+        """Mandatory regression test: 'what's the weather in Chennai?' must bind internet_search."""
+        query = "what's the weather in Chennai?"
+        active_domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
+        self.assertIn("search", active_domains)
+
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains, query=query)
+        tool_names = [t.name for t in filtered]
+
+        self.assertIn("internet_search", tool_names)
+        self.assertNotIn("browser_open", tool_names)
+        self.assertNotIn("gmail_send_email", tool_names)
+        self.assertNotIn("windows_mouse_click", tool_names)
+        self.assertNotIn("run_terminal_command", tool_names)
+        self.assertNotIn("github_create_pull_request", tool_names)
+        self.assertNotIn("jira_update_issue", tool_names)
+
+    def test_filter_gmail_binds_email_tools(self):
+        """Matrix test: 'Read my Gmail' / 'read my unread emails' must bind gmail_* tools."""
+        query = "can you read my unread emails in gmail?"
+        active_domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
+        self.assertIn("email", active_domains)
+
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains, query=query)
+        tool_names = [t.name for t in filtered]
+
+        self.assertIn("gmail_search_emails", tool_names)
+        self.assertIn("gmail_send_email", tool_names)
+        self.assertNotIn("browser_open", tool_names)
+        self.assertNotIn("windows_mouse_click", tool_names)
+
+    def test_filter_wifi_binds_system_terminal(self):
+        """Matrix test: 'What is my wifi password' must bind run_terminal_command / system tools."""
+        query = "what is my wifi password?"
+        active_domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
+        self.assertIn("system", active_domains)
+
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains, query=query)
+        tool_names = [t.name for t in filtered]
+
+        self.assertIn("run_terminal_command", tool_names)
+        self.assertNotIn("gmail_send_email", tool_names)
+        self.assertNotIn("browser_open", tool_names)
+
+    def test_filter_wallpaper_binds_desktop_tools(self):
+        """Matrix test: 'Change my wallpaper' must bind desktop / terminal tools."""
+        query = "change my wallpaper to a sunset image"
+        active_domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
+        self.assertIn("desktop", active_domains)
+
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains, query=query)
+        tool_names = [t.name for t in filtered]
+
+        self.assertIn("windows_mouse_click", tool_names)
+        self.assertIn("run_terminal_command", tool_names)
+        self.assertNotIn("gmail_send_email", tool_names)
+        self.assertNotIn("github_create_pull_request", tool_names)
+
+    def test_filter_github_binds_github_tools(self):
+        """Matrix test: 'Check PR #42 on GitHub' must bind github_* tools."""
+        query = "check PR #42 on repo owner/repo"
+        active_domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
+        self.assertIn("github", active_domains)
+
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains, query=query)
+        tool_names = [t.name for t in filtered]
+
+        self.assertIn("github_create_pull_request", tool_names)
+        self.assertNotIn("gmail_send_email", tool_names)
+        self.assertNotIn("browser_open", tool_names)
+
+    def test_filter_jira_binds_jira_tools(self):
+        """Matrix test: 'Update Jira ticket' must bind jira_* tools."""
+        query = "update Jira ticket PROJ-101 with status in progress"
+        active_domains = DynamicToolRoutingMiddleware._classify_domains(query, set())
+        self.assertIn("jira", active_domains)
+
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains, query=query)
+        tool_names = [t.name for t in filtered]
+
+        self.assertIn("jira_update_issue", tool_names)
+        self.assertNotIn("gmail_send_email", tool_names)
+
+    def test_external_api_custom_tool_preserved(self):
+        """Matrix test: Custom connected user APIs not belonging to inactive domains are preserved."""
+        active_domains = {"search"}
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains, query="weather in Paris")
+        tool_names = [t.name for t in filtered]
+
+        self.assertIn("internet_search", tool_names)
+        self.assertIn("custom_crm_user_api", tool_names)
+
+    def test_pure_greeting_returns_zero_tools(self):
+        """Tier 1 (PURE_CASUAL): Pure greeting 'hi' or 'hello' must return 0 tools."""
+        for greeting in ("hi", "hello", "good morning", "thanks", "hey"):
+            filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, set(), query=greeting)
+            self.assertEqual(
+                len(filtered),
+                0,
+                f"Pure greeting '{greeting}' must return 0 tools to preserve ~400-token budget",
+            )
+
+    def test_identity_query_returns_zero_tools(self):
+        """Tier 1 (PURE_CASUAL): Identity queries like 'what is my name?' handled by proactive LTM return 0 tools."""
+        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, set(), query="what's my name")
+        self.assertEqual(len(filtered), 0)
+
+    def test_memory_intent_scoped_tools(self):
+        """Tier 2 (CASUAL_WITH_CAPABILITIES): Explicit memory intent returns memory tools without heavy domain tools."""
+        filtered = DynamicToolRoutingMiddleware._filter_tools(
+            ALL_TEST_TOOLS, set(), query="remember I prefer React and Tailwind"
+        )
+        tool_names = [t.name for t in filtered]
+        self.assertIn("save_memory", tool_names)
+        self.assertNotIn("browser_open", tool_names)
+        self.assertNotIn("gmail_send_email", tool_names)
+        self.assertNotIn("windows_mouse_click", tool_names)
+
+    def test_schedule_intent_scoped_tools(self):
+        """Tier 2 (CASUAL_WITH_CAPABILITIES): Explicit schedule intent returns schedule tool."""
+        filtered = DynamicToolRoutingMiddleware._filter_tools(
+            ALL_TEST_TOOLS, set(), query="remind me to check the deploy tomorrow at 10am"
+        )
+        tool_names = [t.name for t in filtered]
+        self.assertIn("schedule_chat_task", tool_names)
+        self.assertNotIn("browser_open", tool_names)
+        self.assertNotIn("gmail_send_email", tool_names)
 
     def test_multiturn_tool_continuity(self):
         # Even if the latest query is just "continue" or "now send it",
@@ -98,43 +244,154 @@ class TestDynamicToolRouting(unittest.TestCase):
         domains = DynamicToolRoutingMiddleware._classify_domains(query, invoked_tools)
         self.assertIn("email", domains)
 
-    def test_filter_tools_for_email(self):
-        active_domains = {"email"}
-        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains)
-        tool_names = [t.name for t in filtered]
+    def test_tool_need_binary_gate_casual_vs_agent(self):
+        """Test ToolNeedMiddleware binary gate: casual queries get 0 tools, action queries get ALL session tools."""
+        mw = DynamicToolRoutingMiddleware()
 
-        # Gmail tools kept
-        self.assertIn("gmail_send_email", tool_names)
-        self.assertIn("gmail_search_emails", tool_names)
+        # Casual query -> tools = []
+        mock_casual_req = MagicMock()
+        mock_casual_req.tools = ALL_TEST_TOOLS
+        mock_casual_msg = MagicMock()
+        mock_casual_msg.type = "human"
+        mock_casual_msg.content = "hi, what's your name?"
+        mock_casual_msg.tool_calls = []
+        mock_casual_req.messages = [mock_casual_msg]
+        mock_casual_req.override.side_effect = lambda **kwargs: MagicMock(tools=kwargs.get("tools", ALL_TEST_TOOLS))
 
-        # Core tools kept
-        self.assertIn("internet_search", tool_names)
-        self.assertIn("read_knowledge_asset", tool_names)
-        self.assertIn("schedule_chat_task", tool_names)
+        routed_casual = mw._apply_tool_gating(mock_casual_req)
+        self.assertEqual(len(routed_casual.tools), 0, "Casual turns must receive 0 tools to preserve token budget.")
 
-        # Browser and desktop tools filtered out
-        self.assertNotIn("browser_open", tool_names)
-        self.assertNotIn("browser_snapshot", tool_names)
-        self.assertNotIn("windows_mouse_click", tool_names)
-        self.assertNotIn("run_terminal_command", tool_names)
+        # Action query (e.g. open settings) -> all session tools preserved
+        mock_action_req = MagicMock()
+        mock_action_req.tools = ALL_TEST_TOOLS
+        mock_action_msg = MagicMock()
+        mock_action_msg.type = "human"
+        mock_action_msg.content = "open settings"
+        mock_action_msg.tool_calls = []
+        mock_action_req.messages = [mock_action_msg]
 
-    def test_filter_tools_for_browser(self):
-        active_domains = {"browser"}
-        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains)
-        tool_names = [t.name for t in filtered]
+        routed_action = mw._apply_tool_gating(mock_action_req)
+        self.assertEqual(len(routed_action.tools), len(ALL_TEST_TOOLS), "Action turns must receive ALL session tools.")
 
-        self.assertIn("browser_open", tool_names)
-        self.assertIn("browser_snapshot", tool_names)
-        self.assertIn("internet_search", tool_names)
+    def test_context_projection_keeps_latest_tool_full_and_compacts_older(self):
+        """Verify ContextProjectionMiddleware keeps the latest tool result 100% full while compacting older verbose results."""
+        from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+        from app.agent import ContextProjectionMiddleware
 
-        self.assertNotIn("gmail_send_email", tool_names)
-        self.assertNotIn("windows_mouse_click", tool_names)
+        large_search_json = json.dumps([
+            {"id": "msg_001", "subject": "Qwen 3.8 27B Released", "from": "Ollama", "snippet": "Detailed release notes " * 20},
+            {"id": "msg_002", "subject": "Weekly Update", "from": "Team", "snippet": "Long update content " * 20},
+            {"id": "msg_003", "subject": "Security Alert", "from": "SecOps", "snippet": "Alert details " * 20},
+        ])
+        large_email_body = "From: Ollama <news@ollama.com>\nSubject: Qwen 3.8 27B Released\nDate: Sun, 16 Aug 2026\n\n" + ("This is the full email body with extensive documentation and download links. " * 30)
 
-    def test_filter_tools_ambiguous_fallback(self):
-        # Empty domains -> fallback returns all tools
-        active_domains = set()
-        filtered = DynamicToolRoutingMiddleware._filter_tools(ALL_TEST_TOOLS, active_domains)
-        self.assertEqual(len(filtered), len(ALL_TEST_TOOLS))
+        # Sequence of messages across 2 tool steps:
+        # Step 1: search
+        # Step 2: get email
+        messages = [
+            HumanMessage(content="Find latest Gmail and summarize it"),
+            AIMessage(content="", tool_calls=[{"id": "call_1", "name": "gmail_search_emails", "args": {}}]),
+            ToolMessage(content=large_search_json, tool_call_id="call_1", name="gmail_search_emails"),
+            AIMessage(content="", tool_calls=[{"id": "call_2", "name": "gmail_get_email", "args": {"id": "msg_001"}}]),
+            ToolMessage(content=large_email_body, tool_call_id="call_2", name="gmail_get_email"),
+        ]
+
+        projected = ContextProjectionMiddleware._project_messages(messages)
+        self.assertEqual(len(projected), len(messages))
+
+        # 1. Older tool message (search) MUST be compacted
+        older_tool_proj = projected[2]
+        self.assertIsInstance(older_tool_proj, ToolMessage)
+        self.assertLess(len(older_tool_proj.content), len(large_search_json))
+        self.assertIn("Found 3 results", older_tool_proj.content)
+        self.assertIn("msg_001", older_tool_proj.content)
+
+        # 2. Latest tool message (get_email) MUST be 100% full and untouched
+        latest_tool_proj = projected[4]
+        self.assertIsInstance(latest_tool_proj, ToolMessage)
+        self.assertEqual(latest_tool_proj.content, large_email_body)
+
+    def test_app_control_defensive_mode_normalization(self):
+        """Verify app_tool defensively maps 'open' -> 'launch' and 'focus' -> 'switch'."""
+        from app.windows_tools import app_tool
+        from unittest.mock import patch
+
+        with patch("app.windows_tools.desktop.app") as mock_desktop_app:
+            mock_desktop_app.return_value = "Notepad launched."
+            result = app_tool(mode="open", name="Notepad")
+            mock_desktop_app.assert_called_once_with("launch", "Notepad", None, None)
+
+        with patch("app.windows_tools.desktop.app") as mock_desktop_app:
+            mock_desktop_app.return_value = "Switched to Notepad."
+            result = app_tool(mode="focus", name="Notepad")
+            mock_desktop_app.assert_called_once_with("switch", "Notepad", None, None)
+
+
+    def test_scoped_technical_rules_only_includes_active_domains(self):
+        """Verify that scoped technical rules prompt only contains rules for active domains."""
+        email_rules = DynamicToolRoutingMiddleware._build_technical_rules({"email"}, [gmail_send_email])
+        self.assertIn("Connected Integration Plugins", email_rules)
+        self.assertIn("Email Body Formatting", email_rules)
+        self.assertNotIn("PowerShell", email_rules)
+        self.assertNotIn("browser_*", email_rules)
+        self.assertNotIn("use_vision", email_rules)
+
+        system_rules = DynamicToolRoutingMiddleware._build_technical_rules({"system"}, [run_terminal_command])
+        self.assertIn("Windows/PowerShell", system_rules)
+        self.assertNotIn("gmail_*", system_rules)
+        self.assertNotIn("Email Body Formatting", system_rules)
+
+    def test_plugin_tool_optional_parameters_allow_none(self):
+        """Verify that plugin manager creates Pydantic schemas that allow None for optional arguments."""
+        from app.plugin_manager import plugin_manager
+        from app.plugins.base import PluginManifestSpec, PluginToolSpec
+
+        manifest = PluginManifestSpec(
+            manifest_version=1,
+            id="gmail",
+            name="gmail",
+            displayName="Gmail",
+            version="1.0.0",
+            description="Gmail test",
+            category="Communication",
+            icon="gmail",
+            auth_type="oauth2",
+            tools=[
+                PluginToolSpec(
+                    name="gmail_create_draft",
+                    description="Create a draft",
+                    risk_level="write",
+                    capability="gmail.send",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "to": {"type": "string", "description": "Recipient"},
+                            "subject": {"type": "string", "description": "Subject"},
+                            "body": {"type": "string", "description": "Body"},
+                            "thread_id": {"type": "string", "description": "Optional thread id"},
+                            "attachments": {"type": "array", "items": {"type": "string"}, "description": "Optional files"}
+                        },
+                        "required": ["to", "subject", "body"]
+                    }
+                )
+            ]
+        )
+
+        tools = plugin_manager._build_tools_for_plugin(manifest, {}, {})
+        self.assertEqual(len(tools), 1)
+        draft_tool = tools[0]
+        schema = draft_tool.args_schema
+
+        # Test valid payload with None / omitted optional fields
+        valid_obj = schema(to="test@example.com", subject="Hello", body="Test message", thread_id=None, attachments=None)
+        self.assertEqual(valid_obj.to, "test@example.com")
+        self.assertIsNone(valid_obj.thread_id)
+        self.assertIsNone(valid_obj.attachments)
+
+        # Test valid payload without passing optional fields at all
+        valid_obj_omitted = schema(to="test@example.com", subject="Hello", body="Test message")
+        self.assertEqual(valid_obj_omitted.to, "test@example.com")
+        self.assertIsNone(valid_obj_omitted.thread_id)
 
 
 class TestSkillPreloading(unittest.TestCase):

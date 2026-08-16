@@ -83,18 +83,24 @@ def _get_embedding_function():
         root = Path(model_root)
         if not (root / "onnx" / "model.onnx").is_file():
             logger.warning(
-                "EMBEDDING_MODEL_PATH %s is not a Chroma ONNX bundle; using default cache",
+                "EMBEDDING_MODEL_PATH %s is not a Chroma ONNX bundle; checking default cache",
                 root,
             )
-            return ONNXMiniLM_L6_V2()
-        logger.info("Using bundled ONNX embeddings from %s", root)
+        else:
+            logger.info("Using bundled ONNX embeddings from %s", root)
 
-        class _LocalONNXMiniLM(ONNXMiniLM_L6_V2):
-            DOWNLOAD_PATH = root
+            class _LocalONNXMiniLM(ONNXMiniLM_L6_V2):
+                DOWNLOAD_PATH = root
 
-        return _LocalONNXMiniLM()
-    logger.info("Using bundled ONNX embeddings (default cache path)")
-    return ONNXMiniLM_L6_V2()
+            return _LocalONNXMiniLM()
+
+    default_cache = Path.home() / ".cache" / "chroma" / "onnx_models" / "all-MiniLM-L6-v2"
+    if (default_cache / "onnx" / "model.onnx").is_file():
+        logger.info("Using bundled ONNX embeddings from default cache")
+        return ONNXMiniLM_L6_V2()
+
+    logger.info("Bundled ONNX model files not found on disk yet. Using deterministic fallback embeddings.")
+    return _DeterministicFallbackEmbeddingFunction()
 
 
 def _namespace_to_collection_name(namespace: Sequence[str]) -> str:
@@ -232,9 +238,8 @@ class ChromaStore:
             doc = (docs_list[0][i] if docs_list and docs_list[0] and i < len(docs_list[0]) else "") or ""
             meta = (metas_list[0][i] if metas_list and metas_list[0] and i < len(metas_list[0]) else {}) or {}
             dist = (dists_list[0][i] if dists_list and dists_list[0] and i < len(dists_list[0]) else 0) or 0
-            # Cosine distance in [0, 2]; convert to similarity score in [0, 1]
             score = max(0.0, min(1.0, 1.0 - (float(dist) / 2.0)))
             yield _StoreResult(
                 value={"content": doc, "category": meta.get("category", "")},
-                metadata={"score": score},
+                metadata={**meta, "score": score, "key": doc_id or meta.get("key", "")},
             )

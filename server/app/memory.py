@@ -16,8 +16,8 @@ class MemoryStore:
     def __init__(self):
         self._store: ChromaStore | None = None
 
-    async def get_store(self) -> ChromaStore:
-        """Get or initialize the persistent Chroma store."""
+    def get_store_sync(self) -> ChromaStore:
+        """Get or initialize the persistent Chroma store synchronously."""
         if self._store is not None:
             return self._store
 
@@ -25,6 +25,10 @@ class MemoryStore:
         logger.info("Initializing LTM Chroma store at %s", persist_path)
         self._store = ChromaStore(persist_path=persist_path)
         return self._store
+
+    async def get_store(self) -> ChromaStore:
+        """Get or initialize the persistent Chroma store."""
+        return self.get_store_sync()
 
     def close(self) -> None:
         """Release store reference (Chroma PersistentClient has no explicit close)."""
