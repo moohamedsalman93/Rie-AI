@@ -429,6 +429,76 @@ class TestSkillPreloading(unittest.TestCase):
             )
         )
 
+    def test_skills_injected_into_system_prompt_even_when_not_matching(self):
+        """When user asks something casual or unrelated, available skills list is still injected so agent knows skill names."""
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from langchain.agents.middleware import ModelRequest
+
+        middleware = SkillMiddleware()
+        req = ModelRequest(
+            system_message=SystemMessage(content="You are Rie."),
+            messages=[HumanMessage(content="Hello there")],
+            tools=[],
+            model=MagicMock(),
+        )
+        modified = middleware._apply_skills_to_request(req)
+        content_text = ""
+        for block in modified.system_message.content_blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                content_text += block.get("text", "")
+            elif hasattr(block, "text"):
+                content_text += block.text
+
+        self.assertIn("## Available Skills (Load on Demand)", content_text)
+        self.assertIn("Windows System Tasks", content_text)
+        self.assertIn("PowerShell Style & Scripting", content_text)
+        self.assertIn("load_skill", content_text)
+
+    def test_skills_injected_with_preloaded_and_available(self):
+        """When user query matches a skill, that skill is preloaded and other skills are listed as available."""
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from langchain.agents.middleware import ModelRequest
+
+        middleware = SkillMiddleware()
+        req = ModelRequest(
+            system_message=SystemMessage(content="You are Rie."),
+            messages=[HumanMessage(content="Please generate a PDF report for this document")],
+            tools=[],
+            model=MagicMock(),
+        )
+        modified = middleware._apply_skills_to_request(req)
+        content_text = ""
+        for block in modified.system_message.content_blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                content_text += block.get("text", "")
+            elif hasattr(block, "text"):
+                content_text += block.text
+
+        self.assertIn("## Active Skill Instructions (Pre-loaded)", content_text)
+        self.assertIn("### Skill: PDF Generation Expert", content_text)
+        self.assertIn("## Available Skills (Load on Demand)", content_text)
+        self.assertIn("Windows System Tasks", content_text)
+
+    def test_load_skill_tool_execution(self):
+        """Test invoking load_skill by exact name and case-insensitive name."""
+        from app.agent import load_skill
+
+        result_exact = load_skill.invoke({"skill_name": "Windows System Tasks"})
+        self.assertIn("Loaded Skill: Windows System Tasks", result_exact)
+
+        result_lower = load_skill.invoke({"skill_name": "windows system tasks"})
+        self.assertIn("Loaded Skill: Windows System Tasks", result_lower)
+
+        result_fuzzy = load_skill.invoke({"skill_name": "PDF Generation"})
+        self.assertIn("Loaded Skill: PDF Generation Expert", result_fuzzy)
+
+    def test_load_skill_always_available(self):
+        """Test that load_skill is registered in ToolNeedMiddleware always available tools."""
+        from app.agent import ToolNeedMiddleware
+        self.assertIn("load_skill", ToolNeedMiddleware.ALWAYS_AVAILABLE_TOOLS)
+        self.assertIn("skills", ToolNeedMiddleware.DOMAIN_PREFIXES)
+        self.assertIn("load_skill", ToolNeedMiddleware.DOMAIN_PREFIXES["skills"])
+
 
 if __name__ == "__main__":
     unittest.main()

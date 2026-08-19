@@ -234,6 +234,10 @@ DOMAIN_RULES: dict[str, str] = {
     "question": (
         "- Interactive Questions & Clarifications: Whenever you need user preferences, choices (e.g. tailoring options, configuration choices, technology stack preferences), or clarifying answers before proceeding, ALWAYS invoke the `ask_question` tool. Pass selectable options in `options` or a list of questions in `questions`. Do NOT ask multiple choice questions in raw plain text when you can use `ask_question`."
     ),
+    "skills": (
+        "- Skills & Specialized Domain Knowledge: You have access to specialized procedural skills in your library. "
+        "When a task requires specialized domain guidelines or procedures from your Available Skills list, invoke `load_skill` with the exact skill name to load the complete instructions."
+    ),
 }
 
 TECHNICAL_RULES_PROMPT = "Technical & Tool Execution Rules:\n" + "\n\n".join(DOMAIN_RULES.values())
@@ -1080,16 +1084,76 @@ def load_skill(skill_name: str, runtime: Annotated[ToolRuntime, InjectedToolArg]
     """
     try:
         from app.database import list_skills
+        import os
+        from langgraph.config import get_config
+
         normalized_name = skill_name.strip().lower()
         db_skills = list_skills()
         for row in db_skills:
             if row.get("name", "").strip().lower() == normalized_name or row.get("id", "").strip().lower() == normalized_name:
                 content = (row.get("content") or "").strip()
                 return f"Loaded Skill: {row.get('name')}\n\n{content}"
+        
+        # Fuzzy / substring fallback for DB skill names
+        for row in db_skills:
+            r_name = row.get("name", "").strip().lower()
+            if normalized_name in r_name or r_name in normalized_name:
+                content = (row.get("content") or "").strip()
+                return f"Loaded Skill: {row.get('name')}\n\n{content}"
+
+        # Workspace & global file checks
+        config = None
+        try:
+            config = get_config()
+        except Exception:
+            pass
+        project_root = config.get("configurable", {}).get("project_root") if config and "configurable" in config else None
+
+        if project_root and os.path.isdir(project_root):
+            if normalized_name in ("claude.md", "claude", "workspace claude.md"):
+                p = os.path.join(project_root, "CLAUDE.md")
+                if os.path.isfile(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        return f"Loaded Workspace Skill: CLAUDE.md\n\n{f.read().strip()}"
+            elif normalized_name in ("rie.md", "rie", "workspace rie.md"):
+                p = os.path.join(project_root, "RIE.md")
+                if os.path.isfile(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        return f"Loaded Workspace Skill: RIE.md\n\n{f.read().strip()}"
+            ws_skills_dir = os.path.join(project_root, ".rie", "skills")
+            if os.path.isdir(ws_skills_dir):
+                for fname in os.listdir(ws_skills_dir):
+                    if fname.lower() == normalized_name or fname.lower().replace(".md", "") == normalized_name:
+                        p = os.path.join(ws_skills_dir, fname)
+                        if os.path.isfile(p):
+                            with open(p, "r", encoding="utf-8") as f:
+                                return f"Loaded Workspace Skill: {fname}\n\n{f.read().strip()}"
+
+        home_dir = os.path.expanduser("~")
+        global_rie_dir = os.path.join(home_dir, ".rie")
+        if normalized_name in ("global claude.md", "global claude"):
+            p = os.path.join(global_rie_dir, "CLAUDE.md")
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    return f"Loaded Global Skill: CLAUDE.md\n\n{f.read().strip()}"
+        elif normalized_name in ("global rie.md", "global rie"):
+            p = os.path.join(global_rie_dir, "RIE.md")
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    return f"Loaded Global Skill: RIE.md\n\n{f.read().strip()}"
+        global_skills_dir = os.path.join(global_rie_dir, "skills")
+        if os.path.isdir(global_skills_dir):
+            for fname in os.listdir(global_skills_dir):
+                if fname.lower() == normalized_name or fname.lower().replace(".md", "") == normalized_name:
+                    p = os.path.join(global_skills_dir, fname)
+                    if os.path.isfile(p):
+                        with open(p, "r", encoding="utf-8") as f:
+                            return f"Loaded Global Skill: {fname}\n\n{f.read().strip()}"
+
     except Exception as exc:
         return f"Error loading skill '{skill_name}': {exc}"
         
-    return f"Skill '{skill_name}' not found."
+    return f"Skill '{skill_name}' not found. Check the Available Skills list in your prompt for exact valid skill names."
 
 
 class ToolNeedMiddleware(AgentMiddleware):
@@ -1180,6 +1244,7 @@ class ToolNeedMiddleware(AgentMiddleware):
             "process", "taskmgr", "task manager", "settings", "control panel",
             "email", "gmail", "github", "jira", "mcp", "terminal", "powershell",
             "cmd", "browser", "weather", "temperature", "forecast", "news",
+            "skill", "skills", "load_skill", "load skill",
         )
 
         for act in ACTION_TRIGGERS:
@@ -1275,8 +1340,9 @@ class ToolNeedMiddleware(AgentMiddleware):
         "memory": ("get_memory", "search_memory"),
         "github": ("github_",),
         "jira": ("jira_",),
+        "skills": ("load_skill",),
     }
-    ALWAYS_AVAILABLE_TOOLS: set[str] = {"save_memory"}
+    ALWAYS_AVAILABLE_TOOLS: set[str] = {"save_memory", "load_skill"}
 
     @classmethod
     def _classify_domains(cls, query: str, invoked_tool_names: set[str]) -> set[str]:
@@ -1300,6 +1366,8 @@ class ToolNeedMiddleware(AgentMiddleware):
             active_domains.add("github")
         if any(k in q for k in ("jira", "sprint", "backlog", "story", "ticket")):
             active_domains.add("jira")
+        if any(k in q for k in ("skill", "skills", "load skill", "load_skill")):
+            active_domains.add("skills")
         return active_domains
 
     @classmethod
@@ -1314,6 +1382,8 @@ class ToolNeedMiddleware(AgentMiddleware):
                 return [t for t in tools if getattr(t, "name", str(t)) in ("save_memory", "get_memory", "search_memory")]
             if "remind" in q or "schedule" in q:
                 return [t for t in tools if getattr(t, "name", str(t)) in ("schedule_chat_task",)]
+            if "skill" in q or "load_skill" in q:
+                return [t for t in tools if getattr(t, "name", str(t)) in ("load_skill",)]
         filtered = []
         all_domain_prefixes = [p for prefixes in cls.DOMAIN_PREFIXES.values() for p in prefixes]
         for t in tools:
@@ -1531,8 +1601,12 @@ class PromptCompositionDiagnosticMiddleware(AgentMiddleware):
                 tech_text = sys_text[tech_start:tech_end].strip()
                 tech_rules_tok = cls._count_tokens(tech_text)
 
-            if "Active Skill Instructions (Pre-loaded)" in sys_text:
-                skill_start = sys_text.find("Active Skill Instructions (Pre-loaded)")
+            if "Active Skill Instructions" in sys_text or "Available Skills" in sys_text:
+                skill_start = -1
+                for marker in ("## Active Skill Instructions", "Active Skill Instructions", "## Available Skills", "Available Skills"):
+                    pos = sys_text.find(marker)
+                    if pos != -1 and (skill_start == -1 or pos < skill_start):
+                        skill_start = pos
                 next_indices = [
                     idx for idx in (
                         sys_text.find("## Recalled Long-Term Memories", skill_start),
@@ -1779,9 +1853,11 @@ class SkillMiddleware(AgentMiddleware):
 
             thread_id = None
             skill_ids_from_config = []
+            project_root = None
             if config and "configurable" in config:
                 thread_id = config["configurable"].get("thread_id")
                 skill_ids_from_config = config["configurable"].get("skill_ids", [])
+                project_root = config["configurable"].get("project_root")
 
             # Check available tools in the model request
             has_camofox_tools = True
@@ -1795,6 +1871,7 @@ class SkillMiddleware(AgentMiddleware):
 
             # Collect active/available database skills:
             db_skills = list_skills()
+            seen_skill_names: set[str] = set()
             for row in db_skills:
                 name = row.get("name", "Skill")
                 lower_name = name.lower()
@@ -1830,6 +1907,7 @@ class SkillMiddleware(AgentMiddleware):
 
                 content = (row.get("content") or "").strip()
                 desc = (row.get("description") or "").strip() or "Specialized skill instructions."
+                seen_skill_names.add(lower_name)
 
                 # Determine whether to PRELOAD full content or list as AVAILABLE
                 should_preload = is_attached or self._matches_skill_query(name, desc, query_text)
@@ -1839,6 +1917,35 @@ class SkillMiddleware(AgentMiddleware):
                 else:
                     available_list.append(f"- **{name}**: {desc}")
 
+            # Also discover workspace skills if present
+            import os
+            if project_root and os.path.isdir(project_root):
+                claude_path = os.path.join(project_root, "CLAUDE.md")
+                if os.path.isfile(claude_path) and "claude.md" not in seen_skill_names:
+                    desc = "Rules and instructions from workspace root CLAUDE.md"
+                    if "ws_claude" in skill_ids_from_config:
+                        try:
+                            with open(claude_path, "r", encoding="utf-8") as f:
+                                preloaded_sections.append(f"### Skill: CLAUDE.md\n{f.read().strip()}")
+                        except Exception:
+                            pass
+                    else:
+                        available_list.append(f"- **CLAUDE.md**: {desc}")
+                    seen_skill_names.add("claude.md")
+
+                rie_path = os.path.join(project_root, "RIE.md")
+                if os.path.isfile(rie_path) and "rie.md" not in seen_skill_names:
+                    desc = "Rules and instructions from workspace root RIE.md"
+                    if "ws_rie" in skill_ids_from_config:
+                        try:
+                            with open(rie_path, "r", encoding="utf-8") as f:
+                                preloaded_sections.append(f"### Skill: RIE.md\n{f.read().strip()}")
+                        except Exception:
+                            pass
+                    else:
+                        available_list.append(f"- **RIE.md**: {desc}")
+                    seen_skill_names.add("rie.md")
+
         except Exception as exc:
             _logger.warning("Error building skills prompt: %s", exc)
 
@@ -1846,15 +1953,28 @@ class SkillMiddleware(AgentMiddleware):
 
     def _apply_skills_to_request(self, request: ModelRequest) -> ModelRequest:
         preloaded_sections, available_list = self._build_skills_sections(request)
-        if not preloaded_sections:
+        if not preloaded_sections and not available_list:
             return request
 
-        skills_addendum = (
-            "\n\n## Active Skill Instructions (Pre-loaded)\n"
-            "The following specialized skill guidelines are directly loaded and active for your task. "
-            "Adhere to them immediately without calling `load_skill`:\n\n"
-            + "\n\n".join(preloaded_sections)
-        )
+        sections: list[str] = []
+        if preloaded_sections:
+            sections.append(
+                "## Active Skill Instructions (Pre-loaded)\n"
+                "The following specialized skill guidelines are directly loaded and active for your task. "
+                "Adhere to them immediately without calling `load_skill`:\n\n"
+                + "\n\n".join(preloaded_sections)
+            )
+
+        if available_list:
+            sections.append(
+                "## Available Skills (Load on Demand)\n"
+                "The following specialized procedural skills are available in your library. "
+                "If your task requires detailed domain instructions or procedures for any of these, "
+                "invoke the `load_skill` tool with the exact skill name to load its complete guidelines:\n"
+                + "\n".join(available_list)
+            )
+
+        skills_addendum = "\n\n" + "\n\n".join(sections)
         new_content = list(request.system_message.content_blocks) + [
             {"type": "text", "text": skills_addendum}
         ]
@@ -2466,6 +2586,7 @@ class AgentManager:
             "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
             "read_knowledge_asset": read_knowledge_asset,
+            "load_skill": load_skill,
             **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
@@ -3192,9 +3313,11 @@ class AgentManager:
                     continue
                 resolved_tools.append(tool)
 
-            # Ensure core system tools like read_knowledge_asset are available to subagents
+            # Ensure core system tools like read_knowledge_asset and load_skill are available to subagents
             if "read_knowledge_asset" in all_tools_map and all_tools_map["read_knowledge_asset"] not in resolved_tools:
                 resolved_tools.append(all_tools_map["read_knowledge_asset"])
+            if "load_skill" in all_tools_map and all_tools_map["load_skill"] not in resolved_tools:
+                resolved_tools.append(all_tools_map["load_skill"])
 
             subagent_middleware = []
             if name == "coding_specialist":
@@ -3238,6 +3361,7 @@ class AgentManager:
             "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
             "read_knowledge_asset": read_knowledge_asset,
+            "load_skill": load_skill,
             **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
@@ -3392,6 +3516,8 @@ class AgentManager:
                 tools_to_use.append(all_tools_map["remote_friend_ask"])
             if "read_knowledge_asset" in all_tools_map:
                 tools_to_use.append(all_tools_map["read_knowledge_asset"])
+            if "load_skill" in all_tools_map:
+                tools_to_use.append(all_tools_map["load_skill"])
             tools_to_use.extend(LTM_TOOLS)
             # Include connected plugin tools so DynamicToolRoutingMiddleware can route them when requested
             existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
@@ -3436,7 +3562,7 @@ class AgentManager:
                         tools_to_use.append(extra_tool)
                         existing_tool_names.add(t_name)
 
-        # Always ensure core system tools (search, questions, LTM, knowledge, scheduling, remote friends) are available
+        # Always ensure core system tools (search, questions, LTM, knowledge, scheduling, remote friends, skills) are available
         core_tool_names = [
             "internet_search",
             "ask_question",
@@ -3444,6 +3570,7 @@ class AgentManager:
             "get_memory",
             "search_memory",
             "read_knowledge_asset",
+            "load_skill",
             "schedule_chat_task",
             "remote_friend_ask",
         ]
@@ -3525,7 +3652,7 @@ class AgentManager:
                     safe_tools = {
                         "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file", 
                         "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
-                        "schedule_chat_task"
+                        "schedule_chat_task", "read_knowledge_asset", "load_skill"
                     }
                     interrupt_on = {}
                     for tool in tools_to_use:
@@ -3549,7 +3676,7 @@ class AgentManager:
                     safe_tools = {
                         "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file",
                         "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
-                        "schedule_chat_task"
+                        "schedule_chat_task", "read_knowledge_asset", "load_skill"
                     }
                     interrupt_on = {}
                     for tool in tools_to_use:

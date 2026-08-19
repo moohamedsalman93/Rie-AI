@@ -12,7 +12,7 @@ Scopes model contexts by binding only the exact capabilities required for a task
 """
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Set, Any, Callable
+from typing import Optional, List, Dict, Set, Any, Callable, Tuple
 import re
 import logging
 from langchain_core.tools import BaseTool, StructuredTool
@@ -139,6 +139,9 @@ class CapabilityResolver:
             elif "friend" in name:
                 provider = "remote_friend"
                 keywords = ["friend", "peer", "remote"]
+            elif "skill" in name:
+                provider = "skills"
+                keywords = ["skill", "skills", "load_skill", "procedure", "guide", "expert", "instructions"]
             else:
                 provider = "builtin"
                 keywords = []

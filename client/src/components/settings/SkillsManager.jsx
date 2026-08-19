@@ -47,25 +47,22 @@ export function SkillsManager() {
     }));
   };
 
-  useEffect(() => {
-    let mounted = true;
-    const load = async () => {
-      setLoading(true);
-      setError('');
-      try {
-        const data = await fetchSkills();
-        if (mounted) setSkills(data);
-      } catch (e) {
-        if (mounted) setError(e.message);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-    load();
-    return () => {
-      mounted = false;
-    };
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await fetchSkills();
+      setSkills(data || []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   function openCreate() {
     setForm(EMPTY_FORM);
