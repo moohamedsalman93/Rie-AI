@@ -106,7 +106,7 @@ export function FloatingBubble({
   // Background styling classes — zero border and transparent when transparentBg is enabled
   const bgClasses = transparentBg
     ? "bg-transparent border-transparent hover:bg-white/10 shadow-none text-white"
-    : "bg-neutral-900/95 backdrop-blur-md hover:bg-neutral-800 border-neutral-700/60 shadow-xl text-neutral-100";
+    : "bg-neutral-900/95 backdrop-blur-md hover:bg-neutral-800 border-neutral-700/60 shadow-none text-neutral-100";
 
   return (
     <motion.button
@@ -118,12 +118,7 @@ export function FloatingBubble({
               opacity: 1,
               scale: 1,
               rotate: 0,
-              boxShadow:
-                privacyToast.type === "enabled"
-                  ? "0 0 20px rgba(16,185,129,0.3)"
-                  : privacyToast.type === "hold_hint"
-                  ? "0 0 20px rgba(245,158,11,0.3)"
-                  : "0 0 20px rgba(239,68,68,0.3)",
+              boxShadow: "none",
               borderColor:
                 privacyToast.type === "enabled"
                   ? "rgba(16,185,129,0.6)"
@@ -136,17 +131,7 @@ export function FloatingBubble({
               opacity: 1,
               scale: [1, 1.04, 1],
               rotate: 0,
-              boxShadow: hasPendingAction
-                ? [
-                    "0 0 0px rgba(245,158,11,0.0)",
-                    "0 0 25px rgba(245,158,11,0.45)",
-                    "0 0 0px rgba(245,158,11,0.0)",
-                  ]
-                : [
-                    "0 0 0px rgba(16,185,129,0.0)",
-                    "0 0 25px rgba(16,185,129,0.45)",
-                    "0 0 0px rgba(16,185,129,0.0)",
-                  ],
+              boxShadow: "none",
               borderColor: hasPendingAction
                 ? ["rgba(82,82,82,0.5)", "rgba(245,158,11,0.8)", "rgba(82,82,82,0.5)"]
                 : ["rgba(82,82,82,0.5)", "rgba(16,185,129,0.8)", "rgba(82,82,82,0.5)"],
@@ -155,7 +140,7 @@ export function FloatingBubble({
               opacity: 1,
               scale: 1,
               rotate: 0,
-              boxShadow: transparentBg ? "none" : "0 4px 12px rgba(0,0,0,0.1)",
+              boxShadow: "none",
               borderColor: transparentBg ? "transparent" : "rgba(82,82,82,0.5)",
             }
       }
@@ -176,15 +161,6 @@ export function FloatingBubble({
             onDragStart={(e) => e.preventDefault()}
             className={`${iconSizes} object-contain z-10 pointer-events-none select-none transition-all duration-200`}
           />
-          {(currentTool || isLoading || isRecording || hasPendingAction) && (
-            <motion.div
-              className={`absolute inset-0 rounded-full blur-md ${
-                hasPendingAction ? "bg-amber-500/20" : "bg-emerald-500/20"
-              }`}
-              animate={{ scale: [1, 1.5, 1], opacity: [0.3, 0.6, 0.3] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            />
-          )}
         </div>
       )}
 
