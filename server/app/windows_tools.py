@@ -202,25 +202,43 @@ async def terminal_tool(command: str, config: RunnableConfig = None) -> str:
                     )
 
         # Run stdout and stderr readers concurrently in threads
-        t_out = threading.Thread(target=read_stream, args=(process.stdout, stdout_lines, False))
-        t_err = threading.Thread(target=read_stream, args=(process.stderr, stderr_lines, True))
+        t_out = threading.Thread(target=read_stream, args=(process.stdout, stdout_lines, False), daemon=True)
+        t_err = threading.Thread(target=read_stream, args=(process.stderr, stderr_lines, True), daemon=True)
         
         t_out.start()
         t_err.start()
         
-        def wait_for_process(*args, **kwargs):
-            process.wait()
-            t_out.join()
-            t_err.join()
+        timeout_seconds = 90.0
+        timed_out = False
+
+        def wait_for_process():
+            nonlocal timed_out
+            try:
+                process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                if sys.platform == "win32":
+                    try:
+                        subprocess.run(["taskkill", "/F", "/PID", str(process.pid), "/T"], capture_output=True)
+                    except Exception:
+                        process.kill()
+                else:
+                    process.kill()
+            finally:
+                t_out.join(timeout=2.0)
+                t_err.join(timeout=2.0)
 
         await loop.run_in_executor(None, wait_for_process)
-        returncode = process.returncode
+        returncode = process.returncode if not timed_out else -1
 
         output_stdout = "".join(stdout_lines)
         output_stderr = strip_clixml_noise("".join(stderr_lines))
         output_stdout = strip_clixml_noise(output_stdout)
 
-        status = 'ok' if returncode == 0 else 'error'
+        if timed_out:
+            output_stderr += f"\n[Error: Command timed out after {int(timeout_seconds)}s and was terminated.]"
+
+        status = 'ok' if (returncode == 0 and not timed_out) else 'error'
         
         result = {
             "status": status,

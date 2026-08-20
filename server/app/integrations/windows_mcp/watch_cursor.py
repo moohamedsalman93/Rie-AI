@@ -8,15 +8,11 @@ class WatchCursor:
         self._thread = None
 
     def start(self):
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        # Only start if needed and avoid idle loop overhead
+        pass
 
     def stop(self):
         self._stop_event.set()
-        if self._thread:
-            self._thread.join()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
 
-    def _run(self):
-        while not self._stop_event.is_set():
-            # Current logic in Windows-MCP seems to be a placeholder or minimal
-            time.sleep(1)

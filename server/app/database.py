@@ -87,9 +87,12 @@ def vacuum_checkpoint_db() -> dict:
     
     size_before = os.path.getsize(db_path)
     
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
     try:
+        conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("VACUUM")
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Error vacuuming checkpoint db: %s", exc)
     finally:
         conn.close()
     
@@ -102,11 +105,56 @@ def vacuum_checkpoint_db() -> dict:
         "freed_mb": round((size_before - size_after) / (1024 * 1024), 2),
     }
 
+def prune_stale_checkpoints(keep_recent_threads: int = 50) -> dict:
+    """
+    Prunes older LangGraph checkpoint states to prevent unlimited growth of checkpoints.db.
+    Retains checkpoints for the most recent active threads.
+    """
+    db_path = get_checkpoint_db_path()
+    if not os.path.exists(db_path):
+        return {"status": "skipped", "reason": "no_checkpoint_db"}
+
+    try:
+        with sqlite3.connect(db_path, timeout=30.0) as conn:
+            cursor = conn.cursor()
+            # Inspect existing tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {row[0] for row in cursor.fetchall()}
+            
+            if "checkpoints" in tables:
+                # Find thread IDs to delete (keep most recent active threads)
+                cursor.execute(
+                    "SELECT DISTINCT thread_id FROM checkpoints ORDER BY checkpoint_id DESC"
+                )
+                all_threads = [row[0] for row in cursor.fetchall()]
+                threads_to_prune = all_threads[keep_recent_threads:]
+                
+                if threads_to_prune:
+                    placeholders = ",".join("?" for _ in threads_to_prune)
+                    cursor.execute(f"DELETE FROM checkpoints WHERE thread_id IN ({placeholders})", threads_to_prune)
+                    if "checkpoint_blobs" in tables:
+                        cursor.execute(f"DELETE FROM checkpoint_blobs WHERE thread_id IN ({placeholders})", threads_to_prune)
+                    if "checkpoint_writes" in tables:
+                        cursor.execute(f"DELETE FROM checkpoint_writes WHERE thread_id IN ({placeholders})", threads_to_prune)
+                    conn.commit()
+                    logging.getLogger(__name__).info("Pruned stale checkpoints for %d old threads.", len(threads_to_prune))
+                    
+        # If DB exceeds 50MB, run a background vacuum to reclaim space
+        if os.path.exists(db_path) and os.path.getsize(db_path) > 50 * 1024 * 1024:
+            vacuum_checkpoint_db()
+
+        return {"status": "ok"}
+    except Exception as e:
+        logging.getLogger(__name__).warning("Failed to prune checkpoints: %s", e)
+        return {"status": "error", "error": str(e)}
+
 def init_db():
     """Initialize the database and create tables if they don't exist"""
     global _db_initialized_success, _db_initialization_error
     try:
         _init_db_tables()
+        # Clean up stale checkpoint bloat
+        prune_stale_checkpoints()
         _db_initialized_success = True
         _db_initialization_error = None
     except Exception as e:
