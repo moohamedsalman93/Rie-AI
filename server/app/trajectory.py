@@ -49,8 +49,18 @@ def sanitize_text(text: str) -> str:
 
 def sanitize_payload(payload: Any) -> Any:
     """Recursively scrub sensitive keys and token values from payloads."""
+    if payload is None:
+        return None
     if isinstance(payload, str):
         return sanitize_text(payload)
+    elif isinstance(payload, (int, float, bool)):
+        return payload
+    elif isinstance(payload, bytes):
+        return sanitize_text(payload.decode("utf-8", errors="replace"))
+    elif isinstance(payload, Exception):
+        return sanitize_text(str(payload))
+    elif isinstance(payload, (datetime, Path)):
+        return str(payload)
     elif isinstance(payload, dict):
         sanitized_dict = {}
         for k, v in payload.items():
@@ -62,7 +72,52 @@ def sanitize_payload(payload: Any) -> Any:
         return sanitized_dict
     elif isinstance(payload, (list, tuple, set)):
         return [sanitize_payload(item) for item in payload]
-    return payload
+    elif hasattr(payload, "content"):  # LangChain BaseMessage (ToolMessage, AIMessage, HumanMessage, etc.)
+        return sanitize_payload(payload.content)
+    elif hasattr(payload, "model_dump") and callable(payload.model_dump):  # Pydantic v2
+        return sanitize_payload(payload.model_dump())
+    elif hasattr(payload, "dict") and callable(payload.dict):  # Pydantic v1
+        return sanitize_payload(payload.dict())
+    elif hasattr(payload, "to_dict") and callable(payload.to_dict):
+        return sanitize_payload(payload.to_dict())
+    elif hasattr(payload, "__dict__"):
+        return sanitize_payload(payload.__dict__)
+    return sanitize_text(str(payload))
+
+
+def _json_default(obj: Any) -> Any:
+    """Fallback JSON encoder for custom or unhandled objects."""
+    if hasattr(obj, "content"):
+        return obj.content
+    if hasattr(obj, "model_dump") and callable(obj.model_dump):
+        return obj.model_dump()
+    if hasattr(obj, "dict") and callable(obj.dict):
+        return obj.dict()
+    if hasattr(obj, "to_dict") and callable(obj.to_dict):
+        return obj.to_dict()
+    if hasattr(obj, "__dict__"):
+        return obj.__dict__
+    if isinstance(obj, (datetime, Path)):
+        return str(obj)
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, Exception):
+        return str(obj)
+    return str(obj)
+
+
+def safe_json_dumps(data: Any) -> Optional[str]:
+    """Serialize payload to JSON string safely without raising TypeError."""
+    if data is None:
+        return None
+    try:
+        return json.dumps(data, ensure_ascii=False, default=_json_default)
+    except Exception as e:
+        _logger.warning("safe_json_dumps fallback on %s: %s", type(data), e)
+        try:
+            return json.dumps(str(data), ensure_ascii=False)
+        except Exception:
+            return str(data)
 
 
 @dataclass
@@ -84,16 +139,22 @@ class TaskEvent:
     metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        # Ensure payload fields are sanitized
-        if d.get("tool_args"):
-            d["tool_args"] = sanitize_payload(d["tool_args"])
-        if d.get("tool_result"):
-            d["tool_result"] = sanitize_payload(d["tool_result"])
-        if d.get("error"):
-            d["error"] = sanitize_text(str(d["error"]))
-        if d.get("metadata"):
-            d["metadata"] = sanitize_payload(d["metadata"])
+        d = {
+            "event_id": self.event_id,
+            "task_id": self.task_id,
+            "thread_id": self.thread_id,
+            "step_number": self.step_number,
+            "event_type": self.event_type,
+            "timestamp": self.timestamp,
+            "model": self.model,
+            "tool_name": self.tool_name,
+            "tool_args": sanitize_payload(self.tool_args) if self.tool_args is not None else None,
+            "tool_result": sanitize_payload(self.tool_result) if self.tool_result is not None else None,
+            "duration": self.duration,
+            "status": self.status,
+            "error": sanitize_text(str(self.error)) if self.error is not None else None,
+            "metadata": sanitize_payload(self.metadata) if self.metadata is not None else None,
+        }
         return d
 
 
@@ -164,12 +225,12 @@ class TrajectoryStore:
                     data["timestamp"],
                     data.get("model"),
                     data.get("tool_name"),
-                    json.dumps(data["tool_args"], ensure_ascii=False) if data.get("tool_args") is not None else None,
-                    json.dumps(data["tool_result"], ensure_ascii=False) if data.get("tool_result") is not None else None,
+                    safe_json_dumps(data.get("tool_args")),
+                    safe_json_dumps(data.get("tool_result")),
                     data.get("duration"),
                     data["status"],
                     data.get("error"),
-                    json.dumps(data["metadata"], ensure_ascii=False) if data.get("metadata") is not None else None,
+                    safe_json_dumps(data.get("metadata")),
                 )
             )
             conn.commit()

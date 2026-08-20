@@ -2407,7 +2407,11 @@ class TaskExecutionAccountingMiddleware(AgentMiddleware):
             try:
                 result = await handler(request)
                 dur = time.time() - t0
-                result_content = getattr(result, "content", result)
+                if isinstance(result, list):
+                    extracted = [getattr(r, "content", r) for r in result]
+                    result_content = extracted[0] if len(extracted) == 1 else extracted
+                else:
+                    result_content = getattr(result, "content", result)
 
                 # Check if tool returned transient error output
                 classification = classify_tool_error(tool_name, output=result_content)

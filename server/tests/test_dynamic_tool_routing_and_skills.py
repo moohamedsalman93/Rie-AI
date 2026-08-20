@@ -499,6 +499,52 @@ class TestSkillPreloading(unittest.TestCase):
         self.assertIn("skills", ToolNeedMiddleware.DOMAIN_PREFIXES)
         self.assertIn("load_skill", ToolNeedMiddleware.DOMAIN_PREFIXES["skills"])
 
+    def test_trajectory_record_event_with_tool_message(self):
+        """Test that TaskEvent records ToolMessage and lists of ToolMessage without JSON serialization errors."""
+        import os
+        import tempfile
+        from langchain_core.messages import ToolMessage
+        from app.trajectory import TaskEvent, TrajectoryStore
+
+        tmp_dir = tempfile.mkdtemp()
+        tmp_db = os.path.join(tmp_dir, "test_events.db")
+
+        try:
+            store = TrajectoryStore(db_path=tmp_db)
+            tool_msg = ToolMessage(
+                content='{"result": "success", "token": "gsk_1234567890abcdef1234567890abcdef"}',
+                tool_call_id="call_test_123",
+                name="internet_search"
+            )
+
+            # Record event with direct ToolMessage
+            store.record_event(TaskEvent(
+                task_id="test_task_1",
+                thread_id="test_thread_1",
+                event_type="tool.completed",
+                tool_name="internet_search",
+                tool_result=tool_msg,
+            ))
+
+            # Record event with list of ToolMessages
+            store.record_event(TaskEvent(
+                task_id="test_task_1",
+                thread_id="test_thread_1",
+                event_type="tool.completed",
+                tool_name="internet_search",
+                tool_result=[tool_msg, tool_msg],
+            ))
+
+            events = store.get_task_trajectory("test_task_1")
+            self.assertEqual(len(events), 2)
+            self.assertIn("REDACTED", events[0]["tool_result"])
+        finally:
+            import shutil
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()
