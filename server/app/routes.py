@@ -30,6 +30,7 @@ from app.models import (
     KnowledgePackCreate, KnowledgePackUpdate, KnowledgePackResponse, UpdateKnowledgeAssetRequest, ThreadKnowledgeItem, RawTextAssetCreate,
     SkillCreate, SkillUpdate, SkillResponse,
     ImportBackupRequest,
+    UpdateScheduledTaskRequest,
 )
 from app.agent import agent_manager
 from app.url_preview import (
@@ -38,10 +39,12 @@ from app.url_preview import (
     format_previews_for_agent,
 )
 from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
+from app.scheduler_tools import SCHEDULER_TOOLS
 from app.config import settings
 from app.windows_tools import WINDOWS_TOOLS
 from app.ltm_tools import LTM_TOOLS
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
+
 from app.mcp_client import mcp_manager
 from app.plugins.loader import plugin_registry
 from app.plugin_manager import plugin_manager
@@ -156,12 +159,13 @@ def _get_runtime_tool_catalog_ids() -> set[str]:
     """Best-effort runtime tool ID catalog for validating planner assignments."""
     tool_ids: set[str] = {
         "internet_search",
-        "schedule_chat_task",
         "remote_friend_ask",
+        *[t.name for t in SCHEDULER_TOOLS],
         *WINDOWS_TOOLS.keys(),
         *[t.name for t in LTM_TOOLS],
         *[t.name for t in MCP_REGISTRY_TOOLS],
     }
+
     # External APIs configured by the user.
     for api in settings.EXTERNAL_APIS or []:
         if not isinstance(api, dict):
@@ -2733,6 +2737,38 @@ async def list_scheduled_tasks():
     """
     return scheduler_manager.list_tasks()
 
+@router.get("/scheduler/tasks/{job_id}", response_model=ScheduledTaskResponse)
+async def get_scheduled_task(job_id: str):
+    """
+    Get a scheduled task by ID.
+    """
+    task = scheduler_manager.get_task(job_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {job_id} not found")
+    return task
+
+@router.patch("/scheduler/tasks/{job_id}", response_model=ScheduledTaskResponse)
+async def update_scheduled_task(job_id: str, data: UpdateScheduledTaskRequest):
+    """
+    Update a scheduled task's execution time, text, intent, or title.
+    """
+    try:
+        updated = scheduler_manager.update_task(
+            job_id=job_id,
+            text=data.text,
+            run_at=data.run_at,
+            intent=data.intent,
+            title=data.title,
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Task {job_id} not found")
+        return updated
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logging.error(f"Failed to update task {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.delete("/scheduler/tasks/{job_id}")
 async def cancel_scheduled_task(job_id: str):
     """
@@ -2743,6 +2779,7 @@ async def cancel_scheduled_task(job_id: str):
         return {"status": "success", "message": f"Cancelled task {job_id}"}
     else:
         raise HTTPException(status_code=404, detail=f"Task {job_id} not found")
+
 
 
 @router.get("/scheduler/notifications", response_model=List[ScheduleNotificationItem])

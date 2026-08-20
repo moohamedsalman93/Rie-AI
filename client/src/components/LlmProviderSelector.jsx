@@ -76,16 +76,16 @@ export function LlmProviderSelector({
           layoutId="provider-chip-container"
           type="button"
           onClick={() => setIsOpen(true)}
-          className="flex items-center gap-1.5 rounded-lg border bg-neutral-800/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-neutral-700/60 px-2.5 py-1 text-xs transition-colors shadow-sm"
+          className="flex items-center gap-1.5 rounded-lg border bg-neutral-800/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-neutral-700/60 px-2 py-1 text-xs transition-colors shadow-sm shrink-0"
           title="Click to switch LLM Provider"
         >
           <span className="flex items-center justify-center shrink-0 w-3.5 h-3.5">
             {currentProviderInfo.icon}
           </span>
-          <span className="font-medium text-[11px] tracking-wide">
+          <span className="font-medium text-[11px] tracking-wide max-w-[70px] sm:max-w-[110px] truncate">
             {currentProviderInfo.label || activeProviderKey}
           </span>
-          <ChevronDown size={12} className="text-neutral-400" />
+          <ChevronDown size={12} className="text-neutral-400 shrink-0" />
         </motion.button>
       )}
 

@@ -338,7 +338,15 @@ class ScheduleTaskRequest(BaseModel):
         description="Short label for UI and notifications (e.g. Meeting)",
     )
 
+class UpdateScheduledTaskRequest(BaseModel):
+    """Request model for updating an existing scheduled task"""
+    text: Optional[str] = Field(default=None, description="Updated task text or prompt")
+    run_at: Optional[datetime] = Field(default=None, description="Updated ISO 8601 timestamp for execution")
+    intent: Optional[str] = Field(default=None, description="reminder | analysis_silent | analysis_inform")
+    title: Optional[str] = Field(default=None, description="Short label for UI and notifications")
+
 class ScheduledTaskResponse(BaseModel):
+
     """Response model for a scheduled task"""
     id: str
     text: str

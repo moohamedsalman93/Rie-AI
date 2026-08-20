@@ -51,8 +51,9 @@ from app.memory import memory_store
 from app.ltm_tools import LTM_TOOLS, Context
 from app.custom_tools import get_external_tools
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
-from app.scheduler_tools import schedule_chat_task_tool
+from app.scheduler_tools import SCHEDULER_TOOLS, schedule_chat_task_tool
 from app.remote_friend_tools import remote_friend_ask_tool
+
 from app.browser import LANGGRAPH_BROWSER_TOOLS, browser_service, InteractionMode
 from app.runtime_context import set_agent_context, reset_agent_context
 from app.knowledge import read_knowledge_asset
@@ -1334,10 +1335,12 @@ class ToolNeedMiddleware(AgentMiddleware):
         ),
         "system": ("run_terminal_command", "windows_", "app_control", "get_desktop_state"),
         "mcp": ("list_mcp_servers", "add_mcp_server", "update_mcp_server", "delete_mcp_server", "get_mcp_tool_info"),
-        "scheduler": ("schedule_chat_task",),
+        "scheduler": (
+            "schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task"
+        ),
         "remote_friend": ("remote_friend_ask",),
         "knowledge": ("read_knowledge_asset",),
-        "memory": ("get_memory", "search_memory"),
+        "memory": ("get_memory", "search_memory", "delete_memory"),
         "github": ("github_",),
         "jira": ("jira_",),
         "skills": ("load_skill",),
@@ -1368,6 +1371,10 @@ class ToolNeedMiddleware(AgentMiddleware):
             active_domains.add("jira")
         if any(k in q for k in ("skill", "skills", "load skill", "load_skill")):
             active_domains.add("skills")
+        if any(k in q for k in ("schedule", "reminder", "remind", "alarm", "reschedule", "what is scheduled", "list schedules")):
+            active_domains.add("scheduler")
+        if any(k in q for k in ("remember", "memory", "preference", "forget", "delete memory", "remove memory")):
+            active_domains.add("memory")
         return active_domains
 
     @classmethod
@@ -1378,13 +1385,14 @@ class ToolNeedMiddleware(AgentMiddleware):
             return []
         if not active_domains and query:
             q = query.lower().strip()
-            if "remember" in q or "save memory" in q:
-                return [t for t in tools if getattr(t, "name", str(t)) in ("save_memory", "get_memory", "search_memory")]
-            if "remind" in q or "schedule" in q:
-                return [t for t in tools if getattr(t, "name", str(t)) in ("schedule_chat_task",)]
+            if "remember" in q or "save memory" in q or "forget" in q or "delete memory" in q or "remove memory" in q:
+                return [t for t in tools if getattr(t, "name", str(t)) in ("save_memory", "get_memory", "delete_memory", "search_memory")]
+            if "remind" in q or "schedule" in q or "reschedule" in q:
+                return [t for t in tools if getattr(t, "name", str(t)) in ("schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task")]
             if "skill" in q or "load_skill" in q:
                 return [t for t in tools if getattr(t, "name", str(t)) in ("load_skill",)]
         filtered = []
+
         all_domain_prefixes = [p for prefixes in cls.DOMAIN_PREFIXES.values() for p in prefixes]
         for t in tools:
             t_name = getattr(t, "name", getattr(t, "__name__", str(t)))
@@ -2587,15 +2595,16 @@ class AgentManager:
         """Runtime tool registry (baseline + MCP + external), for peer inbound policy."""
         all_tools_map: dict[str, Any] = {
             "internet_search": internet_search,
-            "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
             "read_knowledge_asset": read_knowledge_asset,
             "load_skill": load_skill,
+            **{t.name: t for t in SCHEDULER_TOOLS},
             **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
         }
+
         try:
             loaded_mcp_tools = await mcp_manager.refresh_tools()
             if loaded_mcp_tools:
@@ -3362,15 +3371,16 @@ class AgentManager:
         all_tools_map = {
             "internet_search": internet_search,
             "ask_question": ask_question,
-            "schedule_chat_task": schedule_chat_task_tool,
             "remote_friend_ask": remote_friend_ask_tool,
             "read_knowledge_asset": read_knowledge_asset,
             "load_skill": load_skill,
+            **{t.name: t for t in SCHEDULER_TOOLS},
             **{t.name: t for t in LANGGRAPH_BROWSER_TOOLS},
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
         }
+
         loaded_mcp_tools: list[Any] = []
         loaded_external_tools: list[Any] = []
 
@@ -3514,8 +3524,9 @@ class AgentManager:
                 tools_to_use.append(all_tools_map["internet_search"])
             if "ask_question" in all_tools_map:
                 tools_to_use.append(all_tools_map["ask_question"])
-            if "schedule_chat_task" in all_tools_map:
-                tools_to_use.append(all_tools_map["schedule_chat_task"])
+            for st in SCHEDULER_TOOLS:
+                if st.name in all_tools_map:
+                    tools_to_use.append(all_tools_map[st.name])
             if "remote_friend_ask" in all_tools_map:
                 tools_to_use.append(all_tools_map["remote_friend_ask"])
             if "read_knowledge_asset" in all_tools_map:
@@ -3572,12 +3583,17 @@ class AgentManager:
             "ask_question",
             "save_memory",
             "get_memory",
+            "delete_memory",
             "search_memory",
             "read_knowledge_asset",
             "load_skill",
             "schedule_chat_task",
+            "list_scheduled_tasks",
+            "update_scheduled_task",
+            "cancel_scheduled_task",
             "remote_friend_ask",
         ]
+
         existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
         for ctn in core_tool_names:
             core_t = all_tools_map.get(ctn)
@@ -3655,8 +3671,9 @@ class AgentManager:
                     # For "Always Ask", we interrupt on all tools except safe/read-only ones.
                     safe_tools = {
                         "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file", 
-                        "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
-                        "schedule_chat_task", "read_knowledge_asset", "load_skill"
+                        "save_memory", "get_memory", "delete_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
+                        "schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task",
+                        "read_knowledge_asset", "load_skill"
                     }
                     interrupt_on = {}
                     for tool in tools_to_use:
@@ -3679,14 +3696,16 @@ class AgentManager:
                     # into create_agent(..., middleware=[...]), which crashes.
                     safe_tools = {
                         "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file",
-                        "save_memory", "get_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
-                        "schedule_chat_task", "read_knowledge_asset", "load_skill"
+                        "save_memory", "get_memory", "delete_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
+                        "schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task",
+                        "read_knowledge_asset", "load_skill"
                     }
                     interrupt_on = {}
                     for tool in tools_to_use:
                         tool_name = getattr(tool, "name", None)
                         if tool_name:
                             interrupt_on[tool_name] = tool_name not in safe_tools
+
 
                     middleware_stack.append(
                         HumanInTheLoopMiddleware(interrupt_on=interrupt_on)

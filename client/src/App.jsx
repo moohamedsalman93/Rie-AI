@@ -1877,31 +1877,36 @@ function MainApp() {
 
   const handleScheduleMarkRead = useCallback(async (id) => {
     if (!id) return;
+    setScheduleNotifications((prev) => prev.filter((n) => n.id !== id));
+    setScheduleNotificationLog((prev) => prev.filter((n) => n.id !== id));
     try {
       await markScheduleNotificationRead(id);
     } catch (e) {
-      console.error(e);
+      console.error("Failed to mark schedule notification read:", e);
     }
-    setScheduleNotifications((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
   const handleScheduleMarkAllRead = useCallback(async () => {
+    setScheduleNotifications([]);
+    setScheduleNotificationLog([]);
     try {
       await markAllScheduleNotificationsRead();
     } catch (e) {
-      console.error(e);
+      console.error("Failed to mark all schedule notifications read:", e);
     }
-    setScheduleNotifications([]);
   }, []);
 
   const handleScheduleOpenChat = useCallback(
     async (notif) => {
-      try {
-        if (notif?.id) await markScheduleNotificationRead(notif.id);
-      } catch (e) {
-        console.error(e);
+      if (notif?.id) {
+        setScheduleNotifications((prev) => prev.filter((n) => n.id !== notif.id));
+        setScheduleNotificationLog((prev) => prev.filter((n) => n.id !== notif.id));
+        try {
+          await markScheduleNotificationRead(notif.id);
+        } catch (e) {
+          console.error("Failed to mark schedule notification read:", e);
+        }
       }
-      setScheduleNotifications((prev) => prev.filter((n) => n.id !== notif.id));
       if (notif?.thread_id) {
         await handleSelectThread(notif.thread_id);
       }
@@ -3527,7 +3532,7 @@ function MainApp() {
                     settings={settings}
                     onUpdateSetting={handleUpdateSetting}
                     onClearTerminal={handleClearTerminal}
-                    scheduleNotifications={scheduleNotificationLog}
+                    scheduleNotifications={scheduleNotifications}
                     scheduleUnreadCount={scheduleNotifications.length}
                     onScheduleMarkRead={handleScheduleMarkRead}
                     onScheduleMarkAllRead={handleScheduleMarkAllRead}
@@ -3608,6 +3613,9 @@ function MainApp() {
               input={input}
               setInput={setInput}
               isRecording={isRecording}
+              onStartRecording={startRecording}
+              onStopRecording={stopRecording}
+              onToggleRecording={() => (isRecording ? stopRecording() : startRecording())}
               isCapturing={isCapturing}
               isAttachmentPopoverOpen={isAttachmentPopoverOpen}
               setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
@@ -3645,7 +3653,7 @@ function MainApp() {
               onDeleteMessage={handleDeleteMessage}
               onOpenMessageInNewChat={handleOpenMessageInNewChat}
               onClearTerminal={handleClearTerminal}
-              scheduleNotifications={scheduleNotificationLog}
+              scheduleNotifications={scheduleNotifications}
               scheduleUnreadCount={scheduleNotifications.length}
               onScheduleMarkRead={handleScheduleMarkRead}
               onScheduleMarkAllRead={handleScheduleMarkAllRead}

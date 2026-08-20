@@ -309,7 +309,7 @@ export function NormalModeLayout({
     const [activeSkillsList, setActiveSkillsList] = useState([]);
     const [isFullWindow, setIsFullWindow] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1200);
     const isDragging = dragCounter > 0;
-    const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
+    const hasContent = Boolean(input?.trim() || attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || (attachedFiles && attachedFiles.length > 0));
     const isNewChat = !messages || messages.length === 0;
 
     const chatContainerRef = useRef(null);
@@ -328,7 +328,7 @@ export function NormalModeLayout({
         return () => observer.disconnect();
     }, []);
 
-    const isCompactChat = chatPanelWidthPx < 380;
+    const isCompactChat = chatPanelWidthPx < 520;
 
     const handleStartResize = (e) => {
         e.preventDefault();
@@ -1155,7 +1155,7 @@ export function NormalModeLayout({
                                 }
                             }
                         }}
-                        className={`px-4 py-3 absolute bottom-0 left-0 w-full z-10 ${isCompactChat ? "px-3" : (isHistoryVisible ? "px-6" : "px-24")}`}
+                        className={`py-3 absolute bottom-0 left-0 w-full z-10 transition-all ${chatPanelWidthPx < 420 ? "px-2" : chatPanelWidthPx < 580 ? "px-3" : chatPanelWidthPx < 760 ? "px-4" : isHistoryVisible ? "px-6" : "px-10 xl:px-16"}`}
                     >
                         <div className="w-full max-w-xl xl:max-w-3xl mx-auto">
                             <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all">
@@ -1234,9 +1234,9 @@ export function NormalModeLayout({
                                 </div>
 
                                 {/* Bottom bar */}
-                                <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60">
-                                    <div className="flex items-center gap-2">
-                                        <div className="relative">
+                                <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60 gap-1.5 min-w-0">
+                                    <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                                        <div className="relative shrink-0">
                                             <button
                                                 type="button"
                                                 onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
@@ -1300,7 +1300,7 @@ export function NormalModeLayout({
                                             </AnimatePresence>
                                         </div>
 
-                                        <div className="scale-90 origin-left">
+                                        <div className="scale-90 origin-left shrink-0">
                                             <ModeToggle
                                                 chatMode={chatMode}
                                                 setChatMode={setChatMode}
@@ -1311,7 +1311,7 @@ export function NormalModeLayout({
                                         </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1.5 min-w-0 shrink-0">
                                         <LlmProviderSelector
                                             provider={provider}
                                             onSelectProvider={onSelectProvider}
@@ -1320,33 +1320,66 @@ export function NormalModeLayout({
                                             onUpdateSetting={onUpdateSetting}
                                         />
 
-                                        <button
-                                            type="button"
-                                            onClick={() => (onToggleRecording ? onToggleRecording() : isRecording ? onStopRecording?.() : onStartRecording?.())}
-                                            className={`p-1.5 rounded-lg transition-colors ${isRecording ? 'text-red-400 bg-red-500/10 animate-pulse ring-1 ring-red-500/30' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
-                                                }`}
-                                            title={isRecording ? "Listening... Click to stop" : "Voice input"}
-                                        >
-                                            <Mic size={15} />
-                                        </button>
-
-                                        <button
-                                            type="button"
-                                            onClick={isLoading ? () => onCancel() : onSend}
-                                            disabled={!isLoading && !hasContent}
-                                            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${isLoading
-                                                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                                                    : hasContent
-                                                        ? 'bg-white text-neutral-900 hover:bg-neutral-200'
-                                                        : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
-                                                }`}
-                                        >
+                                        {/* Unified Action Button: Mic when empty, Send when typed, Stop when loading/recording */}
+                                        <AnimatePresence mode="wait" initial={false}>
                                             {isLoading ? (
-                                                <Square size={12} fill="currentColor" />
+                                                <motion.button
+                                                    key="btn-loading"
+                                                    initial={{ scale: 0.8, opacity: 0 }}
+                                                    animate={{ scale: 1, opacity: 1 }}
+                                                    exit={{ scale: 0.8, opacity: 0 }}
+                                                    transition={{ duration: 0.12 }}
+                                                    type="button"
+                                                    onClick={() => onCancel?.()}
+                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 active:scale-95 transition-all"
+                                                    title="Stop generating"
+                                                >
+                                                    <Square size={11} fill="currentColor" />
+                                                </motion.button>
+                                            ) : isRecording ? (
+                                                <motion.button
+                                                    key="btn-recording"
+                                                    initial={{ scale: 0.8, opacity: 0 }}
+                                                    animate={{ scale: 1, opacity: 1 }}
+                                                    exit={{ scale: 0.8, opacity: 0 }}
+                                                    transition={{ duration: 0.12 }}
+                                                    type="button"
+                                                    onClick={() => (onToggleRecording ? onToggleRecording() : onStopRecording?.())}
+                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-red-400 bg-red-500/15 animate-pulse ring-1 ring-red-500/30 hover:bg-red-500/25 active:scale-95 transition-all"
+                                                    title="Listening... Click to stop"
+                                                >
+                                                    <Mic size={15} />
+                                                </motion.button>
+                                            ) : hasContent ? (
+                                                <motion.button
+                                                    key="btn-send"
+                                                    initial={{ scale: 0.8, opacity: 0 }}
+                                                    animate={{ scale: 1, opacity: 1 }}
+                                                    exit={{ scale: 0.8, opacity: 0 }}
+                                                    transition={{ duration: 0.12 }}
+                                                    type="button"
+                                                    onClick={onSend}
+                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-white text-neutral-900 hover:bg-neutral-200 active:scale-95 shadow-sm transition-all"
+                                                    title="Send message (Enter)"
+                                                >
+                                                    <ArrowUp size={15} strokeWidth={2.5} />
+                                                </motion.button>
                                             ) : (
-                                                <ArrowUp size={15} strokeWidth={2.5} />
+                                                <motion.button
+                                                    key="btn-voice"
+                                                    initial={{ scale: 0.8, opacity: 0 }}
+                                                    animate={{ scale: 1, opacity: 1 }}
+                                                    exit={{ scale: 0.8, opacity: 0 }}
+                                                    transition={{ duration: 0.12 }}
+                                                    type="button"
+                                                    onClick={() => (onToggleRecording ? onToggleRecording() : onStartRecording?.())}
+                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-neutral-400 hover:text-white hover:bg-neutral-800 active:scale-95 transition-all"
+                                                    title="Voice input"
+                                                >
+                                                    <Mic size={15} />
+                                                </motion.button>
                                             )}
-                                        </button>
+                                        </AnimatePresence>
                                     </div>
                                 </div>
                             </div>

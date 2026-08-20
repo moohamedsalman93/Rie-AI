@@ -47,6 +47,17 @@ class GetMemoryInput(BaseModel):
     )
 
 
+class DeleteMemoryInput(BaseModel):
+    key: Optional[str] = Field(
+        default=None,
+        description="The unique key ID of the memory to delete (e.g. from search_memory results).",
+    )
+    query: Optional[str] = Field(
+        default=None,
+        description="Natural language query to find and remove a memory if the key is unknown (e.g. 'favorite color' or 'user city').",
+    )
+
+
 def _save_memory(fact: str, category: str = "general") -> str:
     """
     Save a fact to the user's long-term memory.
@@ -75,7 +86,7 @@ def _save_memory(fact: str, category: str = "general") -> str:
         key = target_key or str(uuid.uuid4())
         store.put(namespace, key, {"content": fact.strip(), "category": category.strip()})
         action = "Updated existing memory" if target_key else "Saved to memory"
-        return f"{action}: '{fact.strip()}' [category: {category.strip()}]."
+        return f"{action} [key: {key}]: '{fact.strip()}' [category: {category.strip()}]."
     except Exception as e:
         logger.exception("Failed to save memory: %s", e)
         return f"Failed to save memory: {e}"
@@ -98,6 +109,63 @@ def _get_memory(key: str) -> str:
         return f"Failed to retrieve memory: {e}"
 
 
+def _delete_memory(key: Optional[str] = None, query: Optional[str] = None) -> str:
+    """
+    Delete a specific memory by key, or find and delete the closest matching memory by query.
+    """
+    try:
+        store = memory_store.get_store_sync()
+        user_id = "default_user"
+        namespace = ("users", user_id)
+
+        # 1. Delete by direct key
+        if key and key.strip():
+            clean_key = key.strip()
+            existing = store.get(namespace, clean_key)
+            if not existing:
+                return f"No memory found with key '{clean_key}'."
+            content = existing.value.get("content", "")
+            cat = existing.value.get("category", "general")
+            success = store.delete(namespace, clean_key)
+            if success:
+                return f"Successfully deleted memory [{clean_key}] ({cat}): '{content}'."
+            return f"Failed to delete memory [{clean_key}]."
+
+        # 2. Delete by semantic query match
+        if query and query.strip():
+            clean_query = query.strip()
+            items = list(store.search(namespace, query=clean_query, limit=3))
+            if not items:
+                return f"No memories found matching '{clean_query}'."
+
+            top_item = items[0]
+            target_key = top_item.metadata.get("key")
+            score = top_item.metadata.get("score", 0.0)
+            content = top_item.value.get("content", "")
+            cat = top_item.value.get("category", "general")
+
+            if not target_key:
+                return f"Could not determine key for matching memory: '{content}'."
+
+            # Minimum relevance threshold to avoid deleting unrelated facts
+            if score < 0.50:
+                return (
+                    f"Closest memory found was '{content}' (relevance {score:.1%}), "
+                    f"which is below the confidence threshold to delete automatically. "
+                    f"Please confirm with the exact key [key: {target_key}]."
+                )
+
+            success = store.delete(namespace, target_key)
+            if success:
+                return f"Successfully deleted memory [key: {target_key}] ({cat}): '{content}' (matched '{clean_query}')."
+            return f"Failed to delete memory [key: {target_key}]."
+
+        return "Please provide either 'key' or 'query' to delete a memory."
+    except Exception as e:
+        logger.exception("Failed to delete memory: %s", e)
+        return f"Failed to delete memory: {e}"
+
+
 def _search_memory(query: str, limit: int = 5) -> str:
     """
     Semantic search: Find relevant user facts/preferences based on a natural language query.
@@ -112,13 +180,15 @@ def _search_memory(query: str, limit: int = 5) -> str:
 
         results = []
         for item in items:
+            key_str = item.metadata.get("key", "")
+            key_info = f" [key: {key_str}]" if key_str else ""
             score_info = (
                 f" (relevance: {item.metadata['score']:.1%})"
                 if hasattr(item, "metadata") and "score" in item.metadata
                 else ""
             )
             results.append(
-                f"- {item.value.get('content')} [category: {item.value.get('category')}]{score_info}"
+                f"- {item.value.get('content')} [category: {item.value.get('category')}]{key_info}{score_info}"
             )
         return "Found the following relevant memories:\n" + "\n".join(results)
     except Exception as e:
@@ -143,6 +213,17 @@ get_memory = StructuredTool.from_function(
     args_schema=GetMemoryInput,
 )
 
+delete_memory = StructuredTool.from_function(
+    func=_delete_memory,
+    name="delete_memory",
+    description=(
+        "Delete or remove a fact/preference from long-term memory. "
+        "Pass 'key' if known, or 'query' to search and remove a specific memory the user no longer wants remembered "
+        "(e.g. 'forget my favorite color' or 'remove old address')."
+    ),
+    args_schema=DeleteMemoryInput,
+)
+
 search_memory = StructuredTool.from_function(
     func=_search_memory,
     name="search_memory",
@@ -153,4 +234,5 @@ search_memory = StructuredTool.from_function(
     args_schema=SearchMemoryInput,
 )
 
-LTM_TOOLS = [save_memory, get_memory, search_memory]
+LTM_TOOLS = [save_memory, get_memory, delete_memory, search_memory]
+

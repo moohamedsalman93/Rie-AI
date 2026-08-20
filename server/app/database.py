@@ -1370,6 +1370,59 @@ def get_pending_scheduled_tasks_rows() -> List[Dict[str, Any]]:
     return rows
 
 
+def get_scheduled_task_by_id(task_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a specific scheduled task row by ID."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM scheduled_tasks WHERE id = ?", (task_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_scheduled_task_details(
+    task_id: str,
+    text: Optional[str] = None,
+    run_at_iso: Optional[str] = None,
+    intent: Optional[str] = None,
+    title: Optional[str] = None,
+) -> bool:
+    """Update editable fields of a scheduled task."""
+    updates = []
+    params = []
+    if text is not None:
+        updates.append("text = ?")
+        params.append(text.strip())
+    if run_at_iso is not None:
+        updates.append("run_at = ?")
+        params.append(run_at_iso.strip())
+    if intent is not None:
+        updates.append("intent = ?")
+        params.append(intent.strip())
+    if title is not None:
+        updates.append("title = ?")
+        params.append(title.strip() if title else None)
+
+    if not updates:
+        return False
+
+    params.append(task_id)
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        f"UPDATE scheduled_tasks SET {', '.join(updates)} WHERE id = ?",
+        tuple(params),
+    )
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+
 def insert_schedule_notification(
     notif_id: str,
     thread_id: Optional[str],

@@ -125,7 +125,8 @@ export function ScheduleNotificationsBell({
         {activeTab === "schedules" && scheduleUnreadCount > 0 && (
           <button
             type="button"
-            onClick={() => {
+            onClick={(e) => {
+              e.stopPropagation();
               onMarkAllRead?.();
             }}
             className="text-[10px] text-neutral-400 hover:text-emerald-400 font-medium transition-colors"
@@ -247,7 +248,8 @@ export function ScheduleNotificationsBell({
                     {n.thread_id && (
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           onOpenChat?.(n);
                           setOpen(false);
                         }}
@@ -258,7 +260,10 @@ export function ScheduleNotificationsBell({
                     )}
                     <button
                       type="button"
-                      onClick={() => onMarkRead?.(n.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onMarkRead?.(n.id);
+                      }}
                       className="px-2 py-0.5 text-[11px] text-neutral-400 hover:text-neutral-200 transition-colors"
                     >
                       Dismiss

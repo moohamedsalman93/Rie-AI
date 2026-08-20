@@ -129,13 +129,14 @@ class CapabilityResolver:
                 keywords = ["terminal", "command", "powershell", "wifi", "desktop", "process"]
             elif any(k in name for k in ("memory", "ltm")):
                 provider = "memory"
-                keywords = ["remember", "memory", "preference"]
+                keywords = ["remember", "memory", "preference", "forget", "delete_memory", "remove_memory"]
             elif "knowledge" in name:
                 provider = "knowledge"
                 keywords = ["knowledge", "doc", "asset"]
             elif "schedule" in name:
                 provider = "scheduler"
-                keywords = ["schedule", "reminder", "alarm"]
+                keywords = ["schedule", "reminder", "alarm", "reschedule", "cancel_schedule", "scheduled_tasks", "list_scheduled_tasks", "update_scheduled_task"]
+
             elif "friend" in name:
                 provider = "remote_friend"
                 keywords = ["friend", "peer", "remote"]

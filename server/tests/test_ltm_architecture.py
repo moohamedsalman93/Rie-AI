@@ -11,7 +11,7 @@ import asyncio
 from typing import Any
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from app.ltm_tools import save_memory, get_memory, search_memory, LTM_TOOLS
+from app.ltm_tools import save_memory, get_memory, delete_memory, search_memory, LTM_TOOLS
 from app.chroma_store import ChromaStore
 from app.memory import MemoryStore
 from app.agent import (
@@ -124,14 +124,47 @@ class TestLTMArchitecture(unittest.TestCase):
         self.assertIn(f"Tool_{test_id}", search_res)
 
     def test_04_explicit_memory_operations(self):
-        """Explicit get_memory, search_memory, and save_memory operations execute cleanly."""
+        """Explicit get_memory, search_memory, delete_memory, and save_memory operations execute cleanly."""
         save_res = save_memory.invoke({"fact": "User works on autonomous agents", "category": "work"})
         self.assertTrue("Saved to memory" in save_res or "Updated existing memory" in save_res)
 
         search_res = search_memory.invoke({"query": "autonomous agents", "limit": 3})
         self.assertIn("autonomous agents", search_res)
 
-    def test_05_production_fail_fast_without_postgres(self):
+        # Direct delete by query
+        del_res = delete_memory.invoke({"query": "autonomous agents"})
+        self.assertIn("Successfully deleted memory", del_res)
+
+        # Verify it was removed
+        search_after = search_memory.invoke({"query": "autonomous agents", "limit": 3})
+        self.assertNotIn("User works on autonomous agents", search_after)
+
+    def test_05_delete_memory_by_key_and_chroma_store(self):
+        """Test ChromaStore.delete and delete_memory by specific key."""
+        # 1. Test raw ChromaStore delete
+        self.test_store.put(self.namespace, "test_k1", {"content": "temporary fact", "category": "test"})
+        res = self.test_store.get(self.namespace, "test_k1")
+        self.assertIsNotNone(res)
+        del_ok = self.test_store.delete(self.namespace, "test_k1")
+        self.assertTrue(del_ok)
+        res_after = self.test_store.get(self.namespace, "test_k1")
+        self.assertIsNone(res_after)
+
+        # 2. Test delete_memory tool by key
+        import uuid
+        key_id = str(uuid.uuid4())[:8]
+        save_res = save_memory.invoke({"fact": f"Ephemeral secret {key_id}", "category": "ephemeral"})
+        self.assertIn("Saved to memory", save_res)
+        # Extract key from result
+        import re
+        match = re.search(r"\[key: ([^\]]+)\]", save_res)
+        self.assertIsNotNone(match)
+        extracted_key = match.group(1)
+
+        del_tool_res = delete_memory.invoke({"key": extracted_key})
+        self.assertIn("Successfully deleted memory", del_tool_res)
+
+    def test_06_production_fail_fast_without_postgres(self):
         """Production environment must raise a fast configuration error if LANGGRAPH_DATABASE_URL is missing."""
         from unittest.mock import patch, PropertyMock
         from app.agent import AgentManager
@@ -147,3 +180,4 @@ class TestLTMArchitecture(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

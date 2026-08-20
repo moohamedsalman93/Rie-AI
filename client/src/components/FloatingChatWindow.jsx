@@ -42,6 +42,9 @@ export function FloatingChatWindow({
   input,
   setInput,
   isRecording,
+  onStartRecording,
+  onStopRecording,
+  onToggleRecording,
   isCapturing,
   isAttachmentPopoverOpen,
   setIsAttachmentPopoverOpen,
@@ -250,6 +253,9 @@ export function FloatingChatWindow({
             setInput={setInput}
             isLoading={isLoading}
             isRecording={isRecording}
+            onStartRecording={onStartRecording}
+            onStopRecording={onStopRecording}
+            onToggleRecording={onToggleRecording}
             isCapturing={isCapturing}
             isAttachmentPopoverOpen={isAttachmentPopoverOpen}
             setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}

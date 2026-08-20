@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState } from "react";
+import { Mic } from "lucide-react";
 import { KnowledgeAttachmentChips } from "./KnowledgeAttachmentChips";
 import { KnowledgePickerModal } from "./KnowledgePickerModal";
 
@@ -8,6 +9,9 @@ export function ChatInputArea({
   setInput,
   isLoading,
   isRecording,
+  onStartRecording,
+  onStopRecording,
+  onToggleRecording,
   isCapturing,
   isAttachmentPopoverOpen,
   setIsAttachmentPopoverOpen,
@@ -48,7 +52,7 @@ export function ChatInputArea({
   const [dragCounter, setDragCounter] = useState(0);
   const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
   const isDragging = dragCounter > 0;
-  const hasContent = input.trim() || attachedImage || isScreenAttached || attachedClipboardText || projectRoot || attachedKnowledge.length > 0 || attachedFiles.length > 0;
+  const hasContent = Boolean(input?.trim() || attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || (attachedFiles && attachedFiles.length > 0));
 
   const attachFile = (file) => {
     if (!file) return;
@@ -445,27 +449,77 @@ export function ChatInputArea({
               )}
             </AnimatePresence>
           </div>
-          <button
-            id="send-btn"
-            onClick={isLoading ? () => onCancelRequest() : onSend}
-            disabled={!isLoading && !hasContent}
-            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 text-neutral-100 shadow-sm transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 ${isLoading ? "bg-red-500/20 hover:bg-red-500/40 text-red-400" : "bg-neutral-700 hover:bg-neutral-600"}`}
-            title={isLoading ? "Stop generating" : "Send message"}
-          >
+          <AnimatePresence mode="wait" initial={false}>
             {isLoading ? (
-              <div className="relative flex items-center justify-center">
-                <div className="absolute h-6 w-6 animate-spin rounded-full border-2 border-red-500/30 border-t-red-500" />
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="6" width="12" height="12" rx="1" />
+              <motion.button
+                key="btn-loading"
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                transition={{ duration: 0.12 }}
+                id="send-btn"
+                type="button"
+                onClick={() => onCancelRequest?.()}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/20 text-red-400 hover:bg-red-500/40 shadow-sm transition active:scale-95"
+                title="Stop generating"
+              >
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute h-6 w-6 animate-spin rounded-full border-2 border-red-500/30 border-t-red-500" />
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                  </svg>
+                </div>
+              </motion.button>
+            ) : isRecording ? (
+              <motion.button
+                key="btn-recording"
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                transition={{ duration: 0.12 }}
+                id="send-btn"
+                type="button"
+                onClick={() => (onToggleRecording ? onToggleRecording() : onStopRecording?.())}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-500/40 bg-red-500/20 text-red-400 animate-pulse hover:bg-red-500/30 shadow-sm transition active:scale-95"
+                title="Listening... Click to stop"
+              >
+                <Mic size={17} />
+              </motion.button>
+            ) : hasContent ? (
+              <motion.button
+                key="btn-send"
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                transition={{ duration: 0.12 }}
+                id="send-btn"
+                type="button"
+                onClick={onSend}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-neutral-700 hover:bg-neutral-600 text-neutral-100 shadow-sm transition active:scale-95"
+                title="Send message"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m22 2-7 20-4-9-9-4Z" />
+                  <path d="M22 2 11 13" />
                 </svg>
-              </div>
+              </motion.button>
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m22 2-7 20-4-9-9-4Z" />
-                <path d="M22 2 11 13" />
-              </svg>
+              <motion.button
+                key="btn-voice"
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                transition={{ duration: 0.12 }}
+                id="send-btn"
+                type="button"
+                onClick={() => (onToggleRecording ? onToggleRecording() : onStartRecording?.())}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white shadow-sm transition active:scale-95"
+                title="Voice input"
+              >
+                <Mic size={17} />
+              </motion.button>
             )}
-          </button>
+          </AnimatePresence>
         </div>
       </div>
     </footer>

@@ -188,6 +188,19 @@ class ChromaStore:
             metadata={},
         )
 
+    def delete(self, namespace: Tuple[str, ...], key: str) -> bool:
+        """Delete an item by key."""
+        coll = self._collection(namespace)
+        if self._client is None:
+            return coll.pop(key, None) is not None
+        try:
+            coll.delete(ids=[key])
+            return True
+        except Exception as e:
+            logger.warning("Chroma delete failed for key %s: %s", key, e)
+            return False
+
+
     def search(
         self,
         namespace: Tuple[str, ...],
