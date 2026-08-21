@@ -65,81 +65,9 @@ from app.batched_executor import execute_batched_plan, batched_tool_registry
 
 
 
-# ---------------------------------------------------------------------------
-# Thread-safe API key rotator with usage tracking
-# ---------------------------------------------------------------------------
+from app.agent_modules.key_rotator import KeyRotator
 
 _logger = logging.getLogger(__name__)
-
-
-class KeyRotator:
-    """Thread-safe round-robin API key rotator with per-key usage tracking."""
-
-    def __init__(self, keys: List[str], provider: str) -> None:
-        if not keys:
-            raise ValueError(f"KeyRotator({provider}): at least one key is required")
-        self._keys = list(keys)
-        self._provider = provider
-        self._index = 0
-        self._lock = threading.Lock()
-        # Per-key stats: {index: {count, errors, last_used}}
-        self._usage: dict[int, dict] = {
-            i: {"count": 0, "last_used": None, "errors": 0}
-            for i in range(len(keys))
-        }
-
-    @staticmethod
-    def _mask_key(key: str) -> str:
-        """Mask an API key for safe logging, e.g. 'gsk_abc...xyzQ'."""
-        if len(key) <= 8:
-            return key[:2] + "..." + key[-2:]
-        return key[:4] + "..." + key[-4:]
-
-    @property
-    def total_keys(self) -> int:
-        return len(self._keys)
-
-    def next_key(self) -> tuple[str, int]:
-        """Return (key, key_index) in a thread-safe round-robin."""
-        with self._lock:
-            idx = self._index
-            key = self._keys[idx]
-            self._index = (idx + 1) % len(self._keys)
-            self._usage[idx]["count"] += 1
-            self._usage[idx]["last_used"] = datetime.now(timezone.utc).isoformat()
-        _logger.debug(
-            "[KeyRotator/%s] Using key #%d/%d (%s) — total calls: %d",
-            self._provider,
-            idx + 1,
-            len(self._keys),
-            self._mask_key(key),
-            self._usage[idx]["count"],
-        )
-        return key, idx
-
-    def record_error(self, key_index: int) -> None:
-        """Increment the error count for a specific key index."""
-        with self._lock:
-            if key_index in self._usage:
-                self._usage[key_index]["errors"] += 1
-
-    def stats(self) -> list[dict]:
-        """Return per-key stats with masked key identifiers."""
-        with self._lock:
-            result = []
-            for i, key in enumerate(self._keys):
-                entry = self._usage[i]
-                result.append({
-                    "index": i,
-                    "masked": self._mask_key(key),
-                    "calls": entry["count"],
-                    "errors": entry["errors"],
-                    "last_used": entry["last_used"],
-                })
-            return result
-
-    def __repr__(self) -> str:
-        return f"KeyRotator(provider={self._provider!r}, keys={self.total_keys})"
 
 
 def _client_device_system_content(
@@ -3267,16 +3195,56 @@ class AgentManager:
         return [
             {
                 "name": "coding_specialist",
-                "description": "Expert at modifying and understanding code in the local filesystem.",
-                "system_prompt": "You are a coding specialist. You have direct access to the files. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw terminal scripts. Since the host OS is Windows, when running terminal commands, you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and backslashes for all paths).",
-                "tool_ids": [],
+                "description": "Expert at reading, modifying, creating, and debugging code in the workspace and running system terminal commands.",
+                "system_prompt": "You are an expert coding specialist. You have direct access to project files and terminal tools. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw scripts. When running terminal commands on the host OS (Windows), you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and proper path formats). Write clean, bug-free, well-documented code adhering to the project's existing conventions and run tests to verify your work.",
+                "tool_ids": ["run_terminal_command"],
+                "enabled": True,
+            },
+            {
+                "name": "web_researcher",
+                "description": "Expert at web research, searching the internet, scraping websites, extracting documentation, and browser automation.",
+                "system_prompt": "You are a web research and browser automation specialist. Use your internet search and browser tools to navigate websites, extract accurate information, scrape articles, and synthesize research findings concisely for the user.",
+                "tool_ids": [
+                    "internet_search",
+                    "browser_open",
+                    "browser_snapshot",
+                    "browser_click",
+                    "browser_type",
+                    "browser_navigate",
+                    "browser_scroll",
+                    "browser_tabs",
+                    "browser_extract",
+                    "browser_close",
+                ],
+                "enabled": True,
+            },
+            {
+                "name": "desktop_controller",
+                "description": "Expert at automating Windows desktop applications, inspecting active GUI states, and simulating mouse and keyboard actions.",
+                "system_prompt": "You are a Windows desktop automation specialist. Use your desktop inspection, application control, mouse, and keyboard tools to interact with native Windows software, manage active windows, and automate user interface workflows.",
+                "tool_ids": [
+                    "get_desktop_state",
+                    "app_control",
+                    "mouse_click",
+                    "keyboard_type",
+                    "move_mouse",
+                    "scroll_mouse",
+                    "drag_mouse",
+                    "press_keys",
+                    "wait",
+                ],
                 "enabled": True,
             },
             {
                 "name": "mcp_registry",
-                "description": "Expert at managing MCP server connections and registry. Use this to add, update, list, or delete MCP servers.",
-                "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations. Use your tools to manage the external capabilities of the Rie agent.",
-                "tool_ids": [],
+                "description": "Expert at managing MCP (Model Context Protocol) server connections, configurations, and registry.",
+                "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations and inspect MCP capabilities. Use your dedicated MCP tools to manage external server connections, tools, and integrations for Rie.",
+                "tool_ids": [
+                    "list_mcp_servers",
+                    "add_mcp_server",
+                    "update_mcp_server",
+                    "delete_mcp_server",
+                ],
                 "enabled": True,
             },
         ]
@@ -3335,6 +3303,22 @@ class AgentManager:
             subagent_middleware = []
             if name == "coding_specialist":
                 subagent_middleware.append(FilesystemMiddleware(backend=self.dynamic_backend))
+                if "run_terminal_command" in all_tools_map and all_tools_map["run_terminal_command"] not in resolved_tools:
+                    resolved_tools.append(all_tools_map["run_terminal_command"])
+            elif name == "web_researcher":
+                if "internet_search" in all_tools_map and all_tools_map["internet_search"] not in resolved_tools:
+                    resolved_tools.append(all_tools_map["internet_search"])
+                for bt in LANGGRAPH_BROWSER_TOOLS:
+                    if bt.name in all_tools_map and all_tools_map[bt.name] not in resolved_tools:
+                        resolved_tools.append(all_tools_map[bt.name])
+            elif name == "desktop_controller":
+                for dt_name, dt_tool in WINDOWS_TOOLS.items():
+                    if dt_name in all_tools_map and dt_tool not in resolved_tools:
+                        resolved_tools.append(dt_tool)
+            elif name == "mcp_registry":
+                for mt in MCP_REGISTRY_TOOLS:
+                    if mt.name in all_tools_map and all_tools_map[mt.name] not in resolved_tools:
+                        resolved_tools.append(all_tools_map[mt.name])
 
             built_subagents.append(
                 {
@@ -3420,10 +3404,39 @@ class AgentManager:
                 "[End Planner Main Instruction]"
             )
 
+        team_members_section = ""
+        if orchestration_mode == "team" and effective_chat_mode != "chat":
+            raw_subagents = settings.SUBAGENTS_CONFIG or self._default_subagents_config()
+            active_subagents = [
+                s for s in raw_subagents
+                if isinstance(s, dict) and bool(s.get("enabled", True)) and str(s.get("name", "")).strip()
+            ]
+            if active_subagents:
+                team_members_section = (
+                    "\n\n## Available Team Members & Delegation Protocol\n"
+                    "You are Rie, the Chief Coordinator. Your primary job is delegating work to your specialized subagents using the `task` tool with `subagent_type` and `description`:\n"
+                )
+                for sub in active_subagents:
+                    s_name = str(sub.get("name", "")).strip()
+                    s_desc = str(sub.get("description", "")).strip() or "Specialist agent"
+                    s_tools = sub.get("tool_ids", [])
+                    tools_str = f" [Assigned Tools: {', '.join(s_tools)}]" if s_tools else ""
+                    team_members_section += f"- **`{s_name}`**: {s_desc}{tools_str}\n"
+
+                team_members_section += (
+                    "\n### Strict Delegation Protocol:\n"
+                    "- **Code, File, and Workspace Tasks**: Delegate to `coding_specialist` using `task(subagent_type=\"coding_specialist\", description=\"...\")`. Do NOT attempt to read files in chunks or run terminal scripts in the coordinator thread.\n"
+                    "- **Web Search, Scraping, and Online Research**: Delegate to `web_researcher` using `task(subagent_type=\"web_researcher\", description=\"...\")` for search, browser navigation, or online content extraction.\n"
+                    "- **Desktop Applications & Windows GUI Automation**: Delegate to `desktop_controller` using `task(subagent_type=\"desktop_controller\", description=\"...\")` for interacting with desktop software, mouse clicks, keyboard typing, or window operations.\n"
+                    "- **MCP Server Management**: Delegate to `mcp_registry` using `task(subagent_type=\"mcp_registry\", description=\"...\")` for listing, adding, updating, or deleting MCP servers.\n"
+                    "- **Parallel Execution**: Launch independent subagent tasks concurrently in a single turn using the `task` tool, then synthesize their reports for the user.\n"
+                )
+
         final_system_prompt = (
             BASE_SYSTEM_PROMPT.strip()
             + mode_instructions
             + (planner_main_section if effective_chat_mode != "chat" else "")
+            + team_members_section
         )
 
         system_prompt = final_system_prompt
@@ -3550,12 +3563,16 @@ class AgentManager:
             if main_tool_ids:
                 tools_to_use = _resolve_tools_from_ids(main_tool_ids)
             else:
-                # Default team mode: coordinator agent has access to all enabled runtime tools
-                enabled_tool_names = settings.ENABLED_TOOLS
-                if enabled_tool_names is None:
-                    tools_to_use = list(all_tools_map.values())
-                else:
-                    tools_to_use = _resolve_tools_from_ids(enabled_tool_names)
+                # Default team mode: coordinator uses high-level coordinator tools + plugins/external APIs,
+                # delegating code/filesystem to coding_specialist and MCP to mcp_registry.
+                default_team_tool_ids = [
+                    "internet_search",
+                    "ask_question",
+                    "read_knowledge_asset",
+                    "load_skill",
+                    "schedule_chat_task",
+                ]
+                tools_to_use = _resolve_tools_from_ids(default_team_tool_ids)
             existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
             for extra_tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
                 t_name = getattr(extra_tool, "name", getattr(extra_tool, "__name__", str(extra_tool)))
@@ -3632,18 +3649,31 @@ class AgentManager:
             else:
                 print(f"DEBUG: Flash mode - TodoListMiddleware skipped")
             
-            # Only add SubAgentMiddleware in agent mode
-            if effective_chat_mode != "chat" and orchestration_mode == "team":
-                subagents = self._build_subagents(
-                    all_tools_map=all_tools_map,
-                )
-                middleware_stack.append(
-                    SubAgentMiddleware(
-                        default_model=self._llm,
-                        default_tools=tools_to_use,
-                        subagents=subagents,
+            # SubAgentMiddleware in agent mode (enables task tool in both solo and team modes)
+            if effective_chat_mode != "chat":
+                if orchestration_mode == "team":
+                    # Team / Planner mode: explicit role-based specialist subagents
+                    subagents = self._build_subagents(
+                        all_tools_map=all_tools_map,
                     )
-                )
+                    middleware_stack.append(
+                        SubAgentMiddleware(
+                            default_model=self._llm,
+                            default_tools=tools_to_use,
+                            subagents=subagents,
+                            general_purpose_agent=True,
+                        )
+                    )
+                else:
+                    # Solo mode: dynamic general-purpose replica subagents with same full capabilities
+                    middleware_stack.append(
+                        SubAgentMiddleware(
+                            default_model=self._llm,
+                            default_tools=tools_to_use,
+                            subagents=[],
+                            general_purpose_agent=True,
+                        )
+                    )
             
             middleware_stack.append(
                 SummarizationMiddleware(

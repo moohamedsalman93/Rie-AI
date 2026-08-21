@@ -4,7 +4,7 @@
 
 import { getClientLocationPayload } from "../utils/locationUtils";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:14300";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:14300";
 
 /**
  * User device local clock for the backend (avoids wrong year/day in scheduling).
@@ -292,16 +292,18 @@ export async function streamChat(
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n\n");
-      buffer = lines.pop();
+      const normalized = buffer.replace(/\r\n/g, "\n");
+      const lines = normalized.split("\n\n");
+      buffer = lines.pop() || "";
 
       for (const line of lines) {
-        if (line.startsWith("data: ")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ")) {
           try {
-            const data = JSON.parse(line.substring(6));
+            const data = JSON.parse(trimmed.substring(6));
             onChunk(data);
           } catch (e) {
-            console.error("Error parsing SSE data", e);
+            console.error("Error parsing SSE data", e, trimmed);
           }
         }
       }
@@ -562,15 +564,17 @@ export async function streamFriendChat(
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n\n");
-      buffer = lines.pop();
+      const normalized = buffer.replace(/\r\n/g, "\n");
+      const lines = normalized.split("\n\n");
+      buffer = lines.pop() || "";
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data: ")) continue;
         try {
-          const data = JSON.parse(line.substring(6));
+          const data = JSON.parse(trimmed.substring(6));
           if (onChunk) onChunk(data);
         } catch (e) {
-          console.error("Error parsing friend stream SSE data", e);
+          console.error("Error parsing friend stream SSE data", e, trimmed);
         }
       }
     }
@@ -736,6 +740,21 @@ export async function getMcpStatus() {
 
   if (!response.ok) {
     await throwHttpError(response, "Failed to fetch MCP status");
+  }
+  return response.json();
+}
+
+/**
+ * Get dynamic categorized runtime tool catalog for Planner.
+ * @returns {Promise<{tools: Array<{id: string, label: string, description: string, source: string, enabled: boolean}>}>}
+ */
+export async function getPlannerTools() {
+  const response = await fetch(`${API_BASE_URL}/planner/tools`, {
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch planner tools");
   }
   return response.json();
 }

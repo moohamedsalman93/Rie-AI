@@ -234,24 +234,24 @@ function ChatMessagesImpl({
       })}
       {shouldShowThinkingShimmer && (
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-start w-full"
+          className="flex flex-col items-start w-full py-1"
         >
-          <div className="w-full max-w-[95%] rounded-xl border border-neutral-700/60 bg-neutral-800 px-3.5 py-2.5">
-            <div className="mb-2 h-2.5 w-24 animate-pulse rounded-full bg-neutral-600/70" />
-            <div className="space-y-1.5">
-              <div className="h-2 w-full rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
-              <div className="h-2 w-[82%] rounded-full bg-gradient-to-r from-neutral-700 via-neutral-600 to-neutral-700 animate-pulse" />
-            </div>
-          </div>
           {retryStatus?.message ? (
-            <div className="mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-300 animate-pulse">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-300 animate-pulse">
               <RotateCw size={12} className="animate-spin text-amber-400 shrink-0" />
               <span>{retryStatus.message}</span>
             </div>
           ) : (
-            <span className="mt-1 text-[10px] font-medium text-neutral-500">Assistant is thinking...</span>
+            <div className="flex items-center gap-2 text-neutral-400 py-1">
+              <span className="flex gap-1 items-center">
+                <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse" />
+                <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse [animation-delay:200ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse [animation-delay:400ms]" />
+              </span>
+              <span className="text-[12px] text-neutral-500 font-medium">Thinking...</span>
+            </div>
           )}
         </motion.div>
       )}

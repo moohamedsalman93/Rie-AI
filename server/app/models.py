@@ -194,6 +194,16 @@ class PlannerInstructionGenerateResponse(BaseModel):
     instruction_text: str = Field(..., description="Generated plain-text instruction for the member")
     reasoning_summary: Optional[str] = Field(None, description="Optional short explanation for the generated instruction")
 
+class PlannerToolItem(BaseModel):
+    id: str = Field(..., description="Tool identifier")
+    label: str = Field(..., description="Human-readable tool label")
+    description: str = Field("", description="Tool purpose or function")
+    source: str = Field("built-in", description="Source category: built-in, browser, mcp, plugin, external")
+    enabled: bool = Field(True, description="Whether tool is currently active/available")
+
+class PlannerToolCatalogResponse(BaseModel):
+    tools: List[PlannerToolItem] = Field(default_factory=list, description="List of available tools")
+
 class HealthResponse(BaseModel):
     """Response model for health check endpoint"""
     message: str
