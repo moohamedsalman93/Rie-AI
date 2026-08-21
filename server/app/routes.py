@@ -19,6 +19,7 @@ from app.models import (
     CancelRequest, ForkThreadRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
     ScheduleTaskRequest, ScheduledTaskResponse, ScheduleNotificationItem,
     SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
+    PlannerToolItem, PlannerToolCatalogResponse,
     DeviceIdentity, FriendRecord, PairingRequest, PairingInitResponse, PairingConfirmRequest, PairingConfirmResponse, PeerAskRequest, PeerReceiveRequest, PeerAskResponse,
     PairingFinalizeRequest,
     FriendStatusResponse,
@@ -42,6 +43,7 @@ from app.scheduler import scheduler_manager, SCHEDULE_INTENTS
 from app.scheduler_tools import SCHEDULER_TOOLS
 from app.config import settings
 from app.windows_tools import WINDOWS_TOOLS
+from app.browser import LANGGRAPH_BROWSER_TOOLS
 from app.ltm_tools import LTM_TOOLS
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 
@@ -160,11 +162,26 @@ def _get_runtime_tool_catalog_ids() -> set[str]:
     tool_ids: set[str] = {
         "internet_search",
         "remote_friend_ask",
+        "ask_question",
+        "read_knowledge_asset",
+        "load_skill",
+        "execute_batched_plan",
         *[t.name for t in SCHEDULER_TOOLS],
         *WINDOWS_TOOLS.keys(),
+        *[t.name for t in LANGGRAPH_BROWSER_TOOLS],
         *[t.name for t in LTM_TOOLS],
         *[t.name for t in MCP_REGISTRY_TOOLS],
     }
+
+    # Dynamic Plugin tools
+    try:
+        loaded_plugins = getattr(plugin_manager, "tools", []) or []
+        for tool in loaded_plugins:
+            t_name = getattr(tool, "name", None)
+            if t_name and isinstance(t_name, str) and t_name.strip():
+                tool_ids.add(t_name.strip())
+    except Exception:
+        pass
 
     # External APIs configured by the user.
     for api in settings.EXTERNAL_APIS or []:
@@ -309,20 +326,78 @@ def _validate_subagents_config(raw_value: str) -> list[dict]:
     return validated
 
 
+CANONICAL_PROTECTED_SUBAGENTS = {
+    "coding_specialist": {
+        "description": "Expert at reading, modifying, creating, and debugging code in the workspace and running system terminal commands.",
+        "system_prompt": "You are an expert coding specialist. You have direct access to project files and terminal tools. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw scripts. When running terminal commands on the host OS (Windows), you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and proper path formats). Write clean, bug-free, well-documented code adhering to the project's existing conventions and run tests to verify your work.",
+        "tool_ids": ["run_terminal_command"],
+    },
+    "web_researcher": {
+        "description": "Expert at web research, searching the internet, scraping websites, extracting documentation, and browser automation.",
+        "system_prompt": "You are a web research and browser automation specialist. Use your internet search and browser tools to navigate websites, extract accurate information, scrape articles, and synthesize research findings concisely for the user.",
+        "tool_ids": [
+            "internet_search",
+            "browser_open",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_navigate",
+            "browser_scroll",
+            "browser_tabs",
+            "browser_extract",
+            "browser_close",
+        ],
+    },
+    "desktop_controller": {
+        "description": "Expert at automating Windows desktop applications, inspecting active GUI states, and simulating mouse and keyboard actions.",
+        "system_prompt": "You are a Windows desktop automation specialist. Use your desktop inspection, application control, mouse, and keyboard tools to interact with native Windows software, manage active windows, and automate user interface workflows.",
+        "tool_ids": [
+            "get_desktop_state",
+            "app_control",
+            "mouse_click",
+            "keyboard_type",
+            "move_mouse",
+            "scroll_mouse",
+            "drag_mouse",
+            "press_keys",
+            "wait",
+        ],
+    },
+    "mcp_registry": {
+        "description": "Expert at managing MCP (Model Context Protocol) server connections, configurations, and registry.",
+        "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations and inspect MCP capabilities. Use your dedicated MCP tools to manage external server connections, tools, and integrations for Rie.",
+        "tool_ids": ["list_mcp_servers", "add_mcp_server", "update_mcp_server", "delete_mcp_server"],
+    },
+}
+
+
 def _derive_subagents_from_planner_graph(graph_payload: dict) -> list[dict]:
     """Derive runtime SUBAGENTS_CONFIG list from validated planner graph payload."""
     nodes = graph_payload.get("nodes", []) if isinstance(graph_payload, dict) else []
     runtime_subagents: list[dict] = []
     for node in nodes:
-        runtime_subagents.append(
-            {
-                "name": (node.get("name") or "").strip(),
-                "description": node.get("description") or "",
-                "system_prompt": (node.get("system_prompt") or "").strip(),
-                "tool_ids": node.get("tool_ids") or [],
-                "enabled": bool(node.get("enabled", True)),
-            }
-        )
+        node_name = (node.get("name") or "").strip().lower()
+        if node_name in CANONICAL_PROTECTED_SUBAGENTS:
+            canonical = CANONICAL_PROTECTED_SUBAGENTS[node_name]
+            runtime_subagents.append(
+                {
+                    "name": node_name,
+                    "description": canonical["description"],
+                    "system_prompt": canonical["system_prompt"],
+                    "tool_ids": list(set((node.get("tool_ids") or []) + canonical["tool_ids"])),
+                    "enabled": bool(node.get("enabled", True)),
+                }
+            )
+        else:
+            runtime_subagents.append(
+                {
+                    "name": (node.get("name") or "").strip(),
+                    "description": node.get("description") or "",
+                    "system_prompt": (node.get("system_prompt") or "").strip(),
+                    "tool_ids": node.get("tool_ids") or [],
+                    "enabled": bool(node.get("enabled", True)),
+                }
+            )
     return runtime_subagents
 
 def _validate_planner_graph(raw_value: str) -> dict:
@@ -373,11 +448,21 @@ def _validate_planner_graph(raw_value: str) -> dict:
             raise HTTPException(status_code=400, detail=f"Duplicate planner node name: {node.name}")
         node_names.add(node_name)
 
-        if not node.system_prompt.strip():
+        if node_name in CANONICAL_PROTECTED_SUBAGENTS:
+            canonical = CANONICAL_PROTECTED_SUBAGENTS[node_name]
+            node_desc = canonical["description"]
+            node_prompt = canonical["system_prompt"]
+            required_tools = canonical["tool_ids"]
+        else:
+            node_desc = node.description
+            node_prompt = node.system_prompt.strip()
+            required_tools = []
+
+        if not node_prompt:
             raise HTTPException(status_code=400, detail=f"Planner node '{node.name}' must include system_prompt")
 
         normalized_tool_ids: list[str] = []
-        for tool_id in node.tool_ids or []:
+        for tool_id in (node.tool_ids or []) + required_tools:
             if not isinstance(tool_id, str):
                 continue
             normalized = tool_id.strip()
@@ -392,7 +477,16 @@ def _validate_planner_graph(raw_value: str) -> dict:
                     f"{', '.join(sorted(unknown_node_tool_ids))}. {_runtime_catalog_help_text()}"
                 ),
             )
-        normalized_nodes.append(node.model_copy(update={"tool_ids": normalized_tool_ids}))
+        normalized_nodes.append(
+            node.model_copy(
+                update={
+                    "name": node_name,
+                    "description": node_desc,
+                    "system_prompt": node_prompt,
+                    "tool_ids": normalized_tool_ids,
+                }
+            )
+        )
 
     required_members = {"coding_specialist", "mcp_registry"}
     missing_required = [name for name in required_members if name not in node_names]
@@ -568,6 +662,86 @@ async def planner_generate_instruction(data: PlannerInstructionGenerateRequest):
         instruction_text=instruction,
         reasoning_summary=f"Generated for {data.member_name.strip()} with {len(data.selected_tools or [])} tools.",
     )
+
+
+@router.get("/planner/tools", response_model=PlannerToolCatalogResponse)
+async def get_planner_tools():
+    """Returns the full categorized runtime tool catalog for planner assignment."""
+    tools: list[PlannerToolItem] = []
+    seen_ids: set[str] = set()
+
+    def _add(tid: str, label: str, desc: str, src: str, enabled: bool = True):
+        if not tid or tid in seen_ids:
+            return
+        seen_ids.add(tid)
+        tools.append(PlannerToolItem(id=tid, label=label, description=desc, source=src, enabled=enabled))
+
+    # Built-in system tools
+    _add("internet_search", "Internet Search", "Search the web for current facts, articles, and documentation.", "built-in")
+    _add("ask_question", "Ask Question", "Ask the user an interactive clarifying question with multiple choices.", "built-in")
+    _add("run_terminal_command", "System Terminal", "Execute a terminal command on the Windows system.", "built-in")
+    _add("get_desktop_state", "Desktop State", "Capture current desktop state, active apps, and interactive elements.", "built-in")
+    _add("app_control", "App Control", "Launch, switch, or resize Windows desktop applications.", "built-in")
+    _add("mouse_click", "Mouse Click", "Perform a mouse click at specific coordinates.", "built-in")
+    _add("keyboard_type", "Keyboard Type", "Type text into an application or active window.", "built-in")
+    _add("move_mouse", "Move Mouse", "Move mouse cursor to specific coordinates.", "built-in")
+    _add("scroll_mouse", "Scroll Mouse", "Scroll vertically or horizontally.", "built-in")
+    _add("drag_mouse", "Drag Mouse", "Drag from current position to target coordinates.", "built-in")
+    _add("press_keys", "Press Keys", "Press keyboard shortcuts or key combinations.", "built-in")
+    _add("wait", "Wait", "Pause execution for a specified duration.", "built-in")
+
+    # Browser tools
+    for bt in LANGGRAPH_BROWSER_TOOLS:
+        tname = bt.name
+        tlabel = tname.replace("_", " ").title()
+        tdesc = getattr(bt, "description", "") or "Browser automation tool"
+        _add(tname, tlabel, tdesc, "browser")
+
+    # Memory / LTM tools
+    for lt in LTM_TOOLS:
+        tname = lt.name
+        tlabel = tname.replace("_", " ").title()
+        _add(tname, tlabel, getattr(lt, "description", "") or "Memory retrieval and persistence tool", "built-in")
+
+    # Knowledge & Skills & Task tools
+    _add("read_knowledge_asset", "Read Knowledge Asset", "Read repository knowledge documents or indexed assets.", "built-in")
+    _add("load_skill", "Load Skill", "Load specialized skill instructions on demand.", "built-in")
+    for st in SCHEDULER_TOOLS:
+        tname = st.name
+        _add(tname, tname.replace("_", " ").title(), getattr(st, "description", "") or "Task scheduler tool", "built-in")
+    _add("remote_friend_ask", "Remote Friend Ask", "Query paired peer Rie instances on the local network.", "built-in")
+    _add("execute_batched_plan", "Execute Batched Plan", "Execute a multi-step deterministic tool chain in a single turn.", "built-in")
+
+    # MCP Registry Tools
+    for mt in MCP_REGISTRY_TOOLS:
+        tname = mt.name
+        _add(tname, tname.replace("_", " ").title(), getattr(mt, "description", "") or "MCP registry tool", "mcp")
+
+    # Plugin tools
+    try:
+        plugin_tools = getattr(plugin_manager, "tools", []) or []
+        for pt in plugin_tools:
+            tname = getattr(pt, "name", None)
+            if tname:
+                _add(tname, tname.replace("_", " ").title(), getattr(pt, "description", "") or "Plugin tool", "plugin")
+    except Exception:
+        pass
+
+    # External APIs configured by user
+    for api in settings.EXTERNAL_APIS or []:
+        if isinstance(api, dict):
+            name = str(api.get("name", "")).strip()
+            if name:
+                desc = api.get("description") or f"External API: {name}"
+                _add(name, name, desc, "external", enabled=bool(api.get("enabled", True)))
+
+    # Dynamically loaded MCP tools
+    for mcp_tool in getattr(mcp_manager, "tools", []) or []:
+        name = getattr(mcp_tool, "name", None)
+        if name and isinstance(name, str) and name.strip():
+            _add(name.strip(), name.strip(), getattr(mcp_tool, "description", "") or "Dynamic MCP tool", "mcp")
+
+    return PlannerToolCatalogResponse(tools=tools)
 
 
 @router.get("/rie/usage")

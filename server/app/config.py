@@ -577,16 +577,56 @@ class Settings:
         default_config = [
             {
                 "name": "coding_specialist",
-                "description": "Expert at modifying and understanding code in the local filesystem.",
-                "system_prompt": "You are a coding specialist. You have direct access to the files. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw terminal scripts. Since the host OS is Windows, when running terminal commands, you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and backslashes for all paths).",
-                "tool_ids": [],
+                "description": "Expert at reading, modifying, creating, and debugging code in the workspace and running system terminal commands.",
+                "system_prompt": "You are an expert coding specialist. You have direct access to project files and terminal tools. Always select the most specific dedicated tools for viewing, editing, or searching files over writing raw scripts. When running terminal commands on the host OS (Windows), you MUST use native PowerShell/Windows commands rather than Linux commands (e.g. use type/Get-Content instead of cat, echo/New-Item instead of touch, and proper path formats). Write clean, bug-free, well-documented code adhering to the project's existing conventions and run tests to verify your work.",
+                "tool_ids": ["run_terminal_command"],
+                "enabled": True,
+            },
+            {
+                "name": "web_researcher",
+                "description": "Expert at web research, searching the internet, scraping websites, extracting documentation, and browser automation.",
+                "system_prompt": "You are a web research and browser automation specialist. Use your internet search and browser tools to navigate websites, extract accurate information, scrape articles, and synthesize research findings concisely for the user.",
+                "tool_ids": [
+                    "internet_search",
+                    "browser_open",
+                    "browser_snapshot",
+                    "browser_click",
+                    "browser_type",
+                    "browser_navigate",
+                    "browser_scroll",
+                    "browser_tabs",
+                    "browser_extract",
+                    "browser_close",
+                ],
+                "enabled": True,
+            },
+            {
+                "name": "desktop_controller",
+                "description": "Expert at automating Windows desktop applications, inspecting active GUI states, and simulating mouse and keyboard actions.",
+                "system_prompt": "You are a Windows desktop automation specialist. Use your desktop inspection, application control, mouse, and keyboard tools to interact with native Windows software, manage active windows, and automate user interface workflows.",
+                "tool_ids": [
+                    "get_desktop_state",
+                    "app_control",
+                    "mouse_click",
+                    "keyboard_type",
+                    "move_mouse",
+                    "scroll_mouse",
+                    "drag_mouse",
+                    "press_keys",
+                    "wait",
+                ],
                 "enabled": True,
             },
             {
                 "name": "mcp_registry",
-                "description": "Expert at managing MCP server connections and registry. Use this to add, update, list, or delete MCP servers.",
-                "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations. Use your tools to manage the external capabilities of the Rie agent.",
-                "tool_ids": [],
+                "description": "Expert at managing MCP (Model Context Protocol) server connections, configurations, and registry.",
+                "system_prompt": "You are an MCP registry specialist. You can list, add, update, and delete MCP server configurations and inspect MCP capabilities. Use your dedicated MCP tools to manage external server connections, tools, and integrations for Rie.",
+                "tool_ids": [
+                    "list_mcp_servers",
+                    "add_mcp_server",
+                    "update_mcp_server",
+                    "delete_mcp_server",
+                ],
                 "enabled": True,
             },
         ]
@@ -599,8 +639,18 @@ class Settings:
             if not isinstance(parsed, list):
                 return default_config
             validated: list[dict] = []
+            seen_names = set()
             for item in parsed:
-                validated.append(SubAgentConfig(**item).model_dump())
+                cfg = SubAgentConfig(**item).model_dump()
+                name = (cfg.get("name") or "").strip().lower()
+                seen_names.add(name)
+                validated.append(cfg)
+            # Ensure all default canonical specialists are always included
+            for def_item in default_config:
+                def_name = (def_item.get("name") or "").strip().lower()
+                if def_name not in seen_names:
+                    validated.append(SubAgentConfig(**def_item).model_dump())
+                    seen_names.add(def_name)
             return validated or default_config
         except (json.JSONDecodeError, ValueError, TypeError):
             return default_config
@@ -636,7 +686,7 @@ class Settings:
             "main_label": "Rie",
             "main_logo_url": None,
             "main_tool_ids": [],
-            "main_instruction": "You are Rie, the main coordinator. Delegate tasks to the right team members and ensure high-quality results.",
+            "main_instruction": "You are Rie, the main coordinator. Delegate tasks to the right specialized team members and ensure high-quality results.",
             "nodes": default_nodes,
             "edges": default_edges,
         }
@@ -645,7 +695,30 @@ class Settings:
 
         try:
             parsed = json.loads(planner_json)
-            return PlannerGraphConfig(**parsed).model_dump()
+            normalized = PlannerGraphConfig(**parsed).model_dump()
+            existing_names = {(n.get("name") or "").strip().lower() for n in normalized.get("nodes", [])}
+            nodes = list(normalized.get("nodes", []))
+            edges = list(normalized.get("edges", []))
+            for idx, sub in enumerate(self.SUBAGENTS_CONFIG):
+                sub_name = (sub.get("name") or "").strip().lower()
+                if sub_name and sub_name not in existing_names:
+                    node_id = f"subagent_core_{sub_name}"
+                    nodes.append(
+                        {
+                            "id": node_id,
+                            "name": sub.get("name"),
+                            "description": sub.get("description", ""),
+                            "system_prompt": sub.get("system_prompt", ""),
+                            "tool_ids": sub.get("tool_ids", []),
+                            "enabled": sub.get("enabled", True),
+                            "logo_url": None,
+                            "position": {"x": 360, "y": 50 + len(nodes) * spacing},
+                        }
+                    )
+                    edges.append({"source": "main_agent", "target": node_id})
+            normalized["nodes"] = nodes
+            normalized["edges"] = edges
+            return normalized
         except (json.JSONDecodeError, ValueError, TypeError):
             return default_graph
 

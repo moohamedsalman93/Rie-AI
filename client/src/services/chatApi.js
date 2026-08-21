@@ -745,6 +745,21 @@ export async function getMcpStatus() {
 }
 
 /**
+ * Get dynamic categorized runtime tool catalog for Planner.
+ * @returns {Promise<{tools: Array<{id: string, label: string, description: string, source: string, enabled: boolean}>}>}
+ */
+export async function getPlannerTools() {
+  const response = await fetch(`${API_BASE_URL}/planner/tools`, {
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch planner tools");
+  }
+  return response.json();
+}
+
+/**
  * Generate instruction text for a Boss Team member using backend LLM.
  * @param {{boss_name:string, member_name:string, member_description?:string, selected_tools?:string[], style?:string, tone?:string}} payload
  * @returns {Promise<{instruction_text: string, reasoning_summary?: string}>}
