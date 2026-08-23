@@ -96,8 +96,14 @@ class BrowserProvider(ABC):
         pass
 
     @abstractmethod
-    async def capture_screenshot(self, session_id: str, full_page: bool = False) -> bytes:
-        """Capture visual page screenshot."""
+    async def capture_screenshot(
+        self,
+        session_id: str,
+        full_page: bool = False,
+        format: str = "jpeg",
+        quality: int = 75,
+    ) -> bytes:
+        """Capture visual page screenshot with optional format ('jpeg'|'png') and quality."""
         pass
 
     @abstractmethod

@@ -3,7 +3,7 @@ FastAPI REST Routes for Rie's Browser Subsystem.
 Exposes status observability and profile management for frontend Settings UI.
 """
 import logging
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Union, Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -140,6 +140,85 @@ async def delete_browser_profile(profile_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from app.browser.cookie_importer import cookie_importer
+
+
+class CookieImportLocalRequest(BaseModel):
+    source_browser: str = Field(..., description="Browser ID: chrome, edge, brave, firefox, opera, etc.")
+    domain_filter: Optional[str] = Field(None, description="Optional domain filter e.g. 'google.com' or 'github.com'")
+    profile: Optional[str] = Field(None, description="Target Camoufox profile ID")
+
+
+class CookieImportJsonRequest(BaseModel):
+    cookies: Union[str, List[Dict[str, Any]], Dict[str, Any]] = Field(..., description="JSON string or array of cookies")
+    profile: Optional[str] = Field(None, description="Target Camoufox profile ID")
+
+
+@router.get("/cookies/sources")
+async def get_cookie_sources():
+    """List available local browsers for cookie extraction."""
+    return {"sources": cookie_importer.list_supported_browsers()}
+
+
+@router.post("/cookies/import_local")
+async def import_local_cookies(req: CookieImportLocalRequest):
+    """Extract cookies from local browser and inject into active session."""
+    domains = [req.domain_filter.strip()] if req.domain_filter and req.domain_filter.strip() else None
+    res = cookie_importer.extract_from_local_browser(req.source_browser, domains=domains)
+    if not res["success"]:
+        return {"success": False, "message": res["error"] or "Failed extracting cookies", "count": 0}
+    
+    cookies = res["cookies"]
+    if not cookies:
+        return {"success": False, "message": f"No matching cookies found in {req.source_browser}.", "count": 0}
+    
+    injected_count = len(cookies)
+    if browser_service.has_active_session():
+        action_res = await browser_service.inject_cookies(cookies)
+        if not action_res.success:
+            return {"success": False, "message": action_res.message, "count": 0}
+
+    return {
+        "success": True,
+        "message": f"Successfully extracted and imported {injected_count} cookies from {req.source_browser}.",
+        "count": injected_count,
+    }
+
+
+@router.post("/cookies/import_json")
+async def import_json_cookies(req: CookieImportJsonRequest):
+    """Import and inject custom JSON cookie arrays into active session."""
+    try:
+        cookies = cookie_importer.parse_cookie_json(req.cookies)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    if not cookies:
+        return {"success": False, "message": "No valid cookies found in JSON payload.", "count": 0}
+
+    if browser_service.has_active_session():
+        action_res = await browser_service.inject_cookies(cookies)
+        if not action_res.success:
+            return {"success": False, "message": action_res.message, "count": 0}
+
+    return {
+        "success": True,
+        "message": f"Successfully injected {len(cookies)} cookies into active session.",
+        "count": len(cookies),
+    }
+
+
+@router.get("/cookies")
+async def get_active_session_cookies():
+    """Retrieve cookies currently loaded in active browser session."""
+    cookies = await browser_service.get_cookies()
+    domains = list({c.get("domain", "") for c in cookies if c.get("domain")})
+    return {
+        "count": len(cookies),
+        "domains": sorted(domains),
+    }
+
+
 import base64
 import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
@@ -199,6 +278,12 @@ async def perform_browser_action(payload: BrowserActionPayload):
         elif act == "resize_viewport":
             res = await browser_service.resize_viewport(width=payload.width or 1280, height=payload.height or 720)
             return {"success": res.success, "message": res.message}
+        elif act == "back":
+            res = await browser_service.go_back()
+            return {"success": res.success, "message": res.message, "url": res.url}
+        elif act == "forward":
+            res = await browser_service.go_forward()
+            return {"success": res.success, "message": res.message, "url": res.url}
         elif act == "close":
             res = await browser_service.close_browser()
             return {"success": res.success, "message": res.message}
@@ -211,34 +296,65 @@ async def perform_browser_action(payload: BrowserActionPayload):
 
 @router.websocket("/stream")
 async def browser_stream_websocket(websocket: WebSocket):
-    """WebSocket endpoint to stream live Camoufox screenshots and accept interaction events."""
+    """WebSocket endpoint to stream live Camoufox screenshots with high FPS and event-driven responsiveness."""
     await websocket.accept()
     logger.info("WebSocket browser stream client connected.")
     
+    immediate_frame_trigger = asyncio.Event()
+
     async def frame_sender():
+        last_url = None
+        last_title = None
+        last_active = None
         try:
             while True:
-                if browser_service.has_active_session():
+                has_session = browser_service.has_active_session()
+                if has_session:
                     try:
-                        screenshot_bytes = await browser_service.screenshot(full_page=False)
-                        if screenshot_bytes:
-                            b64_img = base64.b64encode(screenshot_bytes).decode('utf-8')
-                            ctx = browser_service.context
+                        ctx = browser_service.context
+                        current_url = ctx.current_url if ctx else None
+                        current_title = ctx.current_title if ctx else None
+                        
+                        # Send metadata packet if URL, title, or active status changed
+                        if current_url != last_url or current_title != last_title or last_active is not True:
+                            last_url = current_url
+                            last_title = current_title
+                            last_active = True
                             await websocket.send_json({
-                                "type": "frame",
+                                "type": "metadata",
                                 "active": True,
-                                "image": f"data:image/jpeg;base64,{b64_img}",
-                                "url": ctx.current_url,
-                                "title": ctx.current_title,
+                                "url": current_url,
+                                "title": current_title,
                             })
+
+                        # Capture and stream raw binary JPEG directly (0% Base64 overhead, GPU hardware decodable)
+                        screenshot_bytes = await browser_service.screenshot(
+                            full_page=False,
+                            format="jpeg",
+                            quality=88,
+                        )
+                        if screenshot_bytes:
+                            await websocket.send_bytes(screenshot_bytes)
                         else:
-                            await websocket.send_json({"type": "status", "active": False})
+                            if last_active is not False:
+                                last_active = False
+                                await websocket.send_json({"type": "status", "active": False})
                     except Exception:
-                        await websocket.send_json({"type": "status", "active": False})
+                        if last_active is not False:
+                            last_active = False
+                            await websocket.send_json({"type": "status", "active": False})
                 else:
-                    await websocket.send_json({"type": "status", "active": False})
+                    if last_active is not False:
+                        last_active = False
+                        await websocket.send_json({"type": "status", "active": False})
                 
-                await asyncio.sleep(0.3)
+                # Adaptive frame delay: ~15 FPS (0.065s) when active, 0.4s when idle, instant wake on user interaction
+                frame_delay = 0.065 if browser_service.has_active_session() else 0.4
+                try:
+                    await asyncio.wait_for(immediate_frame_trigger.wait(), timeout=frame_delay)
+                    immediate_frame_trigger.clear()
+                except asyncio.TimeoutError:
+                    pass
         except Exception as e:
             logger.debug(f"WebSocket frame_sender exited: {e}")
 
@@ -250,16 +366,28 @@ async def browser_stream_websocket(websocket: WebSocket):
             act = data.get("action")
             if act == "click" and "x" in data and "y" in data:
                 await browser_service.click_at_coords(int(data["x"]), int(data["y"]))
+                immediate_frame_trigger.set()
             elif act == "type" and "text" in data:
                 await browser_service.send_keyboard_input(str(data["text"]))
+                immediate_frame_trigger.set()
             elif act == "scroll":
                 await browser_service.scroll_page(int(data.get("deltaX", 0)), int(data.get("deltaY", 0)))
+                immediate_frame_trigger.set()
             elif act == "navigate" and "url" in data:
                 await browser_service.navigate(str(data["url"]))
+                immediate_frame_trigger.set()
             elif act == "resize_viewport" and "width" in data and "height" in data:
                 await browser_service.resize_viewport(int(data["width"]), int(data["height"]))
+                immediate_frame_trigger.set()
+            elif act == "back":
+                await browser_service.go_back()
+                immediate_frame_trigger.set()
+            elif act == "forward":
+                await browser_service.go_forward()
+                immediate_frame_trigger.set()
             elif act == "close":
                 await browser_service.close_browser()
+                immediate_frame_trigger.set()
     except WebSocketDisconnect:
         logger.info("WebSocket browser stream client disconnected.")
     except Exception as e:

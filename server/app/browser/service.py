@@ -297,12 +297,17 @@ class BrowserService:
                 ext.title = self._current_title
             return ext
 
-    async def screenshot(self, full_page: bool = False) -> bytes:
-        """Capture screenshot of active tab."""
+    async def screenshot(self, full_page: bool = False, format: str = "jpeg", quality: int = 75) -> bytes:
+        """Capture screenshot of active tab with customizable format and quality."""
         async with self._lock:
             self._ensure_active_session("browser_screenshot")
             self._interaction_mode = InteractionMode.BROWSER
-            return await self.provider.capture_screenshot(self._session.session_id, full_page=full_page)
+            return await self.provider.capture_screenshot(
+                self._session.session_id,
+                full_page=full_page,
+                format=format,
+                quality=quality,
+            )
 
     async def extract_form_fields(self) -> dict:
         """Extract all form fields across the active page in a single call."""
@@ -359,6 +364,42 @@ class BrowserService:
         async with self._lock:
             self._ensure_active_session("browser_resize_viewport")
             return await getattr(self.provider, "resize_viewport", lambda s, w, h: None)(self._session.session_id, width, height) or ActionResult(success=False, message="resize_viewport not implemented")
+
+    async def go_back(self) -> ActionResult:
+        """Navigate back in page history."""
+        async with self._lock:
+            self._ensure_active_session("browser_go_back")
+            self._interaction_mode = InteractionMode.BROWSER
+            self._invalidate_dom()
+            res = await getattr(self.provider, "go_back", lambda s: None)(self._session.session_id)
+            if res and res.success:
+                self._current_url = res.url or self._current_url
+                self._current_title = res.title or self._current_title
+            return res or ActionResult(success=False, message="go_back not implemented")
+
+    async def go_forward(self) -> ActionResult:
+        """Navigate forward in page history."""
+        async with self._lock:
+            self._ensure_active_session("browser_go_forward")
+            self._interaction_mode = InteractionMode.BROWSER
+            self._invalidate_dom()
+            res = await getattr(self.provider, "go_forward", lambda s: None)(self._session.session_id)
+            if res and res.success:
+                self._current_url = res.url or self._current_url
+    async def inject_cookies(self, cookies: list) -> ActionResult:
+        """Inject cookies into the active browser session."""
+        async with self._lock:
+            self._ensure_active_session("browser_inject_cookies")
+            self._interaction_mode = InteractionMode.BROWSER
+            res = await getattr(self.provider, "inject_cookies", lambda s, c: None)(self._session.session_id, cookies)
+            return res or ActionResult(success=False, message="inject_cookies not implemented on provider")
+
+    async def get_cookies(self, urls: Optional[list] = None) -> list:
+        """Get cookies from active browser session."""
+        async with self._lock:
+            if not self.has_active_session():
+                return []
+            return await getattr(self.provider, "get_cookies", lambda s, u: [])(self._session.session_id, urls)
 
     async def close_browser(self) -> ActionResult:
         """Close active browser session and transition state to CLOSED."""

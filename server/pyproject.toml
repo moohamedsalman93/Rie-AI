@@ -44,6 +44,7 @@ camoufox = {version = "^0.5", extras = ["geoip"]}
 playwright = "^1.52"
 langgraph-checkpoint-postgres = "^3.1.2"
 psycopg = {extras = ["binary", "pool"], version = "^3.3.4"}
+rookiepy = "^0.5.6"
 
 
 [tool.poetry.group.dev.dependencies]

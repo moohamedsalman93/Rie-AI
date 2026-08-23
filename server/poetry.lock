@@ -5799,6 +5799,85 @@ dev = ["inline-snapshot (>=0.24)", "jsonschema (>=4)", "mypy (>=1.14.1)", "nodee
 docs = ["markdown-include (>=0.8.1)", "mike (>=2.1.3)", "mkdocs-github-admonitions-plugin (>=0.1.1)", "mkdocs-glightbox (>=0.4)", "mkdocs-include-markdown-plugin (>=7.1.7) ; python_version >= \"3.9\"", "mkdocs-material-extensions (>=1.3.1)", "mkdocs-material[imaging] (>=9.5.18,<9.6.0)", "mkdocs-redirects (>=1.2.2)", "mkdocs-rss-plugin (>=1.15)", "mkdocs[docs] (>=1.6.1)", "mkdocstrings[python] (>=0.26.1)", "rich-codex (>=1.2.11)", "typer (>=0.15,<0.26)"]
 
 [[package]]
+name = "rookiepy"
+version = "0.5.6"
+description = "Load cookies from any browser on any platform"
+optional = false
+python-versions = ">=3.7"
+groups = ["main"]
+files = [
+    {file = "rookiepy-0.5.6-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:b138d59447317438564475b3bfa80ea6adbbdc65edfa44f14c1565b90ce64257"},
+    {file = "rookiepy-0.5.6-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:ed2c39cb06b8b2edb186d7b0afe08dbb3257bba94f2b18e3bb3ae8a80b77e01b"},
+    {file = "rookiepy-0.5.6-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3b547cd5ebf875635bd96d8c3365be3f2c664bbab45fda36c8c5b880a4d17512"},
+    {file = "rookiepy-0.5.6-cp310-cp310-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:65e6e6939d7d87942795d8275d56a17a7c046732420aa10c05e2b63ee6345e93"},
+    {file = "rookiepy-0.5.6-cp310-cp310-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:c370e4eb33f8848e686b4a14183078411fccb882fc9040823e30a8597ee00b8a"},
+    {file = "rookiepy-0.5.6-cp310-cp310-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:d2e2be75c052375b9f489fefbf359935f1882fd7f80b724a976d2dd1ec462d9d"},
+    {file = "rookiepy-0.5.6-cp310-cp310-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:c73b5de7db85fc5f398d1f50bc6b1e3672ddeb76fd2c9721980eaeb530e69d13"},
+    {file = "rookiepy-0.5.6-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:67391fca6afc3251c8bbd4a395f287ebfcb35652cf9a4aadf5b4df73481fac08"},
+    {file = "rookiepy-0.5.6-cp310-none-win_amd64.whl", hash = "sha256:9ea86008705ff0dbbb1f74cf4847c71a6c6a848427797e0086401d9ef0117432"},
+    {file = "rookiepy-0.5.6-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:265bb767edd2e4e47d3de534871f94181572236d2ae3925597f4ceba557a1525"},
+    {file = "rookiepy-0.5.6-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:89253f803fcd4fbfa9f06961af9bc59efeade69b377d0d7569f5591e2e9a1b0e"},
+    {file = "rookiepy-0.5.6-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8d2dc1770c2d77f84961ea01dce6fab32f771fb84066c94f372a69d26f61981a"},
+    {file = "rookiepy-0.5.6-cp311-cp311-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:8e69d53476ac66171823935f4fc93adf30556be37f77b775931f7c5a6d841260"},
+    {file = "rookiepy-0.5.6-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:1bd868521032ae24c44946906c88518fc9bb941befe8f6d7e1d8ff355f67b598"},
+    {file = "rookiepy-0.5.6-cp311-cp311-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:f29a324c8b44a8b7bbef632001c76b1764d647164aaaf165b5496310f57328cc"},
+    {file = "rookiepy-0.5.6-cp311-cp311-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:dd95eb157acee95e3079f86a26cadf720f1d7ef4900735c8b5ff3a12c29f7880"},
+    {file = "rookiepy-0.5.6-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:afb0fa7a973d5cf7833ddd46854d823dad70027457fff44f3161d0128d884e17"},
+    {file = "rookiepy-0.5.6-cp311-none-win_amd64.whl", hash = "sha256:d1ba846c1d066530a32a77fc48b8e4197795151ab8940dea86f319849b544d5b"},
+    {file = "rookiepy-0.5.6-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:96737f44eab781d5a010b71f7cd70ef43c6a6977dc1c54d019158b8fcfe57167"},
+    {file = "rookiepy-0.5.6-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:37a8fc437f49672387d4a512df5522a724c4440442e64cad84680f1718f68c50"},
+    {file = "rookiepy-0.5.6-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:22d0ece1ef732045f0482f72bc199cad81878154ceb62780c1e2f297c62df7e2"},
+    {file = "rookiepy-0.5.6-cp312-cp312-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:307943d5780492c533bfeb6bc89d1a4b3e5b91b25af6fc1de280acc1e2ff16f6"},
+    {file = "rookiepy-0.5.6-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:c607eef14f64ba284f3754449b6eb079aa8aaa66b443d0cdd2ec9aaa1814a8da"},
+    {file = "rookiepy-0.5.6-cp312-cp312-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:19f4b95436705b38e4a55cfa9f3d999bb4edc6a7f91ba13b1b90bb14b1796fdb"},
+    {file = "rookiepy-0.5.6-cp312-cp312-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:95b881f2f3d93bb56808eaaf8ac9e0e5e3245dda837edab194834a3caaadcbe7"},
+    {file = "rookiepy-0.5.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2c49a0b59bc0329928a369a479f9b1c16cbe3a2548dd8273b13515c7ced73449"},
+    {file = "rookiepy-0.5.6-cp312-none-win_amd64.whl", hash = "sha256:6bb956c9f2dece5101aafc7a715bc672c5b30ddcaa55c9926d12440635d89cfc"},
+    {file = "rookiepy-0.5.6-cp37-cp37m-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:4382eef8ee72d218a7a2637af7c7449d5457ea18f910cc7cd1a8d2325ed53a6e"},
+    {file = "rookiepy-0.5.6-cp37-cp37m-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:4a58e3e10550e4d355f485a88859ae8b54e1b15eff933beb55630b765a65bab1"},
+    {file = "rookiepy-0.5.6-cp37-cp37m-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:be5d064162d90998603d6c3d9c19ebafe027a7866233493964462d03ab6645b5"},
+    {file = "rookiepy-0.5.6-cp37-cp37m-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:f99f4e6d3369d6d1cc121ff7f0c784fd2f2989fed7fbf2b733440b66a1312cbe"},
+    {file = "rookiepy-0.5.6-cp37-cp37m-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:bb5ca1851b92e72cd66b80d6fc90bd3d0c37cb826adc25bd45693746feaa065a"},
+    {file = "rookiepy-0.5.6-cp37-cp37m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:96778d8a77d62a3ea41873e944c0556c7ec3710224a6d6f77ac670fa7cace46a"},
+    {file = "rookiepy-0.5.6-cp37-none-win_amd64.whl", hash = "sha256:ccbc9003dac9142ecd24b7bdbef0af5dbe825b45ace191b00bbaf5e07f962911"},
+    {file = "rookiepy-0.5.6-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ab3b82d62b8246863f1b729f3b32d125e2f223bfbfce22152d0e8f9debcbbe26"},
+    {file = "rookiepy-0.5.6-cp38-cp38-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:37e41d87a8a000421ac397c630dc295090369040ac278cf9fd712782cf170341"},
+    {file = "rookiepy-0.5.6-cp38-cp38-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:190b3ccc048df7d379dd72cc0f6e0260dfaedde789eb77ccfef16989c5282b63"},
+    {file = "rookiepy-0.5.6-cp38-cp38-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:56d83b53d9cb8753ba9432bf2c8b9c1d927d8a4c243389e14e04bf2a0db8e028"},
+    {file = "rookiepy-0.5.6-cp38-cp38-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:e073287b71dcd069fa570feffc1fb0c3255af762f14d4a888db441b9b27efd13"},
+    {file = "rookiepy-0.5.6-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:634706205a29f17e4cdc5bfc31946645ed58977ed73552e1b45f4e2e8573c272"},
+    {file = "rookiepy-0.5.6-cp38-none-win_amd64.whl", hash = "sha256:21463477c3e8eb1b7220c85ea73501846d53d944f6440ac822735af2fa912352"},
+    {file = "rookiepy-0.5.6-cp39-cp39-macosx_10_12_x86_64.whl", hash = "sha256:f8a85d650598b4c3a94e7e781b58c99d092655186c471e23c1d62609d789b808"},
+    {file = "rookiepy-0.5.6-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:4ba68c970cdc52a7b611f736d247a57c9738c031224becd33ed476345dadb067"},
+    {file = "rookiepy-0.5.6-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:21d7fa28bc286a152e9568438bb63b1154244608be6ea24aed12a39f53d1dd0d"},
+    {file = "rookiepy-0.5.6-cp39-cp39-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:5be3c9e5a5e2b01b565c9871d4d48050f991f5437ca0569920caa6310d1417ee"},
+    {file = "rookiepy-0.5.6-cp39-cp39-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:a0a1be4185011e13357140c7aff7778f49bddbfa0824aeb54f4e8201d99e1369"},
+    {file = "rookiepy-0.5.6-cp39-cp39-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:ffc89d8a93fb04c0c13da8ee18c559f27ac60f302470ab30334c2f70588a579a"},
+    {file = "rookiepy-0.5.6-cp39-cp39-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:002ce3cfc0a89b67ebe44e1ef50f21df1c8c8da7e56a2d7e42a2a389964a25e2"},
+    {file = "rookiepy-0.5.6-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:45375f0776bcae0d81ba5e01209a78d69479da7b2e07730a2ed930e892bba2da"},
+    {file = "rookiepy-0.5.6-cp39-none-win_amd64.whl", hash = "sha256:9a1243d45570aea2bbd08abb993710698167ddecec8e4a018e3ec93ac2e7b484"},
+    {file = "rookiepy-0.5.6-pp310-pypy310_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e5bc244f1f170be075a9c52c8f5581ea75b93b449154633194185ffb059e1399"},
+    {file = "rookiepy-0.5.6-pp310-pypy310_pp73-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:e934109fed936d35f0457016f180ef60e9cb65fd2c0cb5af4889ceb287701e63"},
+    {file = "rookiepy-0.5.6-pp310-pypy310_pp73-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:9853429d6c1d05b3224fe6bae0790122998819e46e607b5e8b6899a8a72442eb"},
+    {file = "rookiepy-0.5.6-pp310-pypy310_pp73-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:ac5dbd9d2e292760a987a2de148e9553e0c1799caa66751bb103be4698021bd1"},
+    {file = "rookiepy-0.5.6-pp310-pypy310_pp73-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:d83261b8843482dd229eba19423a6388bdd0c662b9fc6660f9258223d3e33003"},
+    {file = "rookiepy-0.5.6-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:3daa59bbd9bff7c653ec5c8b13fdc6e7f20ca9b47c73ff8f8f0eee9b2549b067"},
+    {file = "rookiepy-0.5.6-pp37-pypy37_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:1944fb0b92243338cd398e99d81e2e8635bf6f7a616cad19d3325fd8b9d69d64"},
+    {file = "rookiepy-0.5.6-pp37-pypy37_pp73-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:5b30a2912e80b5606ab0d41f6ffbcc1c457df3dc7529d1fa5e318975a0e6b0d1"},
+    {file = "rookiepy-0.5.6-pp37-pypy37_pp73-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:c2d62ee59ae3cadf44f6a394785ab08d317037decb5e9d0e864e51782de4e1af"},
+    {file = "rookiepy-0.5.6-pp37-pypy37_pp73-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:eb0bcbedcb5856a1647d8f43cc3519175608cd64b3096da80790fdac07a062ac"},
+    {file = "rookiepy-0.5.6-pp38-pypy38_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5bd21d45b68ddba2f33694d8e8e47494e8b3662a908476c8ad1952edfb976df0"},
+    {file = "rookiepy-0.5.6-pp38-pypy38_pp73-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:d679a03146c7829c8db993a5f7915fbf0f652e8e032df934c7e37f41cdf84688"},
+    {file = "rookiepy-0.5.6-pp38-pypy38_pp73-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:4231152af0b294a6af505a1d002f977d81f8b3f972388765e8a900b09ef528a1"},
+    {file = "rookiepy-0.5.6-pp38-pypy38_pp73-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:24d9a0338ecf587a885469a11d71095cc91b84c5904e8b41c7585ff204f3d6a9"},
+    {file = "rookiepy-0.5.6-pp39-pypy39_pp73-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:144bb390b7413295bbd2481a8a6c19f40fb7573535b64873c3025006e822095b"},
+    {file = "rookiepy-0.5.6-pp39-pypy39_pp73-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:b4dd2bfa0109815b329fd3653cb49acdde5daedab8e60fbd288d4d8d6e4bb1d8"},
+    {file = "rookiepy-0.5.6-pp39-pypy39_pp73-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:06fceb27bc7b0bde11390e47b4f3a4863149017f52b4ce3f63a64edbbe369476"},
+    {file = "rookiepy-0.5.6-pp39-pypy39_pp73-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:9824001d53a16b0a733c6cc8c453123fe454cc700d442b59e76e4b5922ba520b"},
+    {file = "rookiepy-0.5.6.tar.gz", hash = "sha256:efa6a93b119478a96b3d8c4454215c4f1af316a24b3b3b3015b73c1c1d887078"},
+]
+
+[[package]]
 name = "rpds-py"
 version = "0.30.0"
 description = "Python bindings to Rust's persistent data structures (rpds)"
@@ -7592,4 +7671,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = "3.11.9"
-content-hash = "35f833b4685afebe518426599d24067a3c5e71b88d0b928f648c1bbb147257a0"
+content-hash = "4e25a82a7b9cae964da6a0c4652e3412566afaaca6ff2f4642989d91283f0143"

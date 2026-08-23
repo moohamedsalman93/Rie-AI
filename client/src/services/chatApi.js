@@ -1215,5 +1215,48 @@ export async function performBrowserAction(action, payload = {}) {
   return response.json();
 }
 
+export async function getBrowserCookieSources() {
+  const response = await fetch(`${API_BASE_URL}/api/browser/cookies/sources`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to get cookie sources");
+  return response.json();
+}
+
+export async function importLocalBrowserCookies(sourceBrowser, domainFilter = null, profile = null) {
+  const response = await fetch(`${API_BASE_URL}/api/browser/cookies/import_local`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      source_browser: sourceBrowser,
+      domain_filter: domainFilter,
+      profile: profile,
+    }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to extract local cookies");
+  return response.json();
+}
+
+export async function importJsonCookies(cookies, profile = null) {
+  const response = await fetch(`${API_BASE_URL}/api/browser/cookies/import_json`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      cookies: cookies,
+      profile: profile,
+    }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to import JSON cookies");
+  return response.json();
+}
+
+export async function getBrowserCookies() {
+  const response = await fetch(`${API_BASE_URL}/api/browser/cookies`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to get loaded cookies");
+  return response.json();
+}
+
 
 

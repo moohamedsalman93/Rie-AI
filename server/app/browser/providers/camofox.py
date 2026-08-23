@@ -813,6 +813,83 @@ class CamoFoxProvider(BrowserProvider):
         except Exception as e:
             return ActionResult(success=False, message=f"Resize viewport error: {e}")
 
+    async def go_back(self, session_id: str) -> ActionResult:
+        """Navigate back in history."""
+        if _is_proactor_loop():
+            return await self._impl_go_back(session_id)
+        return await self._thread_runner.run(lambda: self._impl_go_back(session_id))
+
+    async def _impl_go_back(self, session_id: str) -> ActionResult:
+        self._require_page()
+        try:
+            await self._page.go_back()
+            return ActionResult(
+                success=True,
+                url=self._page.url,
+                title=await self._page.title(),
+                navigation_occurred=True,
+                message="Navigated back",
+            )
+        except Exception as e:
+            return ActionResult(success=False, message=f"Go back failed: {e}")
+
+    async def go_forward(self, session_id: str) -> ActionResult:
+        """Navigate forward in history."""
+        if _is_proactor_loop():
+            return await self._impl_go_forward(session_id)
+        return await self._thread_runner.run(lambda: self._impl_go_forward(session_id))
+
+    async def _impl_go_forward(self, session_id: str) -> ActionResult:
+        self._require_page()
+        try:
+            await self._page.go_forward()
+            return ActionResult(
+                success=True,
+                url=self._page.url,
+                title=await self._page.title(),
+                navigation_occurred=True,
+                message="Navigated forward",
+            )
+        except Exception as e:
+            return ActionResult(success=False, message=f"Go forward failed: {e}")
+
+    async def inject_cookies(self, session_id: str, cookies: List[Dict[str, Any]]) -> ActionResult:
+        """Inject a list of cookies into the active browser context."""
+        if _is_proactor_loop():
+            return await self._impl_inject_cookies(session_id, cookies)
+        return await self._thread_runner.run(lambda: self._impl_inject_cookies(session_id, cookies))
+
+    async def _impl_inject_cookies(self, session_id: str, cookies: List[Dict[str, Any]]) -> ActionResult:
+        if not self._context:
+            raise ProviderUnavailableError("No active browser context. Call create_session() first.")
+        try:
+            await self._context.add_cookies(cookies)
+            return ActionResult(
+                success=True,
+                url=self._page.url if self._page else None,
+                title=await self._page.title() if self._page else None,
+                message=f"Successfully injected {len(cookies)} cookies into active session.",
+            )
+        except Exception as e:
+            return ActionResult(success=False, message=f"Failed to inject cookies: {e}")
+
+    async def get_cookies(self, session_id: str, urls: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """Retrieve cookies from the active browser context."""
+        if _is_proactor_loop():
+            return await self._impl_get_cookies(session_id, urls)
+        return await self._thread_runner.run(lambda: self._impl_get_cookies(session_id, urls))
+
+    async def _impl_get_cookies(self, session_id: str, urls: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        if not self._context:
+            return []
+        try:
+            if urls:
+                return await self._context.cookies(urls)
+            return await self._context.cookies()
+        except Exception as e:
+            logger.error(f"Failed to get cookies: {e}")
+            return []
+
     async def extract_content(self, session_id: str, query: Optional[str] = None, tab_id: Optional[str] = None) -> ExtractResult:
         """Extract page content as clean text."""
         if _is_proactor_loop():
@@ -854,16 +931,32 @@ class CamoFoxProvider(BrowserProvider):
                 content=f"Content extraction failed: {e}",
             )
 
-    async def capture_screenshot(self, session_id: str, full_page: bool = False) -> bytes:
-        """Capture page screenshot."""
+    async def capture_screenshot(
+        self,
+        session_id: str,
+        full_page: bool = False,
+        format: str = "jpeg",
+        quality: int = 75,
+    ) -> bytes:
+        """Capture page screenshot with customizable format and quality."""
         if _is_proactor_loop():
-            return await self._impl_capture_screenshot(session_id, full_page)
-        return await self._thread_runner.run(lambda: self._impl_capture_screenshot(session_id, full_page))
+            return await self._impl_capture_screenshot(session_id, full_page, format=format, quality=quality)
+        return await self._thread_runner.run(
+            lambda: self._impl_capture_screenshot(session_id, full_page, format=format, quality=quality)
+        )
 
-    async def _impl_capture_screenshot(self, session_id: str, full_page: bool = False) -> bytes:
+    async def _impl_capture_screenshot(
+        self,
+        session_id: str,
+        full_page: bool = False,
+        format: str = "jpeg",
+        quality: int = 75,
+    ) -> bytes:
         self._require_page()
         try:
-            return await self._page.screenshot(full_page=full_page)
+            if format.lower() == "jpeg":
+                return await self._page.screenshot(full_page=full_page, type="jpeg", quality=quality)
+            return await self._page.screenshot(full_page=full_page, type="png")
         except Exception as e:
             logger.error(f"Screenshot failed: {e}")
             return b""
