@@ -9,14 +9,24 @@ import { normalizeQuestionPayload } from "./questionNormalizer.js";
 export function parseMessageContentToBlocks(content) {
   if (!content || typeof content !== "string") return [{ type: "text", text: "" }];
 
+  // If content starts with an orphan closing </think> or </thought> without an opening tag,
+  // wrap it with <think> at the start so the tag parser can extract it into a thought block.
+  let normalizedContent = content;
+  const firstCloseMatch = normalizedContent.match(/<\/(?:think(?:ing)?|thought)>/i);
+  const firstOpenMatch = normalizedContent.match(/<(?:think(?:ing)?|thought)[^>]*>/i);
+
+  if (firstCloseMatch && (!firstOpenMatch || firstCloseMatch.index < firstOpenMatch.index)) {
+    normalizedContent = "<think>" + normalizedContent;
+  }
+
   // Match <think>...</think>, <thought>...</thought>, <ask_question>...</ask_question>, and <question>...</question>
-  const tagRegex = /<(?:(think(?:ing)?)|(ask_question|question))[^>]*>([\s\S]*?)<\/(?:think(?:ing)?|ask_question|question)>/gi;
+  const tagRegex = /<(?:(think(?:ing)?|thought)|(ask_question|question))[^>]*>([\s\S]*?)<\/(?:think(?:ing)?|thought|ask_question|question)>/gi;
   const blocks = [];
   let lastIndex = 0;
   let match;
 
-  while ((match = tagRegex.exec(content)) !== null) {
-    const textBefore = content.slice(lastIndex, match.index);
+  while ((match = tagRegex.exec(normalizedContent)) !== null) {
+    const textBefore = normalizedContent.slice(lastIndex, match.index);
     if (textBefore.trim()) {
       blocks.push({ type: "text", text: textBefore });
     }
@@ -44,7 +54,7 @@ export function parseMessageContentToBlocks(content) {
     lastIndex = tagRegex.lastIndex;
   }
 
-  const remaining = content.slice(lastIndex);
+  const remaining = normalizedContent.slice(lastIndex);
   if (remaining.trim() || blocks.length === 0) {
     blocks.push({ type: "text", text: remaining });
   }

@@ -48,6 +48,9 @@ function cleanTextForSpeech(text) {
   let clean = text;
   // Remove <think>...</think> or <thought>...</thought> blocks
   clean = clean.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, "");
+  clean = clean.replace(/<thought>[\s\S]*?<\/thought>/gi, "");
+  // Remove leading orphan thought blocks (where model omitted opening <think>)
+  clean = clean.replace(/^[\s\S]*?<\/(?:think(?:ing)?|thought)>/i, "");
   // Remove code blocks ```...```
   clean = clean.replace(/```[\s\S]*?```/g, "");
   // Remove inline code `...`
@@ -862,9 +865,26 @@ function MainApp() {
           while (parser.buffer.length > 0) {
             if (!parser.inThinkTag) {
               const thinkIdx = parser.buffer.indexOf("<think>");
-              const altIdx = thinkIdx === -1 ? parser.buffer.indexOf("<thought>") : thinkIdx;
-              const tagLen = thinkIdx !== -1 ? 7 : (parser.buffer.indexOf("<thought>") !== -1 ? 9 : 0);
-              const tagIdx = thinkIdx !== -1 ? thinkIdx : (parser.buffer.indexOf("<thought>") !== -1 ? parser.buffer.indexOf("<thought>") : -1);
+              const altIdx = parser.buffer.indexOf("<thought>");
+              const tagIdx = thinkIdx !== -1 ? thinkIdx : altIdx;
+              const tagLen = thinkIdx !== -1 ? 7 : (altIdx !== -1 ? 9 : 0);
+
+              // Check for orphan closing </think> or </thought> (model began thinking without outputting <think>)
+              const orphanThinkEndIdx = parser.buffer.indexOf("</think>");
+              const orphanThoughtEndIdx = parser.buffer.indexOf("</thought>");
+              const orphanCloseIdx = orphanThinkEndIdx !== -1 ? orphanThinkEndIdx : orphanThoughtEndIdx;
+              const orphanCloseLen = orphanThinkEndIdx !== -1 ? 8 : (orphanThoughtEndIdx !== -1 ? 10 : 0);
+
+              if (orphanCloseIdx !== -1 && (tagIdx === -1 || orphanCloseIdx < tagIdx)) {
+                // Thought was streamed directly without opening tag; route it to thought
+                const thoughtBefore = parser.buffer.slice(0, orphanCloseIdx);
+                if (thoughtBefore) {
+                  pendingStreamUpdatesRef.current[threadId].pendingThought = (pendingStreamUpdatesRef.current[threadId].pendingThought || "") + thoughtBefore;
+                }
+                pendingStreamUpdatesRef.current[threadId].finishThinking = true;
+                parser.buffer = parser.buffer.slice(orphanCloseIdx + orphanCloseLen);
+                continue;
+              }
 
               if (tagIdx !== -1) {
                 const textBefore = parser.buffer.slice(0, tagIdx);

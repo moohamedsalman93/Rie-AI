@@ -1648,36 +1648,43 @@ class PromptCompositionDiagnosticMiddleware(AgentMiddleware):
         needs_tools = ToolNeedMiddleware._needs_tools(query, messages)
         mode_label = f"AGENT ({b['tool_count']} tools bound)" if needs_tools else "CHAT (0 tools bound)"
 
-        provider = settings.LLM_PROVIDER or "rie"
-        model_name = getattr(request.model, "model_name", getattr(request.model, "model", str(type(request.model).__name__)))
-        model_cls = type(request.model).__name__
-        plugin_tools = [t for t in b["tool_names"] if any(t.startswith(p) for p in ("gmail_", "github_", "jira_"))]
+    def _log_breakdown(self, request: ModelRequest) -> None:
+        try:
+            b = self._compute_breakdown(request)
+            mode_label = "CHAT (tools stripped)" if b["mode"] == "chat" else f"AGENT ({b['tool_count']} tools bound)"
 
-        print("\n" + "=" * 60)
-        print(f"MODEL TURN {b['turn_number']} | Mode: {mode_label}")
-        print("-" * 60)
-        print(f"system tokens:        {b['base_system']:5d}")
-        print(f"technical rules:      {b['technical_rules']:5d}")
-        print(f"skills:               {b['skills']:5d}")
-        print(f"LTM:                  {b['ltm_context']:5d}")
-        print(f"runtime:              {b['runtime_context']:5d}")
-        print(f"messages:             {b['messages']:5d}  (user: {b['user_messages']}, ai: {b['ai_messages']}, tool results: {b['tool_results']})")
-        if b.get("tool_results_list"):
-            for tr_name, tr_tok in b["tool_results_list"]:
-                print(f"   ↳ [tool result] {tr_name}: {tr_tok:4d} tokens")
-        print(f"tool schemas:         {b['tool_schema']:5d}  ({b['tool_count']} tools)")
-        if b.get("tool_schemas_list"):
-            top_schemas = sorted(b["tool_schemas_list"], key=lambda x: x[1], reverse=True)
-            for ts_name, ts_tok in top_schemas[:5]:
-                print(f"   ↳ [schema] {ts_name}: {ts_tok:4d} tokens")
-        print("-" * 60)
-        print(f"TOTAL:                {b['total']:5d} tokens")
-        print("=" * 60)
-        print(f"Model: {model_cls} ({model_name}) | Provider: {provider}")
-        if plugin_tools:
-            print(f"Plugin Tools:   {plugin_tools}")
-        print(f"Bound Tools:    {b['tool_names']}")
-        print("=" * 60 + "\n")
+            provider = settings.LLM_PROVIDER or "rie"
+            model_name = getattr(request.model, "model_name", getattr(request.model, "model", str(type(request.model).__name__)))
+            model_cls = type(request.model).__name__
+            plugin_tools = [t for t in b["tool_names"] if any(t.startswith(p) for p in ("gmail_", "github_", "jira_"))]
+
+            print("\n" + "=" * 60)
+            print(f"MODEL TURN {b['turn_number']} | Mode: {mode_label}")
+            print("-" * 60)
+            print(f"system tokens:        {b['base_system']:5d}")
+            print(f"technical rules:      {b['technical_rules']:5d}")
+            print(f"skills:               {b['skills']:5d}")
+            print(f"LTM:                  {b['ltm_context']:5d}")
+            print(f"runtime:              {b['runtime_context']:5d}")
+            print(f"messages:             {b['messages']:5d}  (user: {b['user_messages']}, ai: {b['ai_messages']}, tool results: {b['tool_results']})")
+            if b.get("tool_results_list"):
+                for tr_name, tr_tok in b["tool_results_list"]:
+                    print(f"   -> [tool result] {tr_name}: {tr_tok:4d} tokens")
+            print(f"tool schemas:         {b['tool_schema']:5d}  ({b['tool_count']} tools)")
+            if b.get("tool_schemas_list"):
+                top_schemas = sorted(b["tool_schemas_list"], key=lambda x: x[1], reverse=True)
+                for ts_name, ts_tok in top_schemas[:5]:
+                    print(f"   -> [schema] {ts_name}: {ts_tok:4d} tokens")
+            print("-" * 60)
+            print(f"TOTAL:                {b['total']:5d} tokens")
+            print("=" * 60)
+            print(f"Model: {model_cls} ({model_name}) | Provider: {provider}")
+            if plugin_tools:
+                print(f"Plugin Tools:   {plugin_tools}")
+            print(f"Bound Tools:    {b['tool_names']}")
+            print("=" * 60 + "\n")
+        except Exception as e:
+            print(f"DEBUG: Error logging token breakdown: {e}")
 
     def wrap_model_call(
         self,
