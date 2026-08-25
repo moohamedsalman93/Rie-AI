@@ -253,14 +253,14 @@ class Settings:
     def GEMINI_MODEL(self) -> str:
         return self._get("GEMINI_MODEL", "gemini-1.5-pro")
 
-    # Rie configuration - hardcoded, no API key needed
+    # Rie configuration - managed dynamically by the main backend
     @property
     def RIE_API_URL(self) -> str:
         return "https://rie-api-399060682924.asia-south1.run.app/v1"
 
     @property
     def RIE_MODEL(self) -> str:
-        return "glm-4.6v-flash"
+        return self._get("RIE_MODEL", "rie")
 
     @property
     def VERTEX_CREDENTIALS_PATH(self) -> Optional[str]:

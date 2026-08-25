@@ -63,6 +63,11 @@ import {
   ChevronUp,
   Download,
   Keyboard,
+  LogOut,
+  Zap,
+  ShieldCheck,
+  Cpu,
+  Clock,
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen, emit } from '@tauri-apps/api/event';
@@ -1670,11 +1675,14 @@ key2,
                                   {key === 'rie' && (
                                     <div className="space-y-4">
                                       {!rieToken ? (
-                                        <div className=" p-12 rounded-2xl flex flex-col items-center justify-center text-center space-y-6">
-                                          <div className="space-y-2">
-                                            <h4 className="text-xl font-semibold text-neutral-100">Unlock the Full Power of Rie</h4>
-                                            <p className="text-sm text-neutral-400 max-w-xs mx-auto">
-                                              Sign in to access advanced models, system controls, and get up to 50 free requests per day.
+                                        <div className="rounded-2xl bg-neutral-900/40 border border-neutral-800/80 p-8 flex flex-col items-center justify-center text-center space-y-5">
+                                          <div className="w-10 h-10 rounded-xl bg-neutral-800 border border-neutral-700/60 flex items-center justify-center text-neutral-300">
+                                            <Sparkles className="w-5 h-5 text-neutral-300" />
+                                          </div>
+                                          <div className="space-y-1.5 max-w-sm">
+                                            <h4 className="text-base font-semibold text-neutral-100">Unlock the Full Power of Rie</h4>
+                                            <p className="text-xs text-neutral-400 leading-relaxed">
+                                              Sign in to access cloud-accelerated models and get 50 free requests daily.
                                             </p>
                                           </div>
                                           <button
@@ -1691,87 +1699,93 @@ key2,
                                                 window.open(loginUrl, '_blank');
                                               }
                                             }}
-                                            className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-semibold transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:scale-105 active:scale-95"
+                                            className="px-6 py-2.5 bg-neutral-100 hover:bg-white text-neutral-900 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-95"
                                           >
                                             Sign In via Website
                                           </button>
                                         </div>
                                       ) : (
-                                        <div className="rounded-2xl overflow-hidden bg-neutral-900/20 border border-neutral-800/60">
+                                        <div className="rounded-2xl bg-neutral-900/40 border border-neutral-800/80 overflow-hidden">
                                           {/* Account Header */}
-                                          <div className="px-6 py-4 flex items-center justify-between bg-neutral-900/30 border-b border-neutral-800/60 rounded-t-2xl">
+                                          <div className="px-5 py-3.5 flex items-center justify-between border-b border-neutral-800/70">
                                             <div className="flex items-center gap-3">
-                                              <div className="w-10 h-10 rounded-full bg-neutral-850 border border-neutral-700/50 flex items-center justify-center text-neutral-200 font-semibold text-sm select-none uppercase shrink-0">
+                                              <div className="w-9 h-9 rounded-xl bg-neutral-800 border border-neutral-700/60 flex items-center justify-center text-neutral-200 font-semibold text-xs uppercase select-none">
                                                 {rieUsage?.email ? rieUsage.email[0] : <User className="w-4 h-4 text-neutral-400" />}
                                               </div>
-                                              {rieUsage && (
-                                                <div className="space-y-0.5">
-                                                  <div className="text-[10px] text-neutral-500 font-semibold uppercase tracking-wider">Account</div>
-                                                  <div className="text-sm font-semibold text-neutral-100">{rieUsage.email || 'Authenticated'}</div>
-                                                </div>
-                                              )}
+                                              <div className="space-y-0.5">
+                                                <div className="text-[10px] text-neutral-400 font-medium uppercase tracking-wider">Account</div>
+                                                <div className="text-xs font-medium text-neutral-200">{rieUsage?.email || 'Authenticated'}</div>
+                                              </div>
                                             </div>
+
                                             <button
                                               onClick={handleRieSignOut}
-                                              className="text-xs font-semibold text-neutral-400 hover:text-red-400 transition-colors duration-200 px-3 py-1.5 hover:bg-red-500/10 rounded-lg"
+                                              className="text-xs text-neutral-400 hover:text-red-400 px-2.5 py-1.5 rounded-lg hover:bg-neutral-800/60 transition-colors duration-150"
                                             >
                                               Sign Out
                                             </button>
                                           </div>
 
                                           {/* Usage Section */}
-                                          <div className="p-6 space-y-6">
-                                            {rieUsage && (
-                                              <div className="space-y-4">
-                                                <div className="flex items-center justify-between">
-                                                  <div className="space-y-1">
-                                                    <h4 className="text-sm font-medium text-neutral-200">Request Usage</h4>
-                                                    <p className="text-[11px] text-neutral-500">Reset daily at 00:00 UTC</p>
-                                                  </div>
-                                                  <div className="text-right">
-                                                    <span className="text-lg font-bold text-neutral-100">{rieUsage.current_usage}</span>
-                                                    <span className="text-sm text-neutral-500 font-medium"> / {rieUsage.limit}</span>
-                                                  </div>
-                                                </div>
+                                          <div className="p-5 space-y-5">
+                                            {rieUsage && (() => {
+                                              const usedCount = rieUsage.daily_usage ?? rieUsage.current_usage ?? (rieUsage.limit - rieUsage.remaining) ?? 0;
+                                              const totalLimit = rieUsage.limit || 50;
+                                              const usagePercent = Math.min(100, Math.max(0, (usedCount / totalLimit) * 100));
 
-                                                {/* Progress Bar */}
-                                                <div className="h-2 w-full bg-neutral-950 rounded-full overflow-hidden border border-neutral-800/40">
-                                                  <motion.div
-                                                    initial={{ width: 0 }}
-                                                    animate={{ width: `${(rieUsage.current_usage / rieUsage.limit) * 100}%` }}
-                                                    transition={{ duration: 1, ease: "easeOut" }}
-                                                    className={`h-full rounded-full ${(rieUsage.current_usage / rieUsage.limit) > 0.9
-                                                      ? 'bg-red-500/80'
-                                                      : (rieUsage.current_usage / rieUsage.limit) > 0.7
-                                                        ? 'bg-amber-500/80'
-                                                        : 'bg-emerald-500/80'
-                                                      }`}
-                                                  />
-                                                </div>
-
-                                                <div className="grid grid-cols-2 gap-4">
-                                                  <div className="p-3.5 bg-neutral-900/40 rounded-xl border border-neutral-800/60">
-                                                    <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-wider mb-1">Status</div>
-                                                    <div className="flex items-center gap-2">
-                                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                                      <span className="text-xs font-medium text-neutral-200">Active</span>
+                                              return (
+                                                <div className="space-y-4">
+                                                  <div className="flex items-center justify-between">
+                                                    <div className="space-y-0.5">
+                                                      <h4 className="text-xs font-medium text-neutral-200">Request Usage</h4>
+                                                      <p className="text-[11px] text-neutral-400">Reset daily at 00:00 UTC</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                      <span className="text-sm font-semibold text-neutral-100">{usedCount}</span>
+                                                      <span className="text-xs text-neutral-400"> / {totalLimit}</span>
                                                     </div>
                                                   </div>
-                                                  <div className="p-3.5 bg-neutral-900/40 rounded-xl border border-neutral-800/60">
-                                                    <div className="text-[10px] text-neutral-500 font-medium uppercase tracking-wider mb-1">Remaining</div>
-                                                    <div className="text-xs font-semibold text-neutral-200">
-                                                      <span className="text-emerald-400 font-bold">{rieUsage.remaining}</span> requests
+
+                                                  {/* Clean Slim Progress Bar */}
+                                                  <div className="h-1.5 w-full bg-neutral-800 rounded-full overflow-hidden">
+                                                    <motion.div
+                                                      initial={{ width: 0 }}
+                                                      animate={{ width: `${usagePercent}%` }}
+                                                      transition={{ duration: 0.6, ease: "easeOut" }}
+                                                      className={`h-full rounded-full ${usagePercent > 90
+                                                        ? 'bg-red-500'
+                                                        : usagePercent > 70
+                                                          ? 'bg-amber-500'
+                                                          : 'bg-emerald-500'
+                                                        }`}
+                                                    />
+                                                  </div>
+
+                                                  <div className="grid grid-cols-2 gap-3">
+                                                    <div className="p-3 bg-neutral-900/60 rounded-xl border border-neutral-800/60">
+                                                      <div className="text-[10px] text-neutral-400 font-medium uppercase tracking-wider mb-1">Status</div>
+                                                      <div className="flex items-center gap-2">
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                        <span className="text-xs font-medium text-neutral-200">Active</span>
+                                                      </div>
+                                                    </div>
+
+                                                    <div className="p-3 bg-neutral-900/60 rounded-xl border border-neutral-800/60">
+                                                      <div className="text-[10px] text-neutral-400 font-medium uppercase tracking-wider mb-1">Remaining</div>
+                                                      <div className="text-xs font-medium text-neutral-200">
+                                                        <span className="text-neutral-100 font-semibold">{rieUsage.remaining}</span> requests left
+                                                      </div>
                                                     </div>
                                                   </div>
                                                 </div>
-                                              </div>
-                                            )}
+                                              );
+                                            })()}
 
-                                            {/* Footer Info */}
-                                            <div className="flex items-center gap-3 px-4 py-3 bg-neutral-900/30 rounded-xl border border-neutral-800/50">
-                                              <Sparkles className="w-4 h-4 text-neutral-500 shrink-0" />
-                                              <p className="text-[11px] text-neutral-400 leading-normal">
-                                                Your requests are dynamically optimized by Rie's backend.
+                                            {/* Footer Note */}
+                                            <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-neutral-900/40 rounded-xl border border-neutral-800/40">
+                                              <Sparkles className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                                              <p className="text-[11px] text-neutral-400">
+                                                Requests are dynamically optimized and managed by Rie backend.
                                               </p>
                                             </div>
                                           </div>
