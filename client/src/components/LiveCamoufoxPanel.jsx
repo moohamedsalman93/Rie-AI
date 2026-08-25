@@ -42,6 +42,8 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
   const [profiles, setProfiles] = useState([{ id: 'default', name: 'Default Profile' }]);
   const [selectedProfile, setSelectedProfile] = useState('default');
   const [clickRipples, setClickRipples] = useState([]);
+  const [isFocused, setIsFocused] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   // Cookie & Session Import State
   const [isCookieModalOpen, setIsCookieModalOpen] = useState(false);

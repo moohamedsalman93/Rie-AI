@@ -3689,72 +3689,6 @@ async def create_skill_endpoint(body: SkillCreate):
     )
 
 
-@router.get("/skills/{skill_id}", response_model=SkillResponse)
-async def get_skill_endpoint(skill_id: str):
-    """Get a single skill by ID."""
-    row = await run_in_threadpool(get_skill, skill_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    return SkillResponse(
-        id=row["id"],
-        name=row["name"],
-        description=row.get("description", ""),
-        content=row.get("content", ""),
-        icon=row.get("icon", "🧠"),
-        tool_ids=row.get("tool_ids", []),
-        enabled=row.get("enabled", True),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
-
-
-@router.put("/skills/{skill_id}", response_model=SkillResponse)
-async def update_skill_endpoint(skill_id: str, body: SkillUpdate):
-    """Update a skill by ID."""
-    if body.name is not None and not body.name.strip():
-        raise HTTPException(status_code=400, detail="Skill name cannot be empty")
-    if body.content is not None and not body.content.strip():
-        raise HTTPException(status_code=400, detail="Skill content cannot be empty")
-    row = await run_in_threadpool(
-        update_skill,
-        skill_id,
-        body.name,
-        body.description,
-        body.content,
-        body.icon,
-        body.tool_ids,
-        body.enabled,
-    )
-    if not row:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    return SkillResponse(
-        id=row["id"],
-        name=row["name"],
-        description=row.get("description", ""),
-        content=row.get("content", ""),
-        icon=row.get("icon", "🧠"),
-        tool_ids=row.get("tool_ids", []),
-        enabled=row.get("enabled", True),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
-
-
-@router.delete("/skills/{skill_id}")
-async def delete_skill_endpoint(skill_id: str):
-    """Delete a skill by ID."""
-    try:
-        deleted = await run_in_threadpool(delete_skill, skill_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Skill not found")
-        return {"ok": True, "id": skill_id}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-
-
-
 @router.get("/skills/active")
 async def get_active_skills_endpoint(
     thread_id: Optional[str] = None,
@@ -3857,6 +3791,72 @@ async def get_active_skills_endpoint(
         pass
 
     return active
+
+
+@router.get("/skills/{skill_id}", response_model=SkillResponse)
+async def get_skill_endpoint(skill_id: str):
+    """Get a single skill by ID."""
+    row = await run_in_threadpool(get_skill, skill_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.put("/skills/{skill_id}", response_model=SkillResponse)
+async def update_skill_endpoint(skill_id: str, body: SkillUpdate):
+    """Update a skill by ID."""
+    if body.name is not None and not body.name.strip():
+        raise HTTPException(status_code=400, detail="Skill name cannot be empty")
+    if body.content is not None and not body.content.strip():
+        raise HTTPException(status_code=400, detail="Skill content cannot be empty")
+    row = await run_in_threadpool(
+        update_skill,
+        skill_id,
+        body.name,
+        body.description,
+        body.content,
+        body.icon,
+        body.tool_ids,
+        body.enabled,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return SkillResponse(
+        id=row["id"],
+        name=row["name"],
+        description=row.get("description", ""),
+        content=row.get("content", ""),
+        icon=row.get("icon", "🧠"),
+        tool_ids=row.get("tool_ids", []),
+        enabled=row.get("enabled", True),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@router.delete("/skills/{skill_id}")
+async def delete_skill_endpoint(skill_id: str):
+    """Delete a skill by ID."""
+    try:
+        deleted = await run_in_threadpool(delete_skill, skill_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return {"ok": True, "id": skill_id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
 
 
 # ── Plugin & Connector Layer API Endpoints ─────────────────────────────────────
