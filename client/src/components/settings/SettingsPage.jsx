@@ -1682,7 +1682,7 @@ key2,
                                           <div className="space-y-1.5 max-w-sm">
                                             <h4 className="text-base font-semibold text-neutral-100">Unlock the Full Power of Rie</h4>
                                             <p className="text-xs text-neutral-400 leading-relaxed">
-                                              Sign in to access cloud-accelerated models and get 50 free requests daily.
+                                              Sign in to access cloud-accelerated models and get 100 free requests daily.
                                             </p>
                                           </div>
                                           <button
