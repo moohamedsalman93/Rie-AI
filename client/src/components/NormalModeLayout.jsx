@@ -29,7 +29,7 @@ import { getHistory, getBrowserStatus } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { MarkdownMessage } from './MarkdownMessage';
 import { LinkPreview } from './LinkPreview';
-import { ToolChip, ToolCallGroup } from './ToolChip';
+import { ToolChip, ToolCallGroup, SubAgentActivity } from './ToolChip';
 import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
 import { LlmProviderSelector } from './LlmProviderSelector';
@@ -59,6 +59,9 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
     blocks.forEach((block, idx) => {
         if (block.type === 'tool') {
             currentToolGroup.push(block);
+        } else if (block.type === 'subagent') {
+            flushToolGroup();
+            elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} />);
         } else if (block.type === 'thought') {
             flushToolGroup();
             elements.push(

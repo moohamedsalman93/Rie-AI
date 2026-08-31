@@ -2649,8 +2649,10 @@ class AgentManager:
             ContextProjectionMiddleware(),
             SummarizationMiddleware(
                 model=llm,
-                trigger=("tokens", 8000),
-                keep=("messages", 20),
+                # Keep the retained tail comfortably below the trigger so
+                # tool-heavy agent loops do not re-summarize on every model call.
+                trigger=("tokens", 16000),
+                keep=("messages", 10),
                 summary_prompt="""Summarize the conversation history. 
                             1. EXPLICITLY preserve all file paths (e.g., /src/main.py).
                             2. EXPLICITLY preserve class names and function names.
@@ -3684,10 +3686,14 @@ class AgentManager:
             
             middleware_stack.append(
                 SummarizationMiddleware(
-                    # Use a small model like gpt-4o-mini or haiku for the summary
+                    # Reuse the configured model so summarization works consistently
+                    # across every supported provider.
                     model=self._llm,
-                    trigger=("tokens", 8000),
-                    keep=("messages", 20),
+                    # Tool calls and their results are separate messages. Keeping
+                    # 20 made the retained tail large enough to immediately cross
+                    # the old 8k trigger again during multi-step agent runs.
+                    trigger=("tokens", 16000),
+                    keep=("messages", 10),
                     summary_prompt="""Summarize the conversation history. 
                             1. EXPLICITLY preserve all file paths (e.g., /src/main.py).
                             2. EXPLICITLY preserve class names and function names.

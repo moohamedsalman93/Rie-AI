@@ -257,6 +257,68 @@ export const ToolChip = memo(({ name, content, tooltipPlacement = "bottom" }) =>
 
 ToolChip.displayName = "ToolChip";
 
+export const SubAgentActivity = memo(({ block }) => {
+    const [expanded, setExpanded] = useState(false);
+    const running = block.status === "running";
+    const displayName = String(block.name || "subagent").replace(/_/g, " ");
+    const initial = displayName.trim().charAt(0).toUpperCase() || "A";
+
+    return (
+        <div className="my-2 max-w-2xl">
+            <button
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+                className="group w-full flex items-center gap-2.5 py-1.5 text-left focus:outline-none"
+            >
+                <div className="relative shrink-0">
+                    {block.image ? (
+                        <img src={block.image} alt="" className="w-8 h-8 rounded-full object-cover border border-neutral-700" />
+                    ) : (
+                        <div className="w-8 h-8 rounded-full bg-neutral-800 border border-neutral-700 flex items-center justify-center text-xs font-semibold text-neutral-300">
+                            {initial}
+                        </div>
+                    )}
+                    <span className={`absolute -right-0.5 -bottom-0.5 w-2.5 h-2.5 rounded-full border-2 border-neutral-950 ${running ? "bg-amber-400 animate-pulse" : "bg-emerald-500"}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2 min-w-0">
+                        <span className="text-xs font-medium text-neutral-300 capitalize truncate">{displayName}</span>
+                        <span className="text-[10px] text-neutral-600 shrink-0">
+                            {running ? "working" : "completed"}
+                        </span>
+                    </div>
+                    <p className="text-[11px] leading-4 text-neutral-500 truncate">{block.description}</p>
+                </div>
+                <svg
+                    className={`w-3.5 h-3.5 text-neutral-700 group-hover:text-neutral-500 transition-all ${expanded ? "rotate-180" : ""}`}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+                </svg>
+            </button>
+            {expanded && (
+                <div className="ml-10 mt-1 pl-3 border-l border-neutral-800 text-xs text-neutral-400 space-y-3 pb-1">
+                    <div>
+                        <div className="text-[10px] text-neutral-600 mb-1">Current task</div>
+                        <div className="leading-relaxed">{block.description}</div>
+                    </div>
+                    {block.result && (
+                        <div>
+                            <div className="text-[10px] text-neutral-600 mb-1">Result</div>
+                            <MarkdownMessage content={block.result} />
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+});
+
+SubAgentActivity.displayName = "SubAgentActivity";
+
 export const ToolCallGroup = memo(({ blocks, tooltipPlacement = "bottom" }) => {
     const [isExpanded, setIsExpanded] = useState(false);
 

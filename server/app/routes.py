@@ -101,6 +101,7 @@ from app.database import (
     update_skill,
     get_skill,
     list_skills,
+    list_thread_skills,
     delete_skill,
     export_backup_data,
     import_backup_data,
@@ -3061,7 +3062,7 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
     data: Dict[str, Any] = {}
 
     # Common attributes on LangChain message classes
-    for attr in ("type", "role", "name", "id"):
+    for attr in ("type", "role", "name", "id", "tool_call_id"):
         if hasattr(msg, attr):
             data[attr] = getattr(msg, attr)
 
@@ -3131,6 +3132,24 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
                 tc_name = tc_data.get("name", "")
             
             if tc_name not in LTM_TOOL_NAMES:
+                if tc_name == "task" and isinstance(tc_data, dict):
+                    args = tc_data.get("args") or {}
+                    subagent_type = str(args.get("subagent_type", "")).strip()
+                    graph = settings.SUBAGENT_PLANNER_GRAPH or {}
+                    nodes = graph.get("nodes", []) if isinstance(graph, dict) else []
+                    node = next(
+                        (
+                            item for item in nodes
+                            if isinstance(item, dict)
+                            and str(item.get("name", "")).strip().lower() == subagent_type.lower()
+                        ),
+                        None,
+                    )
+                    tc_data["subagent_meta"] = {
+                        "name": (node or {}).get("name") or subagent_type or "subagent",
+                        "description": (node or {}).get("description") or "",
+                        "logo_url": (node or {}).get("logo_url"),
+                    }
                 serialized_calls.append(tc_data or str(tc))
         
         if not serialized_calls and not data.get("content") and not data.get("reasoning_content"):
@@ -3234,6 +3253,11 @@ async def _agent_stream_generator(
                         serialized = _serialize_message(llm_chunk)
                         if serialized is None:
                             continue
+                        # Flash mode promises an immediate final answer without
+                        # exposing provider reasoning. Some models (notably
+                        # gpt-oss) return reasoning_content even for trivial turns.
+                        if speed_mode == "flash":
+                            serialized.pop("reasoning_content", None)
                         # UI "model" channel is assistant tokens only (not tool/human messages)
                         if serialized.get("type") not in ("ai", "assistant"):
                             continue
@@ -3282,6 +3306,8 @@ async def _agent_stream_generator(
                             serialized = _serialize_message(last_msg)
                             if serialized is None:
                                 continue
+                            if speed_mode == "flash":
+                                serialized.pop("reasoning_content", None)
 
                             # Avoid sending the full assistant reply again after token streaming
                             # (LangGraph emits both "messages" tokens and an "updates" node completion).
@@ -3290,12 +3316,14 @@ async def _agent_stream_generator(
                                 seen_token_stream
                                 and serialized.get("type") in ("ai", "assistant")
                             ):
-                                content = serialized.get("content", "")
-                                has_text = isinstance(content, str) and bool(content.strip())
                                 has_tools = bool(serialized.get("tool_calls"))
-                                if has_tools and isinstance(content, str) and content.strip():
-                                    serialized = {**serialized, "content": ""}
-                                elif not has_tools and has_text:
+                                # The token stream already delivered both answer
+                                # text and provider reasoning. The later node update
+                                # is useful only for its completed tool-call payload.
+                                serialized.pop("reasoning_content", None)
+                                if has_tools:
+                                    serialized["content"] = ""
+                                else:
                                     continue
 
                             payload = {
@@ -3695,98 +3723,26 @@ async def get_active_skills_endpoint(
     project_root: Optional[str] = None
 ):
     """
-    Returns all active skills for the current context:
-    - DB attached skills (enabled or thread-attached)
-    - Workspace-discovered files (CLAUDE.md, RIE.md, etc.)
-    - Global-discovered files (~/.rie/CLAUDE.md, etc.)
+    Return instructions explicitly attached to this thread.
+
+    Globally enabled and workspace-discovered skills are merely available for
+    query-time matching; they are not necessarily injected and must not be
+    presented by the UI as active instructions.
     """
     active = []
     
-    # 1. DB enabled skills
+    # Explicit thread attachments are the only instructions that can be
+    # truthfully represented as persistently active by this endpoint.
     try:
-        db_skills = await run_in_threadpool(list_skills)
+        db_skills = await run_in_threadpool(list_thread_skills, thread_id) if thread_id else []
         for item in db_skills:
-            if item.get("enabled"):
-                active.append({
-                    "id": item["id"],
-                    "name": item["name"],
-                    "icon": item.get("icon", "🧠"),
-                    "source": "db_thread",
-                    "description": item.get("description", "")
-                })
-    except Exception:
-        pass
-
-    # 2. Workspace skills
-    import os
-    if project_root and os.path.isdir(project_root):
-        try:
-            claude_path = os.path.join(project_root, "CLAUDE.md")
-            if os.path.isfile(claude_path):
-                active.append({
-                    "id": "ws_claude",
-                    "name": "CLAUDE.md",
-                    "icon": "📁",
-                    "source": "workspace",
-                    "description": "Rules loaded from workspace root CLAUDE.md"
-                })
-            rie_path = os.path.join(project_root, "RIE.md")
-            if os.path.isfile(rie_path):
-                active.append({
-                    "id": "ws_rie",
-                    "name": "RIE.md",
-                    "icon": "📁",
-                    "source": "workspace",
-                    "description": "Rules loaded from workspace root RIE.md"
-                })
-            rie_skills_dir = os.path.join(project_root, ".rie", "skills")
-            if os.path.isdir(rie_skills_dir):
-                for filename in sorted(os.listdir(rie_skills_dir)):
-                    if filename.endswith(".md"):
-                        active.append({
-                            "id": f"ws_{filename}",
-                            "name": filename[:-3],
-                            "icon": "📁",
-                            "source": "workspace",
-                            "description": f"Rules loaded from workspace .rie/skills/{filename}"
-                        })
-        except Exception:
-            pass
-
-    # 3. Global skills
-    try:
-        home_dir = os.path.expanduser("~")
-        global_rie_dir = os.path.join(home_dir, ".rie")
-        if os.path.isdir(global_rie_dir):
-            global_claude = os.path.join(global_rie_dir, "CLAUDE.md")
-            if os.path.isfile(global_claude):
-                active.append({
-                    "id": "global_claude",
-                    "name": "CLAUDE.md",
-                    "icon": "🌐",
-                    "source": "global",
-                    "description": "Rules loaded from global ~/.rie/CLAUDE.md"
-                })
-            global_rie = os.path.join(global_rie_dir, "RIE.md")
-            if os.path.isfile(global_rie):
-                active.append({
-                    "id": "global_rie",
-                    "name": "RIE.md",
-                    "icon": "🌐",
-                    "source": "global",
-                    "description": "Rules loaded from global ~/.rie/RIE.md"
-                })
-            global_skills_dir = os.path.join(global_rie_dir, "skills")
-            if os.path.isdir(global_skills_dir):
-                for filename in sorted(os.listdir(global_skills_dir)):
-                    if filename.endswith(".md"):
-                        active.append({
-                            "id": f"global_{filename}",
-                            "name": filename[:-3],
-                            "icon": "🌐",
-                            "source": "global",
-                            "description": f"Rules loaded from global ~/.rie/skills/{filename}"
-                        })
+            active.append({
+                "id": item["id"],
+                "name": item["name"],
+                "icon": item.get("icon", "🧠"),
+                "source": "db_thread",
+                "description": item.get("description", "")
+            })
     except Exception:
         pass
 

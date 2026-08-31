@@ -2241,6 +2241,29 @@ def list_skills() -> List[Dict[str, Any]]:
     return [_skill_row_to_dict(r) for r in rows]
 
 
+def list_thread_skills(thread_id: str) -> List[Dict[str, Any]]:
+    """Return only skills explicitly attached to a conversation thread."""
+    if not thread_id:
+        return []
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT s.*
+        FROM skills AS s
+        INNER JOIN thread_skills AS ts ON ts.skill_id = s.id
+        WHERE ts.thread_id = ?
+        ORDER BY ts.attached_at ASC
+        """,
+        (thread_id,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [_skill_row_to_dict(r) for r in rows]
+
+
 def delete_skill(skill_id: str) -> bool:
     """Delete a skill and its thread attachments. Returns True if deleted."""
     db_path = get_db_path()

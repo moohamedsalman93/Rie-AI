@@ -259,6 +259,7 @@ function MainApp() {
   const eventSourceRef = useRef(null);
   const firstToolMinimizedRef = useRef(false);
   const lastTerminalCommandRef = useRef(null);
+  const subagentCallsRef = useRef({}); // threadId -> toolCallId -> subagent activity
   const lastTurnIdsRef = useRef({}); // Map of threadId -> { userMessageId, botMessageId }
   const lastSentInputsRef = useRef({}); // Map of threadId -> { text, image_url }
   const bubbleRef = useRef(null);
@@ -629,6 +630,32 @@ function MainApp() {
         if (voiceReplyRef.current && lastTurnWasVoiceRef.current && sentenceBufferRef.current.trim()) {
           queueSentence(sentenceBufferRef.current);
         }
+
+        // In normal mode, notify only when the app is not the foreground window.
+        // This covers minimized and backgrounded long-running agent tasks without
+        // interrupting users who are already watching the response arrive.
+        if (windowMode === "normal") {
+          const completedText = accumulatedTextRef.current.trim();
+          void (async () => {
+            try {
+              const focused = await getCurrentWindow().isFocused();
+              if (focused) return;
+              const granted = await isPermissionGranted();
+              if (!granted) return;
+              const preview = completedText
+                .replace(/<[^>]+>/g, "")
+                .replace(/\s+/g, " ")
+                .slice(0, 180);
+              sendNotification({
+                title: "Rie-AI finished",
+                body: preview || "Your agent task is complete and ready to view.",
+              });
+            } catch (e) {
+              console.warn("Failed to send agent completion notification:", e);
+            }
+          })();
+        }
+
         // Reset sentence buffer and accumulated text for the next turn
         sentenceBufferRef.current = "";
         accumulatedTextRef.current = "";
@@ -761,6 +788,36 @@ function MainApp() {
       const msg = data.message || {};
 
       if (msg.tool_calls && msg.tool_calls.length > 0) {
+        const taskCalls = msg.tool_calls.filter((call) => call?.name === "task");
+        if (taskCalls.length > 0) {
+          if (!subagentCallsRef.current[threadId]) subagentCallsRef.current[threadId] = {};
+          taskCalls.forEach((call) => {
+            const callId = call.id || `subagent_${Date.now()}_${Math.random()}`;
+            const meta = call.subagent_meta || {};
+            const activity = {
+              type: "subagent",
+              id: callId,
+              name: meta.name || call.args?.subagent_type || "subagent",
+              description: call.args?.description || meta.description || "Working on the delegated task",
+              image: meta.logo_url || null,
+              status: "running",
+              result: "",
+              startedAt: Date.now(),
+            };
+            subagentCallsRef.current[threadId][callId] = activity;
+            setSessions((prev) => {
+              const next = { ...prev };
+              if (!next[threadId]) return prev;
+              next[threadId] = next[threadId].map((message) => {
+                if (message.id !== botMessageId) return message;
+                const blocks = message.blocks || [];
+                if (blocks.some((block) => block.type === "subagent" && block.id === callId)) return message;
+                return { ...message, blocks: [...blocks, activity] };
+              });
+              return next;
+            });
+          });
+        }
         const first = msg.tool_calls[0];
         const toolName = first.name || null;
         setCurrentTool(toolName);
@@ -979,6 +1036,33 @@ function MainApp() {
         const content = msg.content;
         if (content && typeof content === "string") {
           const toolName = msg.name || currentTool;
+
+          if (toolName === "task") {
+            const callId = msg.tool_call_id;
+            const known = subagentCallsRef.current[threadId] || {};
+            const matchedId = callId && known[callId]
+              ? callId
+              : Object.keys(known).find((id) => known[id]?.status === "running");
+            if (matchedId) {
+              known[matchedId] = { ...known[matchedId], status: "completed", result: content, completedAt: Date.now() };
+              setSessions((prev) => {
+                const next = { ...prev };
+                if (!next[threadId]) return prev;
+                next[threadId] = next[threadId].map((message) => message.id !== botMessageId
+                  ? message
+                  : {
+                      ...message,
+                      blocks: (message.blocks || []).map((block) =>
+                        block.type === "subagent" && block.id === matchedId
+                          ? { ...block, status: "completed", result: content, completedAt: Date.now() }
+                          : block
+                      ),
+                    });
+                return next;
+              });
+            }
+            return;
+          }
 
           if (toolName === "ask_question") {
             const qPayload = normalizeQuestionPayload(content, `q_tool_${botMessageId}`);
@@ -3415,7 +3499,7 @@ function MainApp() {
         )}
       </AnimatePresence>
 
-      <div className={`fixed inset-0 flex items-center pointer-events-none rounded-2xl overflow-hidden ${side === "right" ? "justify-end" : "justify-start"} ${(settings.exclude_from_capture !== false) ? "screen-privacy-active" : ""}`}>
+      <div className={`fixed inset-0 flex items-center pointer-events-none overflow-hidden ${side === "right" ? "justify-end" : "justify-start"} ${(settings.exclude_from_capture !== false) ? "screen-privacy-active" : ""}`}>
         <AnimatePresence
           mode="wait"
           onExitComplete={async () => {

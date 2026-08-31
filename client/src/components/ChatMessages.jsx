@@ -2,7 +2,7 @@ import React, { memo } from "react";
 import { motion } from "framer-motion";
 import { GitBranch, Info, RotateCw } from 'lucide-react';
 import { MarkdownMessage } from "./MarkdownMessage";
-import { ToolChip, ToolCallGroup } from "./ToolChip";
+import { ToolChip, ToolCallGroup, SubAgentActivity } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
 import { LinkPreview } from "./LinkPreview";
 import { KnowledgeChatBanner } from "./KnowledgeAttachmentChips";
@@ -32,6 +32,9 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
   blocks.forEach((block, idx) => {
     if (block.type === "tool") {
       currentToolGroup.push(block);
+    } else if (block.type === "subagent") {
+      flushToolGroup();
+      elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} />);
     } else if (block.type === "thought") {
       flushToolGroup();
       elements.push(
@@ -95,7 +98,8 @@ function ChatMessagesImpl({
       (block) =>
         (block.type === "text" && block.text && block.text.trim()) ||
         (block.type === "thought" && block.text && block.text.trim()) ||
-        block.type === "tool"
+        block.type === "tool" ||
+        block.type === "subagent"
     );
     return hasActiveBlocks || (msg.text && msg.text.trim());
   });
