@@ -1164,7 +1164,7 @@ export function NormalModeLayout({
                         <div className="w-full max-w-xl xl:max-w-3xl mx-auto">
                             <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all">
                                 {/* Inline Attachments (if any attached) */}
-                                {(attachedImage || isScreenAttached || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
+                                {(attachedImage || isScreenAttached || projectRoot || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
                                     <div className="flex items-center gap-2 flex-wrap px-1">
                                         <AnimatePresence>
                                             {attachedImage && (
@@ -1179,6 +1179,15 @@ export function NormalModeLayout({
                                                 <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[11px] text-emerald-400 shrink-0">
                                                     <span>@screen</span>
                                                     <button onClick={() => setIsScreenAttached(false)} className="text-emerald-400/60 hover:text-emerald-400">×</button>
+                                                </motion.div>
+                                            )}
+                                            {projectRoot && (
+                                                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[11px] text-amber-400 max-w-[160px] truncate shrink-0">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-amber-400">
+                                                        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                                                    </svg>
+                                                    <span className="truncate">@{projectRootChip}</span>
+                                                    <button onClick={() => { setProjectRoot(null); setProjectRootChip(null); }} className="text-amber-400/60 hover:text-amber-400 ml-0.5">×</button>
                                                 </motion.div>
                                             )}
                                             {attachedClipboardText && (

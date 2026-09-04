@@ -35,6 +35,41 @@ from langchain_core.tools import InjectedToolArg
 from deepagents.middleware.subagents import SubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
+from pathlib import Path as _Path
+
+def _patch_deepagents_filesystem_for_windows() -> None:
+    """Patch deepagents filesystem validation and resolution to fully support Windows drive paths."""
+    import deepagents.middleware.filesystem as _dfm
+    from deepagents.backends.filesystem import FilesystemBackend as _DFSB
+
+    def _windows_safe_validate_path(path: str, *, allowed_prefixes=None) -> str:
+        if not path or path == "." or path == "/":
+            return "/"
+        if ".." in path or path.startswith("~"):
+            raise ValueError(f"Path traversal not allowed: {path}")
+        # Allow Windows absolute paths (e.g. C:/..., D:\...)
+        if re.match(r"^[a-zA-Z]:", path):
+            return os.path.normpath(path).replace("\\", "/")
+        normalized = os.path.normpath(path).replace("\\", "/")
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        return normalized
+
+    def _windows_safe_resolve_path(self, key: str) -> _Path:
+        if not key or key == "." or key == "/":
+            return self.cwd
+        # Direct absolute path on Windows
+        if re.match(r"^[a-zA-Z]:", key):
+            return _Path(key).resolve()
+        clean = key.lstrip("/")
+        if not clean or clean == ".":
+            return self.cwd
+        return (self.cwd / clean).resolve()
+
+    _dfm._validate_path = _windows_safe_validate_path
+    _DFSB._resolve_path = _windows_safe_resolve_path
+
+_patch_deepagents_filesystem_for_windows()
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from app.database import get_checkpoint_db_path
@@ -3184,21 +3219,15 @@ class AgentManager:
 
     def dynamic_backend(self, runtime):
         """Factory used by FilesystemMiddleware to resolve paths at runtime."""
-        # Access the config through the context attribute
-        # In many versions of the SDK, config is stored inside the context
         config = getattr(runtime, "config", getattr(runtime, "context", {}))
-        
         # Retrieve the configurable dict
-        # Note: Depending on your specific version, it might be in runtime.context
-        # or you can try runtime.context.get("config", {})
         configurable = config.get("configurable", {}) if isinstance(config, dict) else {}
     
-        project_root = configurable.get(
-            "project_root", 
-            "D:/professional/code/reactjs/reactjs/vms" # Default fallback
-        )
+        project_root = configurable.get("project_root")
+        if not project_root or not os.path.exists(project_root):
+            project_root = os.getcwd()
     
-        return FilesystemBackend(root_dir=project_root, virtual_mode=True)
+        return FilesystemBackend(root_dir=project_root, virtual_mode=False)
 
     def _default_subagents_config(self) -> list[dict]:
         return [
@@ -4019,10 +4048,15 @@ class AgentManager:
                 client_longitude,
                 client_location_accuracy_m,
             )
+            initial_msgs = []
             if device_ctx:
-                input_data = {"messages": [{"role": "system", "content": device_ctx}, *messages]}
-            else:
-                input_data = {"messages": messages}
+                initial_msgs.append({"role": "system", "content": device_ctx})
+            if project_root and str(project_root).strip():
+                initial_msgs.append({
+                    "role": "system",
+                    "content": f"Active Workspace Directory (Project Root): {str(project_root).strip()}\nWhen reading, modifying, creating files, searching, or running terminal commands for workspace tasks, operate in and relative to this directory.",
+                })
+            input_data = {"messages": [*initial_msgs, *messages]}
 
         tokens = set_agent_context(
             thread_id,
@@ -4134,6 +4168,11 @@ class AgentManager:
             )
             if device_ctx:
                 processed_messages.append({"role": "system", "content": device_ctx})
+            if project_root and str(project_root).strip():
+                processed_messages.append({
+                    "role": "system",
+                    "content": f"Active Workspace Directory (Project Root): {str(project_root).strip()}\nWhen reading, modifying, creating files, searching, or running terminal commands for workspace tasks, operate in and relative to this directory.",
+                })
             if is_voice:
                 # Inject hidden instructions for human-like voice response
                 processed_messages.append({

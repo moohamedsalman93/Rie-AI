@@ -83,12 +83,12 @@ fn kill_backend_processes() {
             .args(["/F", "/IM", "rie-backend.exe", "/T"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn();
+            .status();
         let _ = Command::new("taskkill")
             .args(["/F", "/IM", "rie-backend-x86_64-pc-windows-msvc.exe", "/T"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn();
+            .status();
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -100,6 +100,24 @@ fn kill_backend_processes() {
             .stderr(std::process::Stdio::null())
             .spawn();
     }
+}
+
+/// Stop the backend synchronously before the updater launches NSIS.
+/// Otherwise PyInstaller children can keep `_internal` DLLs locked and the
+/// installer fails with "Error opening file for writing".
+#[tauri::command]
+fn prepare_for_update(state: tauri::State<'_, BackendState>) -> Result<(), String> {
+    {
+        let mut lock = state.0.lock().map_err(|_| "Backend state lock poisoned".to_string())?;
+        if let Some(child) = lock.take() {
+            let _ = child.kill();
+        }
+    }
+
+    kill_backend_processes();
+    // Give Windows a brief moment to release mapped PyInstaller DLL handles.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    Ok(())
 }
 
 struct AppToken(String);
@@ -310,6 +328,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             exit_app,
+            prepare_for_update,
             get_app_token,
             audio::start_native_recording,
             audio::stop_native_recording,

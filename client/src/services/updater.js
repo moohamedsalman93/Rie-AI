@@ -1,5 +1,12 @@
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { invoke } from '@tauri-apps/api/core';
+
+async function stopBackendBeforeInstall() {
+  // The bundled PyInstaller backend maps DLLs from the application directory.
+  // It must be fully stopped before NSIS can replace those files.
+  await invoke('prepare_for_update');
+}
 
 /**
  * Checks for application updates.
@@ -59,6 +66,7 @@ export async function downloadAppUpdate(update, onProgress) {
  */
 export async function installDownloadedUpdate(update) {
   try {
+    await stopBackendBeforeInstall();
     await update.install();
     console.log('Update installed, relaunching...');
     await relaunch();
@@ -78,7 +86,7 @@ export async function installAppUpdate(update, onProgress) {
     let downloaded = 0;
     let contentLength = 0;
 
-    await update.downloadAndInstall((event) => {
+    await update.download((event) => {
       switch (event.event) {
         case 'Started':
           contentLength = event.data.contentLength;
@@ -94,6 +102,8 @@ export async function installAppUpdate(update, onProgress) {
       }
     });
 
+    await stopBackendBeforeInstall();
+    await update.install();
     console.log('Update installed, relaunching...');
     await relaunch();
   } catch (error) {

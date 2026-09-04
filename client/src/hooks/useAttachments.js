@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp", "gif"];
 const TEXT_EXTENSIONS = [
@@ -24,19 +23,31 @@ export function useAttachments() {
 
   const handlePickProjectPath = useCallback(async () => {
     try {
-      const selected = await open({
+      const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+      const selected = await openDialog({
         directory: true,
         multiple: false,
         title: "Select Project Root"
       });
 
       if (selected) {
-        setProjectRoot(selected);
-        const parts = selected.split(/[/\\]/);
-        setProjectRootChip(parts[parts.length - 1] || selected);
+        const rawPath = Array.isArray(selected) ? selected[0] : (typeof selected === "object" && selected !== null ? selected.path || String(selected) : selected);
+        if (typeof rawPath === "string" && rawPath.trim()) {
+          const cleanPath = rawPath.trim();
+          setProjectRoot(cleanPath);
+          const parts = cleanPath.split(/[/\\]/).filter(Boolean);
+          setProjectRootChip(parts[parts.length - 1] || cleanPath);
+        }
       }
     } catch (err) {
-      console.error("Failed to pick directory:", err);
+      console.warn("Tauri dialog not available or failed, prompting user:", err);
+      const manualPath = window.prompt("Enter absolute project/workspace path (e.g. D:\\my-project):");
+      if (manualPath && manualPath.trim()) {
+        const clean = manualPath.trim();
+        setProjectRoot(clean);
+        const parts = clean.split(/[/\\]/).filter(Boolean);
+        setProjectRootChip(parts[parts.length - 1] || clean);
+      }
     }
     setIsAttachmentPopoverOpen(false);
   }, []);
