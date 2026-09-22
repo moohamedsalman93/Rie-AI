@@ -3,15 +3,14 @@ import { useState } from "react";
 import { Mic } from "lucide-react";
 import { KnowledgeAttachmentChips } from "./KnowledgeAttachmentChips";
 import { KnowledgePickerModal } from "./KnowledgePickerModal";
+import VoiceControls from "./VoiceControls";
 
 export function ChatInputArea({
   input,
   setInput,
   isLoading,
-  isRecording,
-  onStartRecording,
-  onStopRecording,
-  onToggleRecording,
+  onToggleLiveVoice,
+  voiceControls = null,
   isCapturing,
   isAttachmentPopoverOpen,
   setIsAttachmentPopoverOpen,
@@ -65,6 +64,12 @@ export function ChatInputArea({
     }
     // Non-image files are handled by the parent via processFile
   };
+
+  if (voiceControls) {
+    return <footer className="w-full shrink-0 bg-neutral-950/95 p-3">
+      <VoiceControls {...voiceControls} />
+    </footer>;
+  }
 
   return (
     <footer
@@ -286,241 +291,213 @@ export function ChatInputArea({
           <KnowledgeAttachmentChips attachedKnowledge={attachedKnowledge} onDetach={onDetachKnowledge} />
         </AnimatePresence>
 
-        <div className="flex items-end gap-2">
-          <div className="relative">
-            <button
-              onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-              disabled={isLoading || isCapturing}
-              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 shadow-sm transition active:scale-95 disabled:opacity-50 ${isAttachmentPopoverOpen ? "bg-neutral-600 text-white" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200"}`}
-              title="Attach"
-            >
-              {isCapturing ? (
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m18 15-6-6-6 6" />
-                </svg>
-              )}
-            </button>
-
-            <AnimatePresence>
-              {isAttachmentPopoverOpen && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.95, y: -10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                  className="absolute bottom-full left-0 mb-2 w-48 origin-bottom-left rounded-2xl border border-white/10 bg-neutral-800/95 p-1.5 shadow-2xl backdrop-blur-xl z-[100]"
-                >
-                  <button
-                    onClick={onFileUpload}
-                    className="flex w-full items-center gap-3 rounded-xl px-2 py-1 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                        <circle cx="9" cy="9" r="2" />
-                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                      </svg>
-                    </div>
-                    <div className="flex flex-col items-start translate-y-[1px]">
-                      <span className="font-medium text-[13px]">Upload File</span>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={onCaptureScreen}
-                    className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect width="20" height="14" x="2" y="3" rx="2" />
-                        <path d="M8 21h8" />
-                        <path d="M12 17v4" />
-                      </svg>
-                    </div>
-                    <div className="flex flex-col items-start translate-y-[1px]">
-                      <span className="font-medium text-[13px]">Current Screen</span>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={onPickProjectPath}
-                    className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                      </svg>
-                    </div>
-                    <div className="flex flex-col items-start translate-y-[1px]">
-                      <span className="font-medium text-[13px]">Project Path</span>
-                    </div>
-                  </button>
-
-                  <button
-                    onClick={onAttachClipboard}
-                    className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-pink-500/10 text-pink-400">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                      </svg>
-                    </div>
-                    <div className="flex flex-col items-start translate-y-[1px]">
-                      <span className="font-medium text-[13px]">Read Clipboard</span>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsAttachmentPopoverOpen(false);
-                      setIsKnowledgePickerOpen(true);
-                    }}
-                    className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-                      </svg>
-                    </div>
-                    <div className="flex flex-col items-start translate-y-[1px]">
-                      <span className="font-medium text-[13px]">Custom Knowledge</span>
-                    </div>
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <KnowledgePickerModal
-              isOpen={isKnowledgePickerOpen}
-              onClose={() => setIsKnowledgePickerOpen(false)}
-              onSelect={(pack) => onAttachKnowledge?.(pack)}
-              attachedIds={attachedKnowledge.map((k) => k.id)}
-              variant="popover"
-            />
-          </div>
-
-          {/* Text input container */}
-          <div className="relative flex flex-col w-full justify-end group">
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  onSend();
-                }
-              }}
-              onPaste={(e) => {
-                if (isLoading) return;
-                const items = e.clipboardData?.items || [];
-                for (const item of items) {
-                  if (item.kind === "file" && item.type.startsWith("image/")) {
-                    const file = item.getAsFile();
-                    if (file) {
-                      e.preventDefault();
-                      attachFile(file);
-                    }
-                    break;
-                  }
-                }
-              }}
-              placeholder={isRecording ? "Listening..." : "Tell Rie what to do..."}
-              className={`custom-scrollbar w-full resize-none rounded-2xl border bg-neutral-800/80 px-3 py-2 text-[13px] text-neutral-100 placeholder-neutral-500 shadow-sm outline-none transition-all placeholder:transition-opacity ${isRecording ? "border-emerald-500 ring-2 ring-emerald-500/20" : `border-white/10 focus:bg-neutral-800 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'}`} disabled:opacity-50 max-h-[280px]`}
-              disabled={isLoading}
-            />
-            <AnimatePresence>
-              {isRecording && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2"
-                >
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Live</span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          <AnimatePresence mode="wait" initial={false}>
-            {isLoading ? (
-              <motion.button
-                key="btn-loading"
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.8, opacity: 0 }}
-                transition={{ duration: 0.12 }}
-                id="send-btn"
-                type="button"
-                onClick={() => onCancelRequest?.()}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/20 text-red-400 hover:bg-red-500/40 shadow-sm transition active:scale-95"
-                title="Stop generating"
+          <div className="flex items-end gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
+                disabled={isLoading || isCapturing}
+                className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 shadow-sm transition active:scale-95 disabled:opacity-50 ${isAttachmentPopoverOpen ? "bg-neutral-600 text-white" : "bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200"}`}
+                title="Attach"
               >
-                <div className="relative flex items-center justify-center">
-                  <div className="absolute h-6 w-6 animate-spin rounded-full border-2 border-red-500/30 border-t-red-500" />
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="6" y="6" width="12" height="12" rx="1" />
+                {isCapturing ? (
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                   </svg>
-                </div>
-              </motion.button>
-            ) : isRecording ? (
-              <motion.button
-                key="btn-recording"
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.8, opacity: 0 }}
-                transition={{ duration: 0.12 }}
-                id="send-btn"
-                type="button"
-                onClick={() => (onToggleRecording ? onToggleRecording() : onStopRecording?.())}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-500/40 bg-red-500/20 text-red-400 animate-pulse hover:bg-red-500/30 shadow-sm transition active:scale-95"
-                title="Listening... Click to stop"
-              >
-                <Mic size={17} />
-              </motion.button>
-            ) : hasContent ? (
-              <motion.button
-                key="btn-send"
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.8, opacity: 0 }}
-                transition={{ duration: 0.12 }}
-                id="send-btn"
-                type="button"
-                onClick={onSend}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-neutral-700 hover:bg-neutral-600 text-neutral-100 shadow-sm transition active:scale-95"
-                title="Send message"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m22 2-7 20-4-9-9-4Z" />
-                  <path d="M22 2 11 13" />
-                </svg>
-              </motion.button>
-            ) : (
-              <motion.button
-                key="btn-voice"
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.8, opacity: 0 }}
-                transition={{ duration: 0.12 }}
-                id="send-btn"
-                type="button"
-                onClick={() => (onToggleRecording ? onToggleRecording() : onStartRecording?.())}
-                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white shadow-sm transition active:scale-95"
-                title="Voice input"
-              >
-                <Mic size={17} />
-              </motion.button>
-            )}
-          </AnimatePresence>
-        </div>
+                )}
+              </button>
+
+              <AnimatePresence>
+                {isAttachmentPopoverOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                    className="absolute bottom-12 left-0 z-50 w-52 rounded-2xl border border-white/10 bg-neutral-900/95 p-1.5 shadow-2xl backdrop-blur-xl"
+                  >
+                    <button
+                      type="button"
+                      onClick={onFileUpload}
+                      className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                      </div>
+                      <div className="flex flex-col items-start translate-y-[1px]">
+                        <span className="font-medium text-[13px]">Upload File</span>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={onCaptureScreen}
+                      className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect width="20" height="14" x="2" y="3" rx="2" />
+                          <path d="M8 21h8" />
+                          <path d="M12 17v4" />
+                        </svg>
+                      </div>
+                      <div className="flex flex-col items-start translate-y-[1px]">
+                        <span className="font-medium text-[13px]">Current Screen</span>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={onPickProjectPath}
+                      className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                        </svg>
+                      </div>
+                      <div className="flex flex-col items-start translate-y-[1px]">
+                        <span className="font-medium text-[13px]">Project Path</span>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={onAttachClipboard}
+                      className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-pink-500/10 text-pink-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+                          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                        </svg>
+                      </div>
+                      <div className="flex flex-col items-start translate-y-[1px]">
+                        <span className="font-medium text-[13px]">Clipboard</span>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsAttachmentPopoverOpen(false);
+                        setIsKnowledgePickerOpen(true);
+                      }}
+                      className="flex w-full items-center gap-3 rounded-xl py-1 px-2 text-sm text-neutral-300 transition-all hover:bg-white/5 hover:text-white"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/10 text-violet-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
+                        </svg>
+                      </div>
+                      <div className="flex flex-col items-start translate-y-[1px]">
+                        <span className="font-medium text-[13px]">Custom Knowledge</span>
+                      </div>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <KnowledgePickerModal
+                isOpen={isKnowledgePickerOpen}
+                onClose={() => setIsKnowledgePickerOpen(false)}
+                onSelect={(pack) => onAttachKnowledge?.(pack)}
+                attachedIds={attachedKnowledge.map((k) => k.id)}
+                variant="popover"
+              />
+            </div>
+
+            {/* Text input container */}
+            <div className="relative flex flex-col w-full justify-end group">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    onSend();
+                  }
+                }}
+                onPaste={(e) => {
+                  if (isLoading) return;
+                  const items = e.clipboardData?.items || [];
+                  for (const item of items) {
+                    if (item.kind === "file" && item.type.startsWith("image/")) {
+                      const file = item.getAsFile();
+                      if (file) {
+                        e.preventDefault();
+                        attachFile(file);
+                      }
+                      break;
+                    }
+                  }
+                }}
+                placeholder="Tell Rie what to do..."
+                className={`custom-scrollbar w-full resize-none rounded-2xl border bg-neutral-800/80 px-3 py-2 text-[13px] text-neutral-100 placeholder-neutral-500 shadow-sm outline-none transition-all placeholder:transition-opacity border-white/10 focus:bg-neutral-800 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'} disabled:opacity-50 max-h-[280px]`}
+                disabled={isLoading}
+              />
+            </div>
+            <AnimatePresence mode="wait" initial={false}>
+              {isLoading ? (
+                <motion.button
+                  key="btn-loading"
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.8, opacity: 0 }}
+                  transition={{ duration: 0.12 }}
+                  id="send-btn"
+                  type="button"
+                  onClick={() => onCancelRequest?.()}
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/20 text-red-400 hover:bg-red-500/40 shadow-sm transition active:scale-95"
+                  title="Stop generating"
+                >
+                  <div className="relative flex items-center justify-center">
+                    <div className="absolute h-6 w-6 animate-spin rounded-full border-2 border-red-500/30 border-t-red-500" />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" rx="1" />
+                    </svg>
+                  </div>
+                </motion.button>
+              ) : hasContent ? (
+                <motion.button
+                  key="btn-send"
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.8, opacity: 0 }}
+                  transition={{ duration: 0.12 }}
+                  id="send-btn"
+                  type="button"
+                  onClick={onSend}
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-neutral-700 hover:bg-neutral-600 text-neutral-100 shadow-sm transition active:scale-95"
+                  title="Send message"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m22 2-7 20-4-9-9-4Z" />
+                    <path d="M22 2 11 13" />
+                  </svg>
+                </motion.button>
+              ) : (
+                <motion.button
+                  key="btn-live-voice"
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.8, opacity: 0 }}
+                  transition={{ duration: 0.12 }}
+                  id="send-btn"
+                  type="button"
+                  onClick={onToggleLiveVoice}
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white shadow-sm transition active:scale-95"
+                  title="Voice conversation (Gemini Live)"
+                >
+                  <Mic size={17} />
+                </motion.button>
+              )}
+            </AnimatePresence>
+          </div>
       </div>
     </footer>
   );

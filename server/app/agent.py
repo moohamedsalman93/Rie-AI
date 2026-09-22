@@ -3967,8 +3967,8 @@ class AgentManager:
             if cleaned:
                 lines.append(f"{i}. {cleaned[:500]}")
 
-        if len(lines) < 2:
-            raise ValueError("Need at least two user messages to generate a title.")
+        if not lines:
+            raise ValueError("Need at least one user message to generate a title.")
 
         system_text = (
             "Write a short chat title (3–8 words) that captures the conversation topic. "

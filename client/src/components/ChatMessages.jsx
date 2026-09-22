@@ -8,6 +8,7 @@ import { LinkPreview } from "./LinkPreview";
 import { KnowledgeChatBanner } from "./KnowledgeAttachmentChips";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { QuestionBlock } from "./QuestionBlock";
+import VoiceToolActivity from "./VoiceToolActivity";
 
 function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion) {
   if (!blocks || blocks.length === 0) return null;
@@ -32,6 +33,9 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
   blocks.forEach((block, idx) => {
     if (block.type === "tool") {
       currentToolGroup.push(block);
+    } else if (block.type === "voice_tool") {
+      flushToolGroup();
+      elements.push(<VoiceToolActivity key={block.id} item={block} />);
     } else if (block.type === "subagent") {
       flushToolGroup();
       elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} />);
@@ -87,6 +91,7 @@ function ChatMessagesImpl({
   activeFriendMeta = null,
   attachedKnowledge = [],
   retryStatus = null,
+  isVoiceActive = false,
 }) {
   const botReplyCount = messages.filter(
     (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
@@ -107,7 +112,7 @@ function ChatMessagesImpl({
 
   return (
     <main
-      className="custom-scrollbar pt-12 px-3.5 pb-16 flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden py-4 min-h-0"
+      className={`custom-scrollbar pt-12 px-3.5 ${isVoiceActive ? "pb-4" : "pb-16"} flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden py-4 min-h-0`}
       style={{
         backgroundColor: `rgba(0, 0, 0, var(--floating-chat-opacity, 0.7))`
       }}
@@ -127,14 +132,14 @@ function ChatMessagesImpl({
           className="flex-1 flex flex-col items-center justify-center text-center p-6 select-none pointer-events-none my-auto"
         >
           <h2 className="text-base font-bold text-white/90 mb-1.5 tracking-wide">
-            How can I help you today?
+            {isVoiceActive ? "Your voice, in this chat" : "How can I help you today?"}
           </h2>
           <p className="text-xs text-neutral-400 max-w-[240px] leading-relaxed">
-            Ask questions, run terminal commands, or attach project context to get started.
+            {isVoiceActive ? "Your conversation and tool activity will appear here." : "Ask questions, run terminal commands, or attach project context to get started."}
           </p>
         </motion.div>
       )}
-      {messages.map((m) => {
+      {messages.map((m, messageIndex) => {
         // Skip empty bot messages that haven't started streaming blocks yet,
         // UNLESS they are the last message and have a pendingAction (HITL).
         const isLastBotMessage = m.from === "bot" && m.id === messages[messages.length - 1].id;
@@ -146,7 +151,7 @@ function ChatMessagesImpl({
 
         return (
           <div
-            key={m.id}
+            key={`${m.id || "message"}-${messageIndex}`}
             className={`flex flex-col ${m.from === "user" ? "items-end" : "items-start"} w-full group`}
           >
             <div className={`flex items-end gap-2 min-w-0 max-w-[95%] ${m.from === 'user' ? 'justify-end' : ''}`}>
@@ -215,7 +220,7 @@ function ChatMessagesImpl({
                     {renderMessageBlocks(
                       m.blocks || [{ type: "text", text: m.text }],
                       toolTooltipPlacement,
-                      isLoading && m.id === streamingBotMessageId,
+                      Boolean(m.isPartial) || (isLoading && m.id === streamingBotMessageId),
                       onAnswerQuestion || ((_id, text) => onSend(text))
                     )}
                     {pendingAction && m.id === messages[messages.length - 1].id && m.from === "bot" && (

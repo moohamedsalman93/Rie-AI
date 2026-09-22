@@ -41,8 +41,9 @@ async def verify_app_token(request: Request = None, api_key: str = Security(api_
         # and don't enforce token validation.
         return None
         
-    if api_key and secrets.compare_digest(api_key, expected_token):
-        return api_key
+    token = api_key or (request.query_params.get("token") if hasattr(request, "query_params") else None)
+    if token and secrets.compare_digest(token, expected_token):
+        return token
     
     logger.warning("Unauthorized access attempt with invalid token.")
     raise HTTPException(

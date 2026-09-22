@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 
 from app.models import (
     ChatMessage, HealthResponse, SettingsUpdate, SettingsResponse, 
-    CancelRequest, ForkThreadRequest, SpeakRequest, ResumeChatRequest, HITLRequestModel,
+    CancelRequest, ForkThreadRequest, ResumeChatRequest, HITLRequestModel,
     ScheduleTaskRequest, ScheduledTaskResponse, ScheduleNotificationItem,
     SubAgentConfig, PlannerGraphConfig, PlannerInstructionGenerateRequest, PlannerInstructionGenerateResponse,
     PlannerToolItem, PlannerToolCatalogResponse,
@@ -536,108 +536,6 @@ async def chat_cancel(data: CancelRequest):
         return {"status": "ignored", "message": f"No active run found for thread {data.thread_id}"}
 
 
-@router.post("/audio/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    """
-    Transcribe audio file using Groq's Whisper API
-    """
-    if not settings.GROQ_API_KEY:
-        raise HTTPException(status_code=400, detail="Groq API key not configured")
-
-    try:
-        from openai import AsyncOpenAI
-        
-        # Groq's Whisper API is OpenAI compatible
-        client = AsyncOpenAI(
-            api_key=settings.GROQ_API_KEY,
-            base_url="https://api.groq.com/openai/v1"
-        )
-
-        # Read file content
-        content = await file.read()
-        
-        # Call Groq Whisper API
-        # We need to pass the file as a tuple (filename, content, content_type)
-        transcription = await client.audio.transcriptions.create(
-            model="whisper-large-v3",
-            file=(file.filename, content, file.content_type),
-            response_format="json"
-        )
-        
-        return {"text": transcription.text}
-    except Exception as e:
-        logging.error(f"Transcription failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
-
-
-@router.post("/audio/speak")
-async def speak_text(data: SpeakRequest):
-    """
-    Convert text to speech using edge-tts or Groq and stream the audio back.
-    """
-    provider = data.provider or settings.TTS_PROVIDER
-    voice = data.voice or settings.TTS_VOICE
-    
-    try:
-        if provider == "groq":
-            if not settings.GROQ_API_KEY:
-                raise HTTPException(status_code=400, detail="Groq API key not configured")
-            
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(
-                api_key=settings.GROQ_API_KEY,
-                base_url="https://api.groq.com/openai/v1"
-            )
-            
-            # Groq Orpheus has a 200 char limit
-            text_to_speak = data.text[:200]
-            
-            response = await client.audio.speech.create(
-                model="canopylabs/orpheus-v1-english",
-                voice=voice,
-                input=text_to_speak,
-                response_format="wav"
-            )
-            
-            # OpenAI speech response.content is the audio data
-            # For AsyncOpenAI, it might be a stream or a full response
-            # According to Groq docs, it returns the binary audio
-            return StreamingResponse(
-                io.BytesIO(response.content),
-                media_type="audio/wav"
-            )
-            
-        else: # Default/edge-tts
-            import edge_tts
-            
-            # Ensure valid Edge TTS voice, fallback to default if invalid/mismatched (e.g. 'hannah')
-            if not voice or "Neural" not in str(voice):
-                voice = "en-US-EmmaNeural"
-
-            try:
-                communicate = edge_tts.Communicate(data.text, voice)
-            except Exception as init_err:
-                logging.warning(f"Edge TTS init failed for voice '{voice}', falling back to 'en-US-EmmaNeural': {init_err}")
-                voice = "en-US-EmmaNeural"
-                communicate = edge_tts.Communicate(data.text, voice)
-
-            async def audio_generator():
-                try:
-                    async for chunk in communicate.stream():
-                        if chunk["type"] == "audio":
-                            yield chunk["data"]
-                except Exception as stream_err:
-                    logging.error(f"Edge TTS streaming error: {stream_err}")
-
-            return StreamingResponse(
-                audio_generator(),
-                media_type="audio/mpeg"
-            )
-    except Exception as e:
-        logging.error(f"TTS failed ({provider}): {str(e)}")
-        raise HTTPException(status_code=500, detail=f"TTS failed: {str(e)}")
-
-
 @router.post("/planner/generate-instruction", response_model=PlannerInstructionGenerateResponse)
 async def planner_generate_instruction(data: PlannerInstructionGenerateRequest):
     """Generate a member instruction prompt using configured backend LLM."""
@@ -920,7 +818,6 @@ async def get_settings():
         langsmith_api_key=mask_key(settings.LANGSMITH_API_KEY),
         langsmith_project=settings.LANGSMITH_PROJECT,
         langsmith_endpoint=settings.LANGSMITH_ENDPOINT,
-        voice_reply=settings.VOICE_REPLY,
         share_location=settings.SHARE_LOCATION,
         exclude_from_capture=settings.EXCLUDE_FROM_CAPTURE,
         capture_screen_as_text=settings.CAPTURE_SCREEN_AS_TEXT,
@@ -932,8 +829,9 @@ async def get_settings():
         bubble_snap_edge=settings.BUBBLE_SNAP_EDGE,
         bubble_show_tools=settings.BUBBLE_SHOW_TOOLS,
         rie_access_token=mask_key(settings.RIE_ACCESS_TOKEN),
-        tts_provider=settings.TTS_PROVIDER,
-        tts_voice=settings.TTS_VOICE,
+        gemini_live_voice=settings.GEMINI_LIVE_VOICE,
+        wake_word_enabled=settings.WAKE_WORD_ENABLED,
+
         ollama_model=settings.OLLAMA_MODEL,
         ollama_api_url=(get_setting("OLLAMA_API_URL") or "").strip(),
         ollama_api_key=mask_key(settings.OLLAMA_API_KEY) if settings.OLLAMA_API_KEY else None,
@@ -992,7 +890,8 @@ async def update_settings(data: SettingsUpdate):
         "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "GLM_MODEL", "GLM_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
-        "VOICE_REPLY", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "CAPTURE_SCREEN_AS_TEXT", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN", "TTS_PROVIDER", "TTS_VOICE",
+        "GEMINI_LIVE_VOICE", "WAKE_WORD_ENABLED", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "CAPTURE_SCREEN_AS_TEXT", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN",
+
         "BUBBLE_SHOW_LABEL", "BUBBLE_SIZE", "BUBBLE_TRANSPARENT_BG", "BUBBLE_SNAP_EDGE", "BUBBLE_SHOW_TOOLS",
         "OLLAMA_MODEL", "OLLAMA_API_URL", "OLLAMA_API_KEY", "EXTERNAL_APIS",
         "EMBEDDING_SOURCE", "EMBEDDING_MODEL_PATH",
@@ -3492,8 +3391,8 @@ def _strip_clipboard_from_message(text: str) -> str:
     return text.strip()
 
 
-async def _update_thread_title_after_second_message(thread_id: str) -> None:
-    """Generate an LLM title once the user has sent two messages."""
+async def _update_thread_title_after_first_message(thread_id: str) -> None:
+    """Generate an LLM title as soon as the first user message is persisted."""
     try:
         messages = await run_in_threadpool(get_thread_messages, thread_id)
         user_texts = [
@@ -3501,7 +3400,7 @@ async def _update_thread_title_after_second_message(thread_id: str) -> None:
             for m in messages
             if m.get("role") == "user" and (m.get("content") or "").strip()
         ]
-        if len(user_texts) < 2:
+        if not user_texts:
             return
         title = await agent_manager.generate_chat_thread_title(user_texts[:2])
         await run_in_threadpool(update_thread_title, thread_id, title)
@@ -3616,7 +3515,7 @@ async def chat_stream_post(
             file_blocks.append(f"[Attached File: {fname}]:\n```\n{fcontent}\n```")
         message = f"{message}\n\n" + "\n\n".join(file_blocks)
 
-    # 1. Ensure thread exists (title stays generic until 2nd user message)
+    # 1. Ensure thread exists. The title is generated asynchronously after the first message.
     real_thread_id = await run_in_threadpool(create_thread, DEFAULT_THREAD_TITLE, thread_id)
 
     knowledge_context = ""
@@ -3634,8 +3533,8 @@ async def chat_stream_post(
     await run_in_threadpool(save_message, real_thread_id, "user", message, image_url)
 
     user_count = await run_in_threadpool(count_user_messages, real_thread_id)
-    if user_count == 2:
-        asyncio.create_task(_update_thread_title_after_second_message(real_thread_id))
+    if user_count == 1:
+        asyncio.create_task(_update_thread_title_after_first_message(real_thread_id))
 
     # 3. Stream URL previews (if any), then agent response
     return StreamingResponse(

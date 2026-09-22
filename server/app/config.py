@@ -430,12 +430,6 @@ class Settings:
         """
         return self.HITL_MODE != "disable"
 
-    @property
-    def VOICE_REPLY(self) -> bool:
-        """
-        Whether to automatically reply with voice for voice input
-        """
-        return self._get("VOICE_REPLY", "true").lower() == "true"
 
     @property
     def SHARE_LOCATION(self) -> bool:
@@ -489,19 +483,16 @@ class Settings:
         return self._get("BUBBLE_SHOW_TOOLS", "true").lower() == "true"
 
     @property
-    def TTS_PROVIDER(self) -> str:
+    def GEMINI_LIVE_VOICE(self) -> str:
         """
-        TTS Provider: 'edge-tts' or 'groq'
+        Voice persona for Gemini Live API: 'Aoede', 'Kore', 'Puck', 'Charon', 'Fenrir'
         """
-        return self._get("TTS_PROVIDER", "edge-tts")
+        return self._get("GEMINI_LIVE_VOICE", "Aoede")
 
     @property
-    def TTS_VOICE(self) -> str:
-        """
-        Default voice for the selected TTS provider
-        """
-        default_voice = "en-US-EmmaNeural" if self.TTS_PROVIDER == "edge-tts" else "hannah"
-        return self._get("TTS_VOICE", default_voice)
+    def WAKE_WORD_ENABLED(self) -> bool:
+        """Honor the stored toggle; preserve the existing default for new installs."""
+        return str(self._get("WAKE_WORD_ENABLED", "true")).strip().lower() == "true"
 
     
     @property

@@ -123,12 +123,6 @@ class ForkThreadRequest(BaseModel):
     messages: Optional[List[Dict[str, Any]]] = None
 
 
-class SpeakRequest(BaseModel):
-    """Request model for text-to-speech"""
-    text: str
-    voice: Optional[str] = None
-    provider: Optional[str] = "edge-tts"
-
 
 
 
@@ -273,7 +267,6 @@ class SettingsResponse(BaseModel):
     langsmith_api_key: Optional[str] = None
     langsmith_project: str = "Rie-AI"
     langsmith_endpoint: str = "https://api.smith.langchain.com"
-    voice_reply: bool = True
     share_location: bool = True
     exclude_from_capture: bool = True
     capture_screen_as_text: bool = False
@@ -285,9 +278,9 @@ class SettingsResponse(BaseModel):
     bubble_snap_edge: bool = True
     bubble_show_tools: bool = True
 
-    # TTS Settings
-    tts_provider: str = "edge-tts"
-    tts_voice: str = "en-US-EmmaNeural"
+    # Voice Settings
+    gemini_live_voice: str = "Aoede"
+    wake_word_enabled: bool = True
 
     # Custom External APIs
     external_apis: Optional[List[CustomAPIConfig]] = None

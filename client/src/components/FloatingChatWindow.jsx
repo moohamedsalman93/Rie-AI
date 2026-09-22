@@ -41,10 +41,6 @@ export function FloatingChatWindow({
   messagesEndRef,
   input,
   setInput,
-  isRecording,
-  onStartRecording,
-  onStopRecording,
-  onToggleRecording,
   isCapturing,
   isAttachmentPopoverOpen,
   setIsAttachmentPopoverOpen,
@@ -114,6 +110,8 @@ export function FloatingChatWindow({
   provider,
   onSelectProvider,
   onUpdateSetting,
+  onToggleLiveVoice = () => {},
+  voiceControls = null,
   side = "left",
 }) {
   const origin = side === "right" ? "top right" : "top left";
@@ -209,6 +207,7 @@ export function FloatingChatWindow({
               onSelectFriendChat={onSelectFriendChat}
               onStartFriendChat={onStartFriendChat}
               sessionsByThread={sessionsByThread}
+              apiStatus={apiStatus}
             />
             <div className="flex-1 flex flex-col relative min-w-0 h-full min-h-0">
               {isFriendsQuickOpen && (
@@ -231,6 +230,7 @@ export function FloatingChatWindow({
                 </div>
               )}
               <ChatMessages
+                isVoiceActive={Boolean(voiceControls)}
                 messages={messages}
                 isLoading={isLoading}
                 streamingBotMessageId={streamingBotMessageId}
@@ -249,13 +249,10 @@ export function FloatingChatWindow({
           </div>
 
           <ChatInputArea
+            voiceControls={voiceControls}
             input={input}
             setInput={setInput}
             isLoading={isLoading}
-            isRecording={isRecording}
-            onStartRecording={onStartRecording}
-            onStopRecording={onStopRecording}
-            onToggleRecording={onToggleRecording}
             isCapturing={isCapturing}
             isAttachmentPopoverOpen={isAttachmentPopoverOpen}
             setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
@@ -291,6 +288,7 @@ export function FloatingChatWindow({
             settings={settings}
             onOpenSettings={onOpenSettingsWindow}
             onUpdateSetting={onUpdateSetting}
+            onToggleLiveVoice={onToggleLiveVoice}
           />
 
           <Terminal

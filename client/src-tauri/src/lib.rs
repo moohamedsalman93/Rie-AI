@@ -227,6 +227,8 @@ pub fn run() {
             app.manage(BackendState(std::sync::Mutex::new(None)));
             app.manage(AppToken(app_token.clone()));
             app.manage(audio::NativeAudioRecorder::default());
+            app.manage(audio::NativeLiveVoiceRecorder::default());
+            app.manage(audio::NativeWakeWordManager::default());
             app.manage(kiosk_overlay::KioskOverlayState::default());
 
 
@@ -332,6 +334,11 @@ pub fn run() {
             get_app_token,
             audio::start_native_recording,
             audio::stop_native_recording,
+            audio::start_native_live_voice,
+            audio::stop_native_live_voice,
+            audio::set_native_live_voice_muted,
+            audio::start_native_wake_word,
+            audio::stop_native_wake_word,
             location::get_native_location,
             set_foreground_lock,
             set_window_capture_excluded,
@@ -343,6 +350,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                let _ = app_handle.state::<audio::NativeWakeWordManager>().stop();
                 let state = app_handle.state::<BackendState>();
                 let mut lock = state.0.lock().unwrap();
                 

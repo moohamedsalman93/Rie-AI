@@ -4,7 +4,7 @@
 
 import { getClientLocationPayload } from "../utils/locationUtils";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:14300";
+export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:14300";
 
 /**
  * User device local clock for the backend (avoids wrong year/day in scheduling).
@@ -911,53 +911,21 @@ export async function getDesktopText() {
   return response.json();
 }
 
-/**
- * Transcribe audio blob using the backend STT endpoint
- * @param {Blob} audioBlob
- * @returns {Promise<{text: string}>}
- */
-export async function transcribeAudio(audioBlob, filename = "recording.webm") {
-  const formData = new FormData();
-  formData.append("file", audioBlob, filename);
-
-  const headers = getHeaders();
-  delete headers["Content-Type"]; // Let browser set boundary for FormData
-
-  const response = await fetch(`${API_BASE_URL}/audio/transcribe`, {
-    method: "POST",
-    headers: headers,
-    body: formData,
-  });
-
-  if (!response.ok) {
-    await throwHttpError(response, "Transcription failed");
-  }
-
-  return response.json();
-}
 
 /**
- * Convert text to speech using the backend TTS endpoint
- * @param {string} text - The text to speak
- * @param {string} [voice] - Optional voice name (e.g. "en-US-EmmaNeural")
- * @returns {Promise<Blob>} - The audio blob
+ * Fetch available Gemini 2.0 Multimodal Live voice personas
+ * @returns {Promise<{voices: Array<{id: string, name: string, gender: string, description: string}>}>}
  */
-export async function speakText(
-  text,
-  voice = "en-US-EmmaNeural",
-  provider = "edge-tts"
-) {
-  const response = await fetch(`${API_BASE_URL}/audio/speak`, {
-    method: "POST",
+export async function getLiveVoices() {
+  const response = await fetch(`${API_BASE_URL}/audio/live-voices`, {
+    method: "GET",
     headers: getHeaders(),
-    body: JSON.stringify({ text, voice, provider }),
   });
 
   if (!response.ok) {
-    await throwHttpError(response, "Text-to-speech failed");
+    await throwHttpError(response, "Failed to fetch live voices");
   }
-
-  return response.blob();
+  return response.json();
 }
 
 /**

@@ -4,12 +4,135 @@ import { ShieldCheck, ShieldAlert, ShieldOff } from "lucide-react";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import logo from "../assets/logo.png";
 
+function BubbleVoiceBars({
+  isSpeaking,
+  isUserSpeaking,
+  isMuted,
+  volume = 0,
+  status = "listening",
+  activeTool = null,
+  bubbleSize = "medium",
+}) {
+  if (isMuted) {
+    return (
+      <div
+        className="flex items-center gap-[3px] h-5 px-1.5 justify-center"
+        title="Microphone muted"
+      >
+        {[0, 1, 2, 3].map((i) => (
+          <span
+            key={i}
+            className="w-[3px] h-1.5 rounded-full bg-red-400/60 transition-colors"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // 5 Symmetrical equalizer bars
+  const barConfigs =
+    bubbleSize === "small"
+      ? [
+          { height: 11, delay: 0.28 },
+          { height: 14, delay: 0.12 },
+          { height: 18, delay: 0 },
+          { height: 14, delay: 0.2 },
+          { height: 11, delay: 0.35 },
+        ]
+      : bubbleSize === "large"
+      ? [
+          { height: 16, delay: 0.32 },
+          { height: 22, delay: 0.14 },
+          { height: 26, delay: 0 },
+          { height: 22, delay: 0.22 },
+          { height: 16, delay: 0.4 },
+        ]
+      : [
+          { height: 13, delay: 0.3 },
+          { height: 18, delay: 0.12 },
+          { height: 22, delay: 0 },
+          { height: 18, delay: 0.2 },
+          { height: 13, delay: 0.36 },
+        ];
+
+  const isTool = status === "tool" || Boolean(activeTool);
+  const isConnecting = status === "connecting";
+
+  // Gradient and shadow style based on state
+  let barGradient = "bg-gradient-to-t from-emerald-500/80 via-teal-400 to-cyan-300";
+  let barGlow = "shadow-[0_0_8px_rgba(45,212,191,0.5)]";
+  let animationName = "voice-wave-listening";
+  let animationDuration = "1.2s";
+  let title = "Listening to you...";
+
+  if (isSpeaking) {
+    barGradient = "bg-gradient-to-t from-violet-500 via-fuchsia-400 to-indigo-300";
+    barGlow = "shadow-[0_0_10px_rgba(168,85,247,0.7)]";
+    animationName = "voice-wave-speaking";
+    animationDuration = "0.55s";
+    title = "Rie is speaking...";
+  } else if (isUserSpeaking) {
+    barGradient = "bg-gradient-to-t from-emerald-400 via-teal-300 to-cyan-300";
+    barGlow = "shadow-[0_0_10px_rgba(16,185,129,0.75)]";
+    animationName = "voice-wave-speaking";
+    animationDuration = "0.45s";
+    title = "Listening to your voice...";
+  } else if (isTool) {
+    barGradient = "bg-gradient-to-t from-amber-400 via-orange-400 to-violet-400";
+    barGlow = "shadow-[0_0_8px_rgba(245,158,11,0.6)]";
+    animationName = "voice-wave-thinking";
+    animationDuration = "0.85s";
+    title = activeTool ? `Running ${getToolDisplayName(activeTool.name || activeTool)}...` : "Processing action...";
+  } else if (isConnecting) {
+    barGradient = "bg-gradient-to-t from-indigo-400 via-purple-300 to-cyan-300";
+    barGlow = "shadow-[0_0_8px_rgba(99,102,241,0.5)]";
+    animationName = "voice-wave-listening";
+    animationDuration = "0.7s";
+    title = "Connecting to Gemini Live...";
+  }
+
+  // Volume scale boost during active speech
+  const volMultiplier = isSpeaking || isUserSpeaking
+    ? Math.max(0.6, Math.min(1.45, 0.7 + volume * 2.0))
+    : 1;
+
+  return (
+    <div
+      className="flex items-center gap-[3px] h-6 px-1 justify-center min-w-[32px]"
+      title={title}
+    >
+      {barConfigs.map((bar, idx) => (
+        <span
+          key={idx}
+          className={`w-[3px] rounded-full transform-gpu ${barGradient} ${barGlow}`}
+          style={{
+            height: `${bar.height}px`,
+            transformOrigin: "center",
+            animationName,
+            animationDuration,
+            animationTimingFunction: isSpeaking || isUserSpeaking ? "ease-in-out" : "cubic-bezier(0.4, 0, 0.2, 1)",
+            animationIterationCount: "infinite",
+            animationDelay: `${bar.delay}s`,
+            transform: `scaleY(${volMultiplier})`,
+            transition: "transform 0.1s ease-out, background 0.3s ease",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function FloatingBubble({
   privacyToast,
   currentTool,
   retryStatus = null,
   isLoading,
-  isRecording,
+  isLiveVoiceActive,
+  liveVoiceStatus = "listening",
+  liveVoiceVolumes = { userVolume: 0, assistantVolume: 0 },
+  liveVoiceMuted = false,
+  liveVoiceActiveTool = null,
+  suspendWindowResize,
   hasPendingAction,
   isSnapping,
   onMouseDown,
@@ -24,11 +147,17 @@ export function FloatingBubble({
 
   const isToastActive = privacyToast?.show;
 
+  const isSpeaking = isLiveVoiceActive && (liveVoiceStatus === "speaking" || liveVoiceVolumes.assistantVolume > 0.05);
+  const isUserSpeaking = isLiveVoiceActive && (liveVoiceVolumes.userVolume > 0.06 && !liveVoiceMuted);
+  const vol = isSpeaking ? liveVoiceVolumes.assistantVolume : isUserSpeaking ? liveVoiceVolumes.userVolume : 0.0;
+
   useEffect(() => {
     if (!bubbleRef || !bubbleRef.current) return;
     const element = bubbleRef.current;
+    let cancelled = false;
 
     const adjustWindowSize = async () => {
+      if (cancelled || suspendWindowResize?.()) return;
       try {
         const scrollW = element.scrollWidth;
         const scrollH = element.scrollHeight;
@@ -44,11 +173,13 @@ export function FloatingBubble({
         const win = getCurrentWindow();
         const scale = await win.scaleFactor();
         const outerSize = await win.outerSize();
+        if (cancelled || suspendWindowResize?.()) return;
         const curW = Math.round(outerSize.width / scale);
         const curH = Math.round(outerSize.height / scale);
 
         if (Math.abs(curW - targetWidth) > 3 || Math.abs(curH - targetHeight) > 3) {
           const outerPos = await win.outerPosition();
+          if (cancelled || suspendWindowResize?.()) return;
           const curX = Math.round(outerPos.x / scale);
           const curY = Math.round(outerPos.y / scale);
 
@@ -60,7 +191,7 @@ export function FloatingBubble({
             const newX = curX + (curW - targetWidth);
             await win.setPosition(new LogicalPosition(newX, curY));
           }
-          await win.setSize(new LogicalSize(targetWidth, targetHeight));
+          if (!cancelled && !suspendWindowResize?.()) await win.setSize(new LogicalSize(targetWidth, targetHeight));
         }
       } catch (err) {
         console.error("Failed to dynamically adjust bubble window size:", err);
@@ -75,12 +206,13 @@ export function FloatingBubble({
     adjustWindowSize();
 
     return () => {
+      cancelled = true;
       observer.disconnect();
     };
-  }, [bubbleRef, privacyToast, currentTool, isLoading, isRecording, hasPendingAction, bubbleSize, showLabel, transparentBg, showTools]);
+  }, [bubbleRef, privacyToast, currentTool, isLoading, isLiveVoiceActive, liveVoiceStatus, hasPendingAction, bubbleSize, showLabel, transparentBg, showTools, suspendWindowResize]);
 
-  const activeToolText = showTools && currentTool ? getToolDisplayName(currentTool) : null;
-  const shouldShowText = isToastActive || isRecording || hasPendingAction || activeToolText || Boolean(retryStatus?.message) || isLoading || showLabel;
+  const activeToolText = showTools && (currentTool || liveVoiceActiveTool) ? getToolDisplayName(currentTool || liveVoiceActiveTool.name || liveVoiceActiveTool) : null;
+  const shouldShowText = isToastActive || isLiveVoiceActive || hasPendingAction || activeToolText || Boolean(retryStatus?.message) || isLoading || showLabel;
 
   // Size styling classes
   const sizeClasses =
@@ -126,7 +258,27 @@ export function FloatingBubble({
                   ? "rgba(245,158,11,0.6)"
                   : "rgba(239,68,68,0.6)",
             }
-          : currentTool || isLoading || isRecording || hasPendingAction
+          : isLiveVoiceActive
+          ? {
+              opacity: 1,
+              scale: 1,
+              rotate: 0,
+              boxShadow: isSpeaking
+                ? "0 0 16px rgba(168,85,247,0.45), inset 0 0 8px rgba(168,85,247,0.2)"
+                : isUserSpeaking
+                ? "0 0 16px rgba(16,185,129,0.45), inset 0 0 8px rgba(16,185,129,0.2)"
+                : liveVoiceStatus === "tool"
+                ? "0 0 14px rgba(245,158,11,0.4), inset 0 0 6px rgba(245,158,11,0.15)"
+                : "0 0 10px rgba(16,185,129,0.25)",
+              borderColor: isSpeaking
+                ? "rgba(168,85,247,0.75)"
+                : isUserSpeaking
+                ? "rgba(16,185,129,0.75)"
+                : liveVoiceStatus === "tool"
+                ? "rgba(245,158,11,0.7)"
+                : "rgba(16,185,129,0.5)",
+            }
+          : currentTool || isLoading || hasPendingAction
           ? {
               opacity: 1,
               scale: [1, 1.04, 1],
@@ -145,7 +297,7 @@ export function FloatingBubble({
             }
       }
       exit={{ opacity: 0, scale: 0.6, transition: { duration: 0.12 } }}
-      transition={{ type: "spring", stiffness: 340, damping: 28 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
       onMouseDown={onMouseDown}
       ref={bubbleRef}
       className={`pointer-events-auto flex items-center justify-center gap-2 rounded-full border transition-all select-none ${sizeClasses} ${bgClasses} ${
@@ -183,11 +335,16 @@ export function FloatingBubble({
                 <span className="text-red-300 font-bold text-xs whitespace-nowrap">Privacy OFF</span>
               </>
             )
-          ) : isRecording ? (
-            <>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <span className="text-emerald-500 font-bold text-[10px] uppercase tracking-wider">Live</span>
-            </>
+          ) : isLiveVoiceActive ? (
+            <BubbleVoiceBars
+              isSpeaking={isSpeaking}
+              isUserSpeaking={isUserSpeaking}
+              isMuted={liveVoiceMuted}
+              volume={vol}
+              status={liveVoiceStatus}
+              activeTool={liveVoiceActiveTool}
+              bubbleSize={bubbleSize}
+            />
           ) : hasPendingAction ? (
             <>
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shrink-0" />

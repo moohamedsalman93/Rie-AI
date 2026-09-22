@@ -32,8 +32,8 @@ export const useUIStore = create((set) => ({
       terminalLogs: [...state.terminalLogs, log],
     })),
 
-  isRecording: false,
-  setIsRecording: (isRecording) => set({ isRecording }),
+  isLiveVoiceActive: false,
+  setIsLiveVoiceActive: (isLiveVoiceActive) => set({ isLiveVoiceActive }),
 
   privacyToast: null,
   setPrivacyToast: (toast) => set({ privacyToast: toast }),

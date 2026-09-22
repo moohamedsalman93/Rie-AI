@@ -153,7 +153,7 @@ Key routes:
 - `POST /chat/cancel` - cancel active generation
 - `GET /settings` / `POST /settings` - get/update settings
 - `GET /history` / `GET /history/{thread_id}` / `DELETE /history/{thread_id}`
-- `POST /audio/transcribe` / `POST /audio/speak`
+- `WS /ws/voice-live` - real-time full-duplex voice session with tools (Gemini Live)
 - `POST /scheduler/schedule` / `GET /scheduler/tasks`
 - `GET /` - health check
 

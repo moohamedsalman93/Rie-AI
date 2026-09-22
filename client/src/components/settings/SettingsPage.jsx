@@ -4,6 +4,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory, exportBackup, importBackup } from '../../services/chatApi';
 import { checkForAppUpdate, downloadAppUpdate, installDownloadedUpdate } from '../../services/updater';
+import { isWakeWordEnabled } from '../../services/wakeWordService';
 import { setShareLocationEnabled, prefetchClientLocation } from '../../utils/locationUtils';
 import { SettingInput } from './SettingInput';
 import { McpServersManager } from './McpServersManager';
@@ -716,7 +717,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
 
     const field = key.toLowerCase();
     let parsedValue = value;
-    if (key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'VOICE_REPLY' || key === 'LANGSMITH_TRACING' || key === 'CAPTURE_SCREEN_AS_TEXT') {
+    if (key === 'SHARE_LOCATION' || key === 'EXCLUDE_FROM_CAPTURE' || key === 'LANGSMITH_TRACING' || key === 'CAPTURE_SCREEN_AS_TEXT' || key === 'WAKE_WORD_ENABLED') {
       parsedValue = (value === 'true' || value === true);
     } else if (key === 'MCP_SERVERS' || key === 'EXTERNAL_APIS' || key === 'ENABLED_TOOLS') {
       try {
@@ -765,6 +766,21 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
         setPendingChanges(prev => ({ ...prev, WEB_SEARCH_PROVIDER: 'brave' }));
         setSettings(prev => ({ ...prev, web_search_provider: 'brave' }));
       }
+    }
+  };
+
+  const handleWakeWordToggle = async () => {
+    const enabled = isWakeWordEnabled(settings.wake_word_enabled);
+    const value = String(!enabled);
+    // Wake word is a runtime control, so persist and broadcast it immediately
+    // instead of requiring the user to find the global Save button.
+    setSettings(prev => ({ ...prev, wake_word_enabled: !enabled }));
+    try {
+      await updateSetting('WAKE_WORD_ENABLED', value);
+      await emit('settings-updated', { key: 'WAKE_WORD_ENABLED', value });
+    } catch (err) {
+      setSettings(prev => ({ ...prev, wake_word_enabled: enabled }));
+      setError(`Failed to update Wake Word: ${err.message || err}`);
     }
   };
 
@@ -2781,7 +2797,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+A</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
-                        <span className="text-neutral-300 font-medium">Push to Talk (Hold)</span>
+                        <span className="text-neutral-300 font-medium">Toggle Live Voice</span>
                         <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+S</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
@@ -3265,55 +3281,32 @@ Separate keywords by commas. Commands containing these words will be blocked."
                 <div className={SL.tabStack}>
                   <div className={SL.pageHeader}>
                     <h3 className={SL.pageTitle}>Voice</h3>
-                    <p className={SL.pageDesc}>Voice reply and text-to-speech.</p>
+                    <p className={SL.pageDesc}>Realtime speech-to-speech voice conversation settings.</p>
                   </div>
 
-                  <div className={`${SL.toggleRow} space-y-3`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Mic className="text-neutral-400" size={20} />
-                        <div>
-                          <h3 className="text-sm font-medium text-neutral-200">Voice Reply</h3>
-                          <p className="text-[10px] text-neutral-500">Automatically speak the response when you use voice input.</p>
-                        </div>
-                      </div>
-                      <div
-                        onClick={() => handleLocalSettingChange('VOICE_REPLY', String(!(settings.voice_reply)))}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full cursor-pointer transition-colors ${settings.voice_reply ? 'bg-emerald-500' : 'bg-neutral-700'
-                          }`}
-                      >
-                        <span
-                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.voice_reply ? 'translate-x-6' : 'translate-x-1'
-                            }`}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
+                  {/* Gemini Multimodal Live Voice Section */}
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                        <h4 className="text-sm font-medium text-neutral-300">TTS Provider</h4>
-                        <p className="text-[10px] text-neutral-500">Choose the service to read responses aloud.</p>
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="text-purple-400" size={18} />
+                          <h4 className="text-sm font-medium text-neutral-200">Gemini Live Voice Persona</h4>
+                        </div>
+                        <p className="text-[10px] text-neutral-500 mt-0.5">
+                          Voice persona for zero-delay, bidirectional speech-to-speech conversations.
+                        </p>
                       </div>
                       <div className="relative">
                         <select
-                          value={settings.tts_provider || 'edge-tts'}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            handleLocalSettingChange('TTS_PROVIDER', val);
-                            if (val === 'edge-tts' && (!settings.tts_voice || !settings.tts_voice.includes('Neural'))) {
-                              handleLocalSettingChange('TTS_VOICE', 'en-US-EmmaNeural');
-                            } else if (val === 'groq' && (!settings.tts_voice || settings.tts_voice.includes('Neural'))) {
-                              handleLocalSettingChange('TTS_VOICE', 'hannah');
-                            }
-                          }}
-                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
+                          value={settings.gemini_live_voice || 'Aoede'}
+                          onChange={(e) => handleLocalSettingChange('GEMINI_LIVE_VOICE', e.target.value)}
+                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-purple-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
                         >
-                          <option value="edge-tts">Edge TTS (Neural)</option>
-                          <option value="groq" disabled={!settings.groq_api_key}>
-                            Groq (Orpheus) {!settings.groq_api_key ? '(Key missing)' : ''}
-                          </option>
+                          <option value="Aoede">Aoede (Warm & Conversational)</option>
+                          <option value="Kore">Kore (Calm & Thoughtful)</option>
+                          <option value="Puck">Puck (Playful & Energetic)</option>
+                          <option value="Charon">Charon (Deep & Grounded)</option>
+                          <option value="Fenrir">Fenrir (Clear & Authoritative)</option>
                         </select>
                         <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
                           <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
@@ -3322,60 +3315,51 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         </div>
                       </div>
                     </div>
-                    {!settings.groq_api_key && (
+                    {!settings.google_api_key_present && (
                       <div className="text-[10px] text-amber-500/80 bg-amber-500/5 p-2 rounded border border-amber-500/10 flex flex-wrap items-center justify-between gap-2">
-                        <span>Add a Groq API key in Assistant settings to unlock Groq TTS.</span>
+                        <span>A Google API key is needed for Gemini Live Voice (Free on Google AI Studio).</span>
                         <button
                           type="button"
                           onClick={() => {
-                            setSelectedProvider('groq');
+                            setSelectedProvider('gemini');
                             setActiveTab('assistant');
                           }}
-                          className="text-emerald-400 hover:text-emerald-300 font-semibold shrink-0"
+                          className="text-purple-400 hover:text-purple-300 font-semibold shrink-0"
                         >
-                          Go to Assistant →
+                          Configure Key in Assistant →
                         </button>
                       </div>
-                    )}
-                    {settings.tts_provider === 'groq' && settings.groq_api_key && (
-                      <p className="text-[10px] text-amber-500/80 bg-amber-500/5 p-2 rounded border border-amber-500/10">
-                        Note: Groq TTS uses the `canopylabs/orpheus-v1-english` model. It is high quality but limited to 200 characters per segment.
-                      </p>
                     )}
                   </div>
 
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                        <h4 className="text-sm font-medium text-neutral-300">Voice Character</h4>
-                        <p className="text-[10px] text-neutral-500">Choose the speaker's voice persona.</p>
-                      </div>
-                      <div className="relative">
-                        <select
-                          value={settings.tts_voice || ''}
-                          onChange={(e) => handleLocalSettingChange('TTS_VOICE', e.target.value)}
-                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
-                        >
-                          {settings.tts_provider === 'groq' ? (
-                            <>
-                              <option value="hannah">Hannah (Groq Orpheus)</option>
-                              <option value="troy">Troy (Groq Orpheus)</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="en-US-EmmaNeural">Emma (US)</option>
-                              <option value="en-US-AndrewNeural">Andrew (US)</option>
-                              <option value="en-GB-SoniaNeural">Sonia (UK)</option>
-                              <option value="en-GB-RyanNeural">Ryan (UK)</option>
-                            </>
-                          )}
-                        </select>
-                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
-                          <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                            <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                          </svg>
+                        <div className="flex items-center gap-2">
+                          <Mic className="text-emerald-400" size={18} />
+                          <h4 className="text-sm font-medium text-neutral-200">Wake Word</h4>
                         </div>
+                        <p className="text-[10px] text-neutral-500 mt-0.5">
+                          Say “Hey Rie” to open Live Voice automatically. The listener runs locally on Windows.
+                        </p>
                       </div>
+                      <button
+                        type="button"
+                        onClick={handleWakeWordToggle}
+                        className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-all duration-300 ${!isWakeWordEnabled(settings.wake_word_enabled)
+                          ? 'border border-neutral-700 bg-neutral-800'
+                          : 'bg-emerald-700/85'
+                          }`}
+                        aria-label="Toggle wake word"
+                        aria-pressed={isWakeWordEnabled(settings.wake_word_enabled)}
+                      >
+                        <span
+                          className={`inline-block h-5 w-5 rounded-full bg-white shadow-md transition-transform ${!isWakeWordEnabled(settings.wake_word_enabled)
+                            ? 'translate-x-1'
+                            : 'translate-x-6'
+                            }`}
+                        />
+                      </button>
                     </div>
                   </div>
                 </div>

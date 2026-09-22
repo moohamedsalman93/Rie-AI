@@ -35,6 +35,8 @@ import { ModeToggle } from './ModeToggle';
 import { LlmProviderSelector } from './LlmProviderSelector';
 import { ThinkingBlock } from './ThinkingBlock';
 import { QuestionBlock } from './QuestionBlock';
+import VoiceControls from './VoiceControls';
+import VoiceToolActivity from './VoiceToolActivity';
 
 function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion) {
     if (!blocks || blocks.length === 0) return null;
@@ -59,6 +61,9 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
     blocks.forEach((block, idx) => {
         if (block.type === 'tool') {
             currentToolGroup.push(block);
+        } else if (block.type === 'voice_tool') {
+            flushToolGroup();
+            elements.push(<VoiceToolActivity key={block.id} item={block} />);
         } else if (block.type === 'subagent') {
             flushToolGroup();
             elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} />);
@@ -104,6 +109,7 @@ import { ScheduleNotificationsBell } from './ScheduleNotificationsBell';
 import { KnowledgeAttachmentChips, KnowledgeHistoryBadge, KnowledgeChatBanner } from './KnowledgeAttachmentChips';
 import { KnowledgePickerModal } from './KnowledgePickerModal';
 import { LiveCamoufoxPanel } from './LiveCamoufoxPanel';
+import { HistorySidebar } from './HistorySidebar';
 import { fetchActiveSkills } from '../services/skillsApi';
 import logo from '../assets/logo.png';
 
@@ -146,10 +152,6 @@ export function NormalModeLayout({
     onCaptureScreen,
     onPickProjectPath,
     isCapturing,
-    isRecording,
-    onStartRecording,
-    onStopRecording,
-    onToggleRecording,
     isAttachmentPopoverOpen,
     setIsAttachmentPopoverOpen,
     attachedClipboardText,
@@ -192,24 +194,16 @@ export function NormalModeLayout({
     onSelectProvider,
     settings = {},
     onUpdateSetting,
+    onToggleLiveVoice = () => { },
+    voiceControls = null,
 }) {
-    // Sidebar state
-    const [threads, setThreads] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [loadingMore, setLoadingMore] = useState(false);
-    const [hasMore, setHasMore] = useState(true);
-    const [searchTerm, setSearchTerm] = useState('');
-    const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-    const [threadToDelete, setThreadToDelete] = useState(null);
     const [dragCounter, setDragCounter] = useState(0);
     const [isHistoryVisible, setIsHistoryVisible] = useState(true);
     const [showExitConfirm, setShowExitConfirm] = useState(false);
-    const [friendsOpen, setFriendsOpen] = useState(true);
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
     const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
     const [browserEngine, setBrowserEngine] = useState(() => localStorage.getItem("rie_browser_engine") || "default");
     const [isBrowserBinaryAvailable, setIsBrowserBinaryAvailable] = useState(false);
-    const PAGE_SIZE = 15;
 
     const botReplyCount = messages.filter(
         (msg) => msg.from === 'bot' && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
@@ -226,58 +220,6 @@ export function NormalModeLayout({
         return hasActiveBlocks || (msg.text && msg.text.trim());
     });
     const shouldShowThinkingShimmer = Boolean((isLoading && !hasStreamingContent) || retryStatus?.message);
-
-    useEffect(() => {
-        let isCancelled = false;
-        (async () => {
-            setLoading(true);
-            try {
-                const data = await getHistory(PAGE_SIZE, 0, searchTerm);
-                if (!isCancelled) {
-                    const loaded = Array.isArray(data) ? data : [];
-                    setThreads(loaded);
-                    setHasMore(loaded.length >= PAGE_SIZE);
-                }
-            } catch (err) {
-                if (!isCancelled) {
-                    console.error('Failed to load history:', err);
-                }
-            } finally {
-                if (!isCancelled) {
-                    setLoading(false);
-                }
-            }
-        })();
-        return () => {
-            isCancelled = true;
-        };
-    }, [searchTerm]);
-
-    const handleHistoryScroll = async (e) => {
-        const { scrollTop, scrollHeight, clientHeight } = e.target;
-        if (scrollHeight - scrollTop - clientHeight < 60) {
-            if (loading || loadingMore || !hasMore) return;
-            setLoadingMore(true);
-            try {
-                const nextOffset = threads.length;
-                const data = await getHistory(PAGE_SIZE, nextOffset, searchTerm);
-                if (Array.isArray(data)) {
-                    if (data.length < PAGE_SIZE) {
-                        setHasMore(false);
-                    }
-                    setThreads((prev) => {
-                        const existingIds = new Set(prev.map((t) => String(t.id)));
-                        const newItems = data.filter((t) => !existingIds.has(String(t.id)));
-                        return [...prev, ...newItems];
-                    });
-                }
-            } catch (err) {
-                console.error("Failed to load more history:", err);
-            } finally {
-                setLoadingMore(false);
-            }
-        }
-    };
 
     useEffect(() => {
         const checkBrowserStatus = async () => {
@@ -410,144 +352,7 @@ export function NormalModeLayout({
         }
     }, [terminalLogs, isTerminalOpen]);
 
-    const userMessageCount = useMemo(() => {
-        const list = sessionsByThread?.[currentThreadId] || [];
-        return list.filter((m) => m?.from === "user" && m?.text?.trim()).length;
-    }, [sessionsByThread, currentThreadId]);
 
-    const wasStreamingRef = useRef(false);
-
-    useEffect(() => {
-        loadThreads();
-    }, [currentThreadId, userMessageCount]);
-
-    useEffect(() => {
-        const isStreaming = streamingThreads?.has?.(currentThreadId);
-        if (wasStreamingRef.current && !isStreaming) {
-            loadThreads();
-        }
-        wasStreamingRef.current = Boolean(isStreaming);
-    }, [streamingThreads, currentThreadId]);
-
-    const loadThreads = async () => {
-        try {
-            const data = await getHistory(PAGE_SIZE, 0, searchTerm);
-            if (Array.isArray(data)) {
-                setThreads((prev) => {
-                    const fetchedIds = new Set(data.map((t) => String(t.id)));
-                    const keptPrevious = prev.filter((t) => !fetchedIds.has(String(t.id)));
-                    return [...data, ...keptPrevious];
-                });
-            }
-        } catch (err) {
-            console.error('Failed to load history:', err);
-        }
-    };
-
-    const handleDeleteClick = (e, threadId) => {
-        e.stopPropagation();
-        setThreadToDelete(threadId);
-        setIsConfirmOpen(true);
-    };
-
-    const confirmDelete = async () => {
-        if (!threadToDelete) return;
-        try {
-            await onDeleteThread(threadToDelete);
-            setThreads(prev => prev.filter(t => t.id !== threadToDelete));
-        } catch (err) {
-            console.error('Failed to delete thread:', err);
-        } finally {
-            setThreadToDelete(null);
-        }
-    };
-
-
-    const formatDate = (isoString) => {
-        const date = new Date(isoString);
-        const now = new Date();
-        const diff = now - date;
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-        if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        if (days < 7) return date.toLocaleDateString([], { weekday: 'short' });
-        return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    };
-
-    const mergedThreads = useMemo(() => {
-        const known = new Set((threads || []).map((t) => String(t.id)));
-        const localOnly = Object.keys(sessionsByThread || {})
-            .filter((threadId) => !known.has(String(threadId)))
-            .map((threadId) => {
-                const list = sessionsByThread[threadId] || [];
-                return {
-                    id: threadId,
-                    title: "Untitled Chat",
-                    created_at: null,
-                    updated_at: null,
-                };
-            });
-        return [...localOnly, ...(threads || [])];
-    }, [threads, sessionsByThread]);
-
-    const filteredThreads = mergedThreads.filter(t =>
-        (t.title || 'Untitled Chat').toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const groupedThreads = useMemo(() => {
-        const groups = {
-            today: { title: "Today", threads: [] },
-            yesterday: { title: "Yesterday", threads: [] },
-            twoDaysAgo: { title: "2 days ago", threads: [] },
-            threeDaysAgo: { title: "3 days ago", threads: [] },
-            fourDaysAgo: { title: "4 days ago", threads: [] },
-            fiveDaysAgo: { title: "5 days ago", threads: [] },
-            sixDaysAgo: { title: "6 days ago", threads: [] },
-            lastWeek: { title: "Previous 7 Days", threads: [] },
-            older: { title: "Older", threads: [] }
-        };
-
-        const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-        filteredThreads.forEach(thread => {
-            const dateStr = thread.updated_at || thread.created_at;
-            if (!dateStr) {
-                groups.today.threads.push(thread);
-                return;
-            }
-
-            const date = new Date(dateStr);
-            const threadStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-            const diffDays = Math.round((todayStart - threadStart) / (1000 * 60 * 60 * 24));
-
-            if (diffDays <= 0) {
-                groups.today.threads.push(thread);
-            } else if (diffDays === 1) {
-                groups.yesterday.threads.push(thread);
-            } else if (diffDays === 2) {
-                groups.twoDaysAgo.threads.push(thread);
-            } else if (diffDays === 3) {
-                groups.threeDaysAgo.threads.push(thread);
-            } else if (diffDays === 4) {
-                groups.fourDaysAgo.threads.push(thread);
-            } else if (diffDays === 5) {
-                groups.fiveDaysAgo.threads.push(thread);
-            } else if (diffDays === 6) {
-                groups.sixDaysAgo.threads.push(thread);
-            } else if (diffDays >= 7 && diffDays < 14) {
-                groups.lastWeek.threads.push(thread);
-            } else {
-                groups.older.threads.push(thread);
-            }
-        });
-
-        return Object.values(groups).filter(g => g.threads.length > 0);
-    }, [filteredThreads]);
-
-    const getThreadFriendMeta = (threadId) => {
-        if (!friendThreadMeta) return null;
-        return friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
-    };
 
     return (
         <div className="w-full h-full flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden">
@@ -560,9 +365,6 @@ export function NormalModeLayout({
                 <div data-tauri-drag-region className="flex items-center gap-2 w-[33.3%]">
                     <img src={logo} alt="Rie-AI" className="h-5 w-5 object-contain" />
                     <span className="text-sm font-semibold text-neutral-200">Rie-AI</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 mt-[2px] rounded ${apiStatus === 'online' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                        {apiStatus === 'online' ? 'Online' : 'Offline'}
-                    </span>
                 </div>
 
                 {/* Center: Action Icons */}
@@ -715,134 +517,25 @@ export function NormalModeLayout({
                             animate={{ width: sidebarWidth, opacity: 1 }}
                             exit={{ opacity: 0, width: 0 }}
                             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                            className="bg-neutral-900 border-r border-neutral-800 flex flex-col shrink-0 overflow-hidden"
+                            className="flex flex-col shrink-0 overflow-hidden h-full z-20"
+                            style={{ width: sidebarWidth }}
                         >
-                            {/* Sidebar Header: Search + New Chat */}
-                            <div className="p-3 border-b border-neutral-800 shrink-0">
-                                <div className="flex items-center gap-2">
-                                    <div className="relative flex-1">
-                                        <input
-                                            type="text"
-                                            placeholder="Search..."
-                                            value={searchTerm}
-                                            onChange={(e) => setSearchTerm(e.target.value)}
-                                            className="w-full bg-neutral-800 border border-neutral-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-500 focus:outline-none focus:border-emerald-500/50 transition-colors"
-                                        />
-                                        <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500">
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <circle cx="11" cy="11" r="8" />
-                                                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                                            </svg>
-                                        </div>
-                                    </div>
-                                    <button
-                                        onClick={onNewChat}
-                                        className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors shrink-0"
-                                        title="New Chat"
-                                    >
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <line x1="12" y1="5" x2="12" y2="19" />
-                                            <line x1="5" y1="12" x2="19" y2="12" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Thread List */}
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-0.5" onScroll={handleHistoryScroll}>
-                                <div className="mb-2 rounded-lg border border-white/5 bg-neutral-900/50">
-                                    <button
-                                        type="button"
-                                        onClick={() => setFriendsOpen((prev) => !prev)}
-                                        className="flex w-full items-center justify-between px-2.5 py-2 text-left text-xs font-semibold text-neutral-200"
-                                    >
-                                        <span className="inline-flex items-center gap-1.5"><Users size={13} /> Friends</span>
-                                        {friendsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                                    </button>
-                                    {friendsOpen && (
-                                        <div className="space-y-1 border-t border-white/5 p-1.5">
-                                            {friends.length === 0 ? (
-                                                <div className="px-2 py-1 text-[11px] text-neutral-500">No connections yet.</div>
-                                            ) : (
-                                                friends.map((friend) => {
-                                                    return (
-                                                        <div key={friend.id} className="rounded-md border border-white/5 bg-neutral-900/45">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => onStartFriendChat(friend)}
-                                                                className="flex w-full items-center justify-between px-2 py-1.5 text-left text-xs text-neutral-200"
-                                                            >
-                                                                <span className="truncate">{friend.name || "Friend"}</span>
-                                                                <span className="rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">Chat</span>
-                                                            </button>
-                                                        </div>
-                                                    );
-                                                })
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                {loading ? (
-                                    <div className="flex justify-center py-8">
-                                        <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-emerald-500"></div>
-                                    </div>
-                                ) : filteredThreads.length === 0 ? (
-                                    <div className="py-6 text-center text-xs text-neutral-500">
-                                        {searchTerm ? 'No chats match.' : null}
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4">
-                                        {groupedThreads.map(group => (
-                                            <div key={group.title} className="space-y-1">
-                                                <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
-                                                    {group.title}
-                                                </div>
-                                                {group.threads.map(thread => (
-                                                    <button
-                                                        key={thread.id}
-                                                        onClick={() => onSelectThread(thread.id)}
-                                                        className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative ${thread.id === currentThreadId
-                                                            ? 'bg-neutral-800 text-neutral-100'
-                                                            : 'text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200'
-                                                            }`}
-                                                    >
-                                                        <div className="pr-5">
-                                                            <div className="flex items-center gap-1.5">
-                                                                <div className="text-xs font-medium truncate">{thread.title || 'Untitled Chat'}</div>
-                                                                {Boolean(getThreadFriendMeta(thread.id)?.isFriendChat || getThreadFriendMeta(thread.id)?.friendId) && (
-                                                                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase text-emerald-300">Friend</span>
-                                                                )}
-                                                                <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
-                                                                {streamingThreads.has(thread.id) && (
-                                                                    <div className="flex items-center gap-1 shrink-0">
-                                                                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                            <div className="text-[10px] opacity-50 mt-0.5">{formatDate(thread.updated_at || thread.created_at)}</div>
-                                                        </div>
-                                                        <div
-                                                            onClick={(e) => handleDeleteClick(e, thread.id)}
-                                                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 transition-all"
-                                                        >
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                                <polyline points="3 6 5 6 21 6"></polyline>
-                                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                                            </svg>
-                                                        </div>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        ))}
-                                        {loadingMore && (
-                                            <div className="flex justify-center py-2">
-                                                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-emerald-500" />
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                            <ScheduledTasksPanel apiStatus={apiStatus} />
+                            <HistorySidebar
+                                isOpen={isHistoryVisible}
+                                onClose={() => setIsHistoryVisible(false)}
+                                onToggleCollapse={() => setIsHistoryVisible(false)}
+                                onSelectThread={onSelectThread}
+                                onDeleteThread={onDeleteThread}
+                                onNewChat={onNewChat}
+                                currentThreadId={currentThreadId}
+                                streamingThreads={streamingThreads}
+                                windowMode="normal"
+                                friends={friends}
+                                friendThreadMeta={friendThreadMeta}
+                                onStartFriendChat={onStartFriendChat}
+                                sessionsByThread={sessionsByThread}
+                                apiStatus={apiStatus}
+                            />
                         </motion.aside>
                     )}
                 </AnimatePresence>
@@ -854,7 +547,7 @@ export function NormalModeLayout({
                     className={`flex flex-col min-w-[380px] bg-neutral-950 relative ${isBrowserPanelOpen ? "shrink-0 border-r border-neutral-800/80" : "flex-1"}`}
                 >
                     {/* Messages */}
-                    {!isNewChat ? (
+                    {!isNewChat || voiceControls ? (
                         <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-4" : "px-12")} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
                             <div className="max-w-3xl mx-auto w-full space-y-3">
                                 {activeFriendMeta?.isFriendChat && (
@@ -865,6 +558,10 @@ export function NormalModeLayout({
                                 )}
                                 <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
                                 <SkillsChatBanner activeSkills={activeSkillsList} />
+                                {isNewChat && voiceControls && <div className="py-12 text-center">
+                                    <h2 className="text-base font-medium text-neutral-200">Your voice, in this chat</h2>
+                                    <p className="mt-2 text-sm text-neutral-500">Your conversation and tool activity will appear here.</p>
+                                </div>}
                                 <AnimatePresence>
                                     {messages.map((m) => {
                                         if (m.from === 'bot' && (!m.blocks || m.blocks.length === 0) && (!m.text || !m.text.trim())) {
@@ -958,7 +655,7 @@ export function NormalModeLayout({
                                                                 {renderMessageBlocks(
                                                                     m.blocks || [{ type: 'text', text: m.text }],
                                                                     toolTooltipPlacement,
-                                                                    m.id === streamingBotMessageId,
+                                                                    Boolean(m.isPartial) || m.id === streamingBotMessageId,
                                                                     onAnswerQuestion || ((_id, text) => onSend(text))
                                                                 )}
                                                             </div>
@@ -1004,7 +701,7 @@ export function NormalModeLayout({
                                     />
                                 )}
 
-                                <div className='h-28 w-2'>
+                                <div className={`${voiceControls ? "h-2" : "h-28"} w-2`}>
 
                                 </div>
                             </div>
@@ -1131,7 +828,11 @@ export function NormalModeLayout({
                     )}
 
                     {/* Input Area */}
-                    <footer
+                    {voiceControls ? (
+                        <footer className="w-full shrink-0 bg-neutral-950 px-4 py-3">
+                            <div className="mx-auto max-w-3xl"><VoiceControls {...voiceControls} /></div>
+                        </footer>
+                    ) : <footer
                         onDragEnter={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
@@ -1207,198 +908,168 @@ export function NormalModeLayout({
                                     </div>
                                 )}
 
-                                {/* Textarea */}
-                                <div className="relative flex items-center">
-                                    <textarea
-                                        ref={textareaRef}
-                                        rows={1}
-                                        value={input}
-                                        onChange={(e) => setInput(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter' && !e.shiftKey) {
-                                                e.preventDefault();
-                                                onSend();
-                                            }
-                                        }}
-                                        onPaste={(e) => {
-                                            if (isLoading) return;
-                                            const items = e.clipboardData?.items || [];
-                                            for (const item of items) {
-                                                if (item.kind === "file" && item.type.startsWith("image/")) {
-                                                    const file = item.getAsFile();
-                                                    if (file) {
+                                    <>
+                                        {/* Textarea */}
+                                        <div className="relative flex items-center">
+                                            <textarea
+                                                ref={textareaRef}
+                                                rows={1}
+                                                value={input}
+                                                onChange={(e) => setInput(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' && !e.shiftKey) {
                                                         e.preventDefault();
-                                                        attachImageFile(file);
+                                                        onSend();
                                                     }
-                                                    break;
-                                                }
-                                            }
-                                        }}
-                                        placeholder={isRecording ? 'Listening...' : (isNewChat ? 'Do anything' : 'Type a message...')}
-                                        className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
-                                        disabled={isLoading}
-                                    />
-                                    {isRecording && (
-                                        <div className="absolute right-2 top-2 flex items-center gap-1.5">
-                                            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                                            <span className="text-[10px] font-bold text-emerald-500 uppercase">Live</span>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Bottom bar */}
-                                <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60 gap-1.5 min-w-0">
-                                    <div className="flex items-center gap-1.5 min-w-0 shrink-0">
-                                        <div className="relative shrink-0">
-                                            <button
-                                                type="button"
-                                                onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-                                                className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-                                                title="Add attachment"
-                                            >
-                                                <Plus size={16} />
-                                            </button>
-                                            <AnimatePresence>
-                                                {isAttachmentPopoverOpen && (
-                                                    <motion.div
-                                                        initial={{ opacity: 0, y: 10 }}
-                                                        animate={{ opacity: 1, y: 0 }}
-                                                        exit={{ opacity: 0, y: 10 }}
-                                                        className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
-                                                    >
-                                                        <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
-                                                                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-                                                                <circle cx="9" cy="9" r="2" />
-                                                                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
-                                                            </svg>
-                                                            Upload File
-                                                        </button>
-                                                        <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400">
-                                                                <rect width="20" height="14" x="2" y="3" rx="2" />
-                                                                <path d="M8 21h8" />
-                                                                <path d="M12 17v4" />
-                                                            </svg>
-                                                            Current Screen
-                                                        </button>
-                                                        <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
-                                                                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                                                            </svg>
-                                                            Project Path
-                                                        </button>
-                                                        <button onClick={onAttachClipboard} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-pink-400">
-                                                                <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                                                                <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                                                            </svg>
-                                                            Read Clipboard
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setIsAttachmentPopoverOpen(false);
-                                                                setIsKnowledgePickerOpen(true);
-                                                            }}
-                                                            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                                                        >
-                                                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-400">
-                                                                <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20" />
-                                                            </svg>
-                                                            Custom Knowledge
-                                                        </button>
-                                                    </motion.div>
-                                                )}
-                                            </AnimatePresence>
-                                        </div>
-
-                                        <div className="scale-90 origin-left shrink-0">
-                                            <ModeToggle
-                                                chatMode={chatMode}
-                                                setChatMode={setChatMode}
-                                                speedMode={speedMode}
-                                                setSpeedMode={setSpeedMode}
-                                                provider={provider}
+                                                }}
+                                                onPaste={(e) => {
+                                                    if (isLoading) return;
+                                                    const items = e.clipboardData?.items || [];
+                                                    for (const item of items) {
+                                                        if (item.kind === "file" && item.type.startsWith("image/")) {
+                                                            const file = item.getAsFile();
+                                                            if (file) {
+                                                                e.preventDefault();
+                                                                attachImageFile(file);
+                                                            }
+                                                            break;
+                                                        }
+                                                    }
+                                                }}
+                                                placeholder={isNewChat ? 'Do anything' : 'Type a message...'}
+                                                className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
+                                                disabled={isLoading}
                                             />
                                         </div>
-                                    </div>
 
-                                    <div className="flex items-center gap-1.5 min-w-0 shrink-0">
-                                        <LlmProviderSelector
-                                            provider={provider}
-                                            onSelectProvider={onSelectProvider}
-                                            settings={settings}
-                                            onOpenSettings={onOpenSettings}
-                                            onUpdateSetting={onUpdateSetting}
-                                        />
+                                        {/* Bottom bar */}
+                                        <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60 gap-1.5 min-w-0">
+                                            <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                                                <div className="relative shrink-0">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
+                                                        className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+                                                        title="Add attachment"
+                                                    >
+                                                        <Plus size={16} />
+                                                    </button>
+                                                    <AnimatePresence>
+                                                        {isAttachmentPopoverOpen && (
+                                                            <motion.div
+                                                                initial={{ opacity: 0, y: 10 }}
+                                                                animate={{ opacity: 1, y: 0 }}
+                                                                exit={{ opacity: 0, y: 10 }}
+                                                                className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
+                                                            >
+                                                                <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                                    <Folder size={14} className="text-neutral-400" />
+                                                                    <span>Upload File</span>
+                                                                </button>
+                                                                <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                                    <Info size={14} className="text-neutral-400" />
+                                                                    <span>Current Screen</span>
+                                                                </button>
+                                                                <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
+                                                                    <Folder size={14} className="text-neutral-400" />
+                                                                    <span>Project Path</span>
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setIsAttachmentPopoverOpen(false);
+                                                                        setIsKnowledgePickerOpen(true);
+                                                                    }}
+                                                                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
+                                                                >
+                                                                    <Folder size={14} className="text-violet-400" />
+                                                                    <span>Custom Knowledge</span>
+                                                                </button>
+                                                            </motion.div>
+                                                        )}
+                                                    </AnimatePresence>
 
-                                        {/* Unified Action Button: Mic when empty, Send when typed, Stop when loading/recording */}
-                                        <AnimatePresence mode="wait" initial={false}>
-                                            {isLoading ? (
-                                                <motion.button
-                                                    key="btn-loading"
-                                                    initial={{ scale: 0.8, opacity: 0 }}
-                                                    animate={{ scale: 1, opacity: 1 }}
-                                                    exit={{ scale: 0.8, opacity: 0 }}
-                                                    transition={{ duration: 0.12 }}
-                                                    type="button"
-                                                    onClick={() => onCancel?.()}
-                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 active:scale-95 transition-all"
-                                                    title="Stop generating"
-                                                >
-                                                    <Square size={11} fill="currentColor" />
-                                                </motion.button>
-                                            ) : isRecording ? (
-                                                <motion.button
-                                                    key="btn-recording"
-                                                    initial={{ scale: 0.8, opacity: 0 }}
-                                                    animate={{ scale: 1, opacity: 1 }}
-                                                    exit={{ scale: 0.8, opacity: 0 }}
-                                                    transition={{ duration: 0.12 }}
-                                                    type="button"
-                                                    onClick={() => (onToggleRecording ? onToggleRecording() : onStopRecording?.())}
-                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-red-400 bg-red-500/15 animate-pulse ring-1 ring-red-500/30 hover:bg-red-500/25 active:scale-95 transition-all"
-                                                    title="Listening... Click to stop"
-                                                >
-                                                    <Mic size={15} />
-                                                </motion.button>
-                                            ) : hasContent ? (
-                                                <motion.button
-                                                    key="btn-send"
-                                                    initial={{ scale: 0.8, opacity: 0 }}
-                                                    animate={{ scale: 1, opacity: 1 }}
-                                                    exit={{ scale: 0.8, opacity: 0 }}
-                                                    transition={{ duration: 0.12 }}
-                                                    type="button"
-                                                    onClick={onSend}
-                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-white text-neutral-900 hover:bg-neutral-200 active:scale-95 shadow-sm transition-all"
-                                                    title="Send message (Enter)"
-                                                >
-                                                    <ArrowUp size={15} strokeWidth={2.5} />
-                                                </motion.button>
-                                            ) : (
-                                                <motion.button
-                                                    key="btn-voice"
-                                                    initial={{ scale: 0.8, opacity: 0 }}
-                                                    animate={{ scale: 1, opacity: 1 }}
-                                                    exit={{ scale: 0.8, opacity: 0 }}
-                                                    transition={{ duration: 0.12 }}
-                                                    type="button"
-                                                    onClick={() => (onToggleRecording ? onToggleRecording() : onStartRecording?.())}
-                                                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-neutral-400 hover:text-white hover:bg-neutral-800 active:scale-95 transition-all"
-                                                    title="Voice input"
-                                                >
-                                                    <Mic size={15} />
-                                                </motion.button>
-                                            )}
-                                        </AnimatePresence>
-                                    </div>
-                                </div>
+                                                    <KnowledgePickerModal
+                                                        isOpen={isKnowledgePickerOpen}
+                                                        onClose={() => setIsKnowledgePickerOpen(false)}
+                                                        onSelect={(pack) => onAttachKnowledge?.(pack)}
+                                                        attachedIds={attachedKnowledge.map((k) => k.id)}
+                                                        variant="popover"
+                                                    />
+                                                </div>
+
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <ModeToggle
+                                                        chatMode={chatMode}
+                                                        setChatMode={setChatMode}
+                                                        speedMode={speedMode}
+                                                        setSpeedMode={setSpeedMode}
+                                                        provider={provider}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                                                <LlmProviderSelector
+                                                    provider={provider}
+                                                    onSelectProvider={onSelectProvider}
+                                                    settings={settings}
+                                                    onOpenSettings={onOpenSettings}
+                                                    onUpdateSetting={onUpdateSetting}
+                                                />
+
+                                                {/* Unified Action Button */}
+                                                <AnimatePresence mode="wait" initial={false}>
+                                                    {isLoading ? (
+                                                        <motion.button
+                                                            key="btn-loading"
+                                                            initial={{ scale: 0.8, opacity: 0 }}
+                                                            animate={{ scale: 1, opacity: 1 }}
+                                                            exit={{ scale: 0.8, opacity: 0 }}
+                                                            transition={{ duration: 0.12 }}
+                                                            type="button"
+                                                            onClick={() => onCancel?.()}
+                                                            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 active:scale-95 transition-all"
+                                                            title="Stop generating"
+                                                        >
+                                                            <Square size={11} fill="currentColor" />
+                                                        </motion.button>
+                                                    ) : hasContent ? (
+                                                        <motion.button
+                                                            key="btn-send"
+                                                            initial={{ scale: 0.8, opacity: 0 }}
+                                                            animate={{ scale: 1, opacity: 1 }}
+                                                            exit={{ scale: 0.8, opacity: 0 }}
+                                                            transition={{ duration: 0.12 }}
+                                                            type="button"
+                                                            onClick={onSend}
+                                                            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-white text-neutral-900 hover:bg-neutral-200 active:scale-95 shadow-sm transition-all"
+                                                            title="Send message (Enter)"
+                                                        >
+                                                            <ArrowUp size={15} strokeWidth={2.5} />
+                                                        </motion.button>
+                                                    ) : (
+                                                        <motion.button
+                                                            key="btn-live-voice"
+                                                            initial={{ scale: 0.8, opacity: 0 }}
+                                                            animate={{ scale: 1, opacity: 1 }}
+                                                            exit={{ scale: 0.8, opacity: 0 }}
+                                                            transition={{ duration: 0.12 }}
+                                                            type="button"
+                                                            onClick={onToggleLiveVoice}
+                                                            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-neutral-400 hover:text-white hover:bg-neutral-800 active:scale-95 transition-all"
+                                                            title="Voice conversation (Gemini Live)"
+                                                        >
+                                                            <Mic size={15} />
+                                                        </motion.button>
+                                                    )}
+                                                </AnimatePresence>
+                                            </div>
+                                        </div>
+                                    </>
                             </div>
                         </div>
 
-                    </footer>
+                    </footer>}
 
                 </div>
 
@@ -1521,14 +1192,6 @@ export function NormalModeLayout({
                 </AnimatePresence>
             </div>
 
-            <ConfirmationModal
-                isOpen={isConfirmOpen}
-                onClose={() => setIsConfirmOpen(false)}
-                onConfirm={confirmDelete}
-                title="Delete Chat?"
-                message="This will permanently delete this conversation."
-                confirmText="Delete"
-            />
 
 
             <ConfirmationModal

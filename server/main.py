@@ -167,10 +167,12 @@ async def shutdown_event():
 from app.security import verify_app_token
 from fastapi import Depends
 from app.browser.routes import router as browser_router
+from app.live_voice import router as live_voice_router
 
 # Include routers
 app.include_router(router, dependencies=[Depends(verify_app_token)])
 app.include_router(browser_router)
+app.include_router(live_voice_router)
 
 
 if __name__ == "__main__":

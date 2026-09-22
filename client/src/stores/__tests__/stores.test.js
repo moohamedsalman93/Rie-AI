@@ -33,7 +33,7 @@ describe('Zustand Stores Suite', () => {
       showWelcome: false,
       isTerminalOpen: false,
       terminalLogs: [],
-      isRecording: false,
+      isLiveVoiceActive: false,
       availableUpdate: null,
     });
   });

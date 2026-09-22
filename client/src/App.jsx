@@ -7,10 +7,10 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, transcribeAudio, speakText, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread, clearAllHistory } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread, clearAllHistory } from "./services/chatApi";
 import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
 import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
-import { isTauri, startNativeRecording, stopNativeRecording } from "./utils/tauriNative";
+import { isTauri } from "./utils/tauriNative";
 import { extractUrls } from "./utils/urlUtils";
 import { saveThreadId, getStoredThreadId, getFriendThreadMeta, saveFriendThreadMeta } from "./services/historyService";
 import { SettingsPage } from "./components/SettingsPage";
@@ -24,6 +24,9 @@ import { FloatingBubble } from "./components/FloatingBubble";
 import { FloatingChatWindow } from "./components/FloatingChatWindow";
 import { HITLApproval } from "./components/HITLApproval";
 import { ScreenPrivacyToast } from "./components/ScreenPrivacyToast";
+import { LiveVoiceSession } from "./services/liveAudioService";
+import { upsertVoiceActivity, upsertVoiceMessage, upsertVoiceToolMessage } from "./utils/voiceActivity";
+import { isWakeWordEnabled, wakeWordService } from "./services/wakeWordService";
 import {
   WINDOW_SIZES,
   getToolDisplayName,
@@ -36,41 +39,6 @@ import { normalizeQuestionPayload } from "./utils/questionNormalizer";
 import { parseMessageContentToBlocks } from "./utils/messageParser";
 export { parseMessageContentToBlocks };
 
-
-
-/**
- * Clean markdown symbols, code blocks, URLs, and formatting from text for natural TTS speech output.
- * @param {string} text
- * @returns {string}
- */
-function cleanTextForSpeech(text) {
-  if (!text) return "";
-  let clean = text;
-  // Remove <think>...</think> or <thought>...</thought> blocks
-  clean = clean.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, "");
-  clean = clean.replace(/<thought>[\s\S]*?<\/thought>/gi, "");
-  // Remove leading orphan thought blocks (where model omitted opening <think>)
-  clean = clean.replace(/^[\s\S]*?<\/(?:think(?:ing)?|thought)>/i, "");
-  // Remove code blocks ```...```
-  clean = clean.replace(/```[\s\S]*?```/g, "");
-  // Remove inline code `...`
-  clean = clean.replace(/`[^`]+`/g, "");
-  // Remove URLs
-  clean = clean.replace(/https?:\/\/\S+/gi, "");
-  // Remove Markdown links [text](url) -> text
-  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  // Remove headers (#, ##, etc.)
-  clean = clean.replace(/^\s*#+\s+/gm, "");
-  // Remove bold/italic symbols (*, _, **)
-  clean = clean.replace(/[*_]{1,3}/g, "");
-  // Remove blockquote symbol (> )
-  clean = clean.replace(/^\s*>\s+/gm, "");
-  // Remove bullet list symbols (- , * , + )
-  clean = clean.replace(/^\s*[-*+]\s+/gm, "");
-  // Replace multiple spaces/newlines with single space
-  clean = clean.replace(/\s+/g, " ").trim();
-  return clean;
-}
 
 
 /** Merge unread poll into session log so items stay visible after mark-read (until app restart). */
@@ -172,7 +140,16 @@ function MainApp() {
   const [isAppInitializing, setIsAppInitializing] = useState(true);
   const [currentTool, setCurrentTool] = useState(null);
   const [retryStatus, setRetryStatus] = useState(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const [isLiveVoiceActive, setIsLiveVoiceActive] = useState(false);
+  const [liveVoiceStatus, setLiveVoiceStatus] = useState("listening"); // "listening" | "speaking" | "tool"
+  const [liveVoiceActivity, setLiveVoiceActivity] = useState([]);
+  const liveVoiceActiveTool = liveVoiceActivity.find((item) => item.type === "tool" && item.status === "running")
+    || liveVoiceActivity.find((item) => item.type === "tool" && item.status === "queued") || null;
+  const [liveVoiceMuted, setLiveVoiceMuted] = useState(false);
+  const [liveVoiceVolumes, setLiveVoiceVolumes] = useState({ userVolume: 0, assistantVolume: 0 });
+  const [liveVoiceError, setLiveVoiceError] = useState(null);
+  const liveSessionRef = useRef(null);
+  const isLiveVoiceActiveRef = useRef(false);
   const [isWindowDraggingFile, setIsWindowDraggingFile] = useState(false);
   const [pendingActions, setPendingActions] = useState({}); // Map: threadId -> HITL request
 
@@ -194,7 +171,7 @@ function MainApp() {
   const scheduleNotifSeenIdsRef = useRef(new Set());
   const prevThreadScheduleNotifIdsRef = useRef(new Set());
 
-  const windowManager = useWindowManager({ isOpen, setIsOpen, windowMode, settings });
+  const windowManager = useWindowManager({ isOpen, setIsOpen, windowMode, settings, voiceModeRef: isLiveVoiceActiveRef });
   const {
     getWindow,
     getWindowPosition,
@@ -211,6 +188,8 @@ function MainApp() {
     positionCheckIntervalRef,
     isDraggingRef,
   } = windowManager;
+
+  const suspendBubbleResize = useCallback(() => isOpenRef.current || isLiveVoiceActiveRef.current, []);
 
   const attachments = useAttachments();
   const knowledgeAttachment = useKnowledgeAttachment();
@@ -346,15 +325,6 @@ function MainApp() {
       return changed ? nextSessions : prev;
     });
   }, []);
-
-  const voiceReplyRef = useRef(true);
-  const lastTurnWasVoiceRef = useRef(false);
-  const ttsProviderRef = useRef("edge-tts");
-  const ttsVoiceRef = useRef("en-US-EmmaNeural");
-  const audioQueueRef = useRef([]);
-  const isPlayingRef = useRef(false);
-  const sentenceBufferRef = useRef("");
-  const isRecordingRef = useRef(isRecording);
   const friendStreamStateRef = useRef({});
   const messages = sessions[activeThreadId] || initialMessages;
   const isLoading = streamingThreads.has(activeThreadId);
@@ -498,80 +468,145 @@ function MainApp() {
     }
   }, []);
 
-  // Stop & clear all audio playback and queues
-  const stopSpeech = useCallback(() => {
-    audioQueueRef.current = [];
-    sentenceBufferRef.current = "";
-    if (currentAudioRef.current) {
-      try {
-        currentAudioRef.current.pause();
-        currentAudioRef.current.currentTime = 0;
-      } catch (err) {
-        console.error("Error stopping audio playback:", err);
-      }
-      currentAudioRef.current = null;
-    }
-    isPlayingRef.current = false;
+  const handleStopLiveVoice = useCallback(async () => {
+    liveSessionRef.current?.stop();
+    liveSessionRef.current = null;
+    isLiveVoiceActiveRef.current = false;
+    setIsLiveVoiceActive(false);
+    setLiveVoiceStatus("closed");
+    setLiveVoiceMuted(false);
+    setLiveVoiceVolumes({ userVolume: 0, assistantVolume: 0 });
+    setLiveVoiceError(null);
   }, []);
 
-  // Audio Queue Processor
-  const processAudioQueue = useCallback(async () => {
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+  const stopSpeech = handleStopLiveVoice;
 
-    isPlayingRef.current = true;
+  const handleStartLiveVoice = useCallback(async () => {
+    if (liveSessionRef.current) {
+      await handleStopLiveVoice();
+    }
 
-    // Get the first task (Promise)
-    const currentTask = audioQueueRef.current.shift();
+    const currentThreadId = threadIdRef.current || activeThreadId || crypto.randomUUID();
+    if (!threadIdRef.current) {
+      threadIdRef.current = currentThreadId;
+      setActiveThreadId(currentThreadId);
+      saveThreadId(currentThreadId);
+    }
+    const voice = settings?.gemini_live_voice || "Aoede";
+    setError(null);
+    setLiveVoiceError(null);
+    setLiveVoiceActivity([]);
+    setIsSettingsOpen(false);
+    setShowWelcome(false);
+    setIsHistoryOpen(false);
+    setLiveVoiceStatus("connecting");
+
+    const session = new LiveVoiceSession({
+      voice,
+      threadId: currentThreadId,
+      onStatusChange: (status) => {
+        if (liveSessionRef.current !== session) return;
+        setLiveVoiceStatus(status);
+        if (status === "closed") {
+          liveSessionRef.current = null;
+          isLiveVoiceActiveRef.current = false;
+          setIsLiveVoiceActive(false);
+          setLiveVoiceMuted(false);
+        }
+      },
+      onToolCall: (tool) => {
+        if (liveSessionRef.current !== session) return;
+        setLiveVoiceActivity((items) => upsertVoiceActivity(items, { ...tool, type: "tool" }));
+        setSessions((prev) => ({
+          ...prev,
+          [currentThreadId]: upsertVoiceToolMessage(prev[currentThreadId] || [], tool),
+        }));
+      },
+      onVolumes: (userVol, assistantVol) => {
+        if (liveSessionRef.current !== session) return;
+        setLiveVoiceVolumes({ userVolume: userVol, assistantVolume: assistantVol });
+      },
+      onToolResult: (tool) => {
+        if (liveSessionRef.current !== session) return;
+        setLiveVoiceActivity((items) => upsertVoiceActivity(items, { ...tool, type: "tool" }));
+        setSessions((prev) => ({
+          ...prev,
+          [currentThreadId]: upsertVoiceToolMessage(prev[currentThreadId] || [], tool),
+        }));
+      },
+      onTranscript: (transcript) => {
+        if (liveSessionRef.current !== session || !transcript.text) return;
+        setLiveVoiceActivity((items) => upsertVoiceActivity(items, { ...transcript, type: "transcript" }));
+        // Capture the session's thread; changing the selected chat must not
+        // redirect an in-flight voice response into another conversation.
+        setSessions((prev) => ({
+          ...prev,
+          [currentThreadId]: upsertVoiceMessage(prev[currentThreadId] || [], transcript),
+        }));
+      },
+      onError: (err) => {
+        if (liveSessionRef.current !== session) return;
+        console.error("Live Voice session error:", err);
+        const message = typeof err === "string" ? err : err?.message || "Live voice connection error";
+        setError(message);
+        setLiveVoiceError(message);
+      },
+    });
+
+    liveSessionRef.current = session;
+    isLiveVoiceActiveRef.current = true;
+    setIsLiveVoiceActive(true);
+    setLiveVoiceMuted(false);
 
     try {
-      const audioBlob = await currentTask;
-
-      if (!audioBlob) {
-        console.warn("Skipping failed/empty audio chunk");
-        isPlayingRef.current = false;
-        processAudioQueue();
-        return;
-      }
-
-      const audioUrl = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrl);
-
-      currentAudioRef.current = audio;
-
-      // Play and wait for end
-      await new Promise((resolve) => {
-        audio.onended = resolve;
-        audio.onerror = resolve; // Continue even on error
-        audio.play().catch(e => {
-          console.error("Audio play failed", e);
-          resolve();
-        });
-      });
-
-      URL.revokeObjectURL(audioUrl);
-      if (currentAudioRef.current === audio) {
-        currentAudioRef.current = null;
-      }
+      // Do not let the offline listener compete with the call's microphone.
+      await wakeWordService.pause();
+      if (liveSessionRef.current !== session) return;
+      await handleOpen();
+      if (liveSessionRef.current !== session) return;
+      await session.start();
     } catch (err) {
-      console.error("Queue processing error:", err);
-    } finally {
-      isPlayingRef.current = false;
-      processAudioQueue();
+      // The session reports startup failures and cleans itself up. An explicit
+      // stop rejects startup with AbortError and must not stop a newer session.
+      if (err.name !== "AbortError") {
+        session.fail(err.message || "Could not release the wake-word microphone. Please restart Rie.");
+        console.error("Failed to start voice:", err);
+      }
+    }
+  }, [activeThreadId, settings?.gemini_live_voice, handleStopLiveVoice, handleOpen]);
+
+  const handleToggleLiveVoice = useCallback(() => {
+    if (isLiveVoiceActiveRef.current) {
+      handleStopLiveVoice();
+    } else {
+      handleStartLiveVoice();
+    }
+  }, [handleStartLiveVoice, handleStopLiveVoice]);
+
+  const handleToggleMuteLiveVoice = useCallback(() => {
+    if (liveSessionRef.current) {
+      const nextMute = liveSessionRef.current.toggleMute();
+      setLiveVoiceMuted(nextMute);
     }
   }, []);
 
+  const voiceControls = isLiveVoiceActive || liveVoiceError ? {
+    status: liveVoiceStatus,
+    activeTool: liveVoiceActiveTool,
+    isMuted: liveVoiceMuted,
+    volumes: liveVoiceVolumes,
+    onToggleMute: handleToggleMuteLiveVoice,
+    onEndSession: handleStopLiveVoice,
+    error: liveVoiceError,
+    onRetry: handleStartLiveVoice,
+  } : null;
 
-  const queueSentence = useCallback((text) => {
-    if (!text || !text.trim()) return;
-    const cleaned = cleanTextForSpeech(text);
-    if (!cleaned) return;
-    const audioPromise = speakText(cleaned, ttsVoiceRef.current, ttsProviderRef.current).catch(err => {
-      console.error("TTS fetch error", err);
-      return null;
-    });
-    audioQueueRef.current.push(audioPromise);
-    processAudioQueue();
-  }, [processAudioQueue]);
+  useEffect(() => () => { liveSessionRef.current?.stop(); }, []);
+
+  useEffect(() => {
+    const session = liveSessionRef.current;
+    if (session && activeThreadId && session.threadId !== activeThreadId) handleStopLiveVoice();
+  }, [activeThreadId, handleStopLiveVoice]);
 
   const processStreamChunk = useCallback((data, botMessageId, threadId, userMessageId) => {
     try {
@@ -626,11 +661,6 @@ function MainApp() {
           };
         });
 
-        // Flush & speak any remaining unspoken text left in sentenceBufferRef at the end of stream
-        if (voiceReplyRef.current && lastTurnWasVoiceRef.current && sentenceBufferRef.current.trim()) {
-          queueSentence(sentenceBufferRef.current);
-        }
-
         // In normal mode, notify only when the app is not the foreground window.
         // This covers minimized and backgrounded long-running agent tasks without
         // interrupting users who are already watching the response arrive.
@@ -656,8 +686,7 @@ function MainApp() {
           })();
         }
 
-        // Reset sentence buffer and accumulated text for the next turn
-        sentenceBufferRef.current = "";
+        // Reset accumulated text for the next turn
         accumulatedTextRef.current = "";
 
         if (firstToolMinimizedRef.current) {
@@ -917,8 +946,6 @@ function MainApp() {
           const parser = streamParserStateRef.current[threadId];
           parser.buffer += textChunk;
 
-          let speechNewText = "";
-
           while (parser.buffer.length > 0) {
             if (!parser.inThinkTag) {
               const thinkIdx = parser.buffer.indexOf("<think>");
@@ -948,7 +975,6 @@ function MainApp() {
                 if (textBefore) {
                   pendingStreamUpdatesRef.current[threadId].pendingText = (pendingStreamUpdatesRef.current[threadId].pendingText || "") + textBefore;
                   accumulatedTextRef.current += textBefore;
-                  speechNewText += textBefore;
                 }
                 parser.inThinkTag = true;
                 parser.buffer = parser.buffer.slice(tagIdx + tagLen);
@@ -958,7 +984,6 @@ function MainApp() {
                   const safeText = parser.buffer.slice(0, partialMatch.index);
                   pendingStreamUpdatesRef.current[threadId].pendingText = (pendingStreamUpdatesRef.current[threadId].pendingText || "") + safeText;
                   accumulatedTextRef.current += safeText;
-                  speechNewText += safeText;
                   parser.buffer = parser.buffer.slice(partialMatch.index);
                   break;
                 } else if (partialMatch && partialMatch.index === 0) {
@@ -966,7 +991,6 @@ function MainApp() {
                 } else {
                   pendingStreamUpdatesRef.current[threadId].pendingText = (pendingStreamUpdatesRef.current[threadId].pendingText || "") + parser.buffer;
                   accumulatedTextRef.current += parser.buffer;
-                  speechNewText += parser.buffer;
                   parser.buffer = "";
                 }
               }
@@ -1000,24 +1024,6 @@ function MainApp() {
             }
           }
 
-          // Real-time sentence-streaming for voice reply (strictly speaks final answer text only)
-          if (speechNewText && voiceReplyRef.current && lastTurnWasVoiceRef.current) {
-            sentenceBufferRef.current += speechNewText;
-            let buffer = sentenceBufferRef.current;
-            const sentenceRegex = /([^.!?\n]+[.!?\n]+(?:\s+|$))/g;
-            let match;
-            let lastIdx = 0;
-            while ((match = sentenceRegex.exec(buffer)) !== null) {
-              const rawSentence = match[0];
-              lastIdx = sentenceRegex.lastIndex;
-              if (rawSentence.trim()) {
-                queueSentence(rawSentence);
-              }
-            }
-            if (lastIdx > 0) {
-              sentenceBufferRef.current = buffer.slice(lastIdx);
-            }
-          }
         }
 
         if (!rafIdRef.current) {
@@ -1151,7 +1157,7 @@ function MainApp() {
     } catch (err) {
       console.error("Stream processing error:", err);
     }
-  }, [windowMode, queueSentence, handleOpen, minimizeToBottomCenter]);
+  }, [windowMode, handleOpen, minimizeToBottomCenter]);
 
   const handleRekeyThread = useCallback((fromThreadId, toThreadId) => {
     const fromKey = String(fromThreadId || "");
@@ -1214,7 +1220,6 @@ function MainApp() {
 
     const performSend = async (imageToUse = imageToUseFromState, desktopText = null) => {
       const threadId = threadIdRef.current;
-      lastTurnWasVoiceRef.current = isVoice;
       const friendMeta = friendThreadMeta[threadId] || friendThreadMeta[String(threadId)] || null;
       const friendTarget = friendMeta?.friendId
         ? { id: friendMeta.friendId, name: friendMeta.friendName || "Friend" }
@@ -1371,6 +1376,9 @@ function MainApp() {
             markAllLocked();
             loadThreadKnowledge(threadId);
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
+            window.dispatchEvent(new CustomEvent("rie-history-refresh"));
+            // Title generation runs asynchronously on the server after the first save.
+            window.setTimeout(() => window.dispatchEvent(new CustomEvent("rie-history-refresh")), 3000);
           },
           (err) => {
             setError(toConnectivityHint(err.message));
@@ -1471,7 +1479,7 @@ function MainApp() {
     } else {
       await performSend();
     }
-  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, attachedKnowledge, minimizeToBottomCenter, handleOpen, queueSentence, processAudioQueue, chatMode, speedMode, friendThreadMeta, handleRekeyThread, getNewKnowledgeIds, markAllLocked, loadThreadKnowledge]);
+  }, [input, isLoading, messages, windowMode, attachedImage, isScreenAttached, attachedClipboardText, attachedKnowledge, minimizeToBottomCenter, handleOpen, chatMode, speedMode, friendThreadMeta, handleRekeyThread, getNewKnowledgeIds, markAllLocked, loadThreadKnowledge]);
 
   const handleAnswerQuestion = useCallback((blockId, formattedText, submittedAnswers) => {
     const threadId = activeThreadId;
@@ -1504,79 +1512,6 @@ function MainApp() {
     }
     handleSend(formattedText, false);
   }, [activeThreadId, handleSend]);
-
-  const startRecording = useCallback(async () => {
-    try {
-      if (isRecording) return;
-
-      stopSpeech();
-
-      if (isTauri()) {
-        await startNativeRecording();
-        setIsRecording(true);
-        return;
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
-      mediaRecorderRef.current = new MediaRecorder(stream);
-
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorderRef.current.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        try {
-          const { text } = await transcribeAudio(audioBlob);
-          if (text) {
-            handleSend(text, true);
-          }
-        } catch (err) {
-          console.error("Transcription failed:", err);
-          setError("Transcription failed. Please try again.");
-        } finally {
-          stream.getTracks().forEach((track) => track.stop());
-        }
-      };
-
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-    } catch (err) {
-      console.error("Failed to start recording:", err);
-      setError("Microphone access denied or error starting recording.");
-    }
-  }, [isRecording, handleSend]);
-
-  const stopRecording = useCallback(async () => {
-    if (!isRecording) return;
-
-    if (isTauri()) {
-      setIsRecording(false);
-      try {
-        const audioBlob = await stopNativeRecording();
-        const { text } = await transcribeAudio(audioBlob, "recording.wav");
-        if (text) {
-          handleSend(text, true);
-        }
-      } catch (err) {
-        console.error("Transcription failed:", err);
-        setError(
-          err?.message?.includes("denied") || err?.toString?.().includes("denied")
-            ? "Microphone access denied. Allow Rie-AI under Windows Settings → Privacy → Microphone."
-            : "Transcription failed. Please try again."
-        );
-      }
-      return;
-    }
-
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  }, [isRecording, handleSend]);
 
     const handleCancelRequest = useCallback((targetThreadId = null) => {
     // If invoked from onClick, first arg is the event; ignore non-strings
@@ -1660,14 +1595,7 @@ function MainApp() {
     const threadId = threadIdRef.current;
     if (!threadId || !pendingActions[threadId]) return;
 
-    // Stop and reset any ongoing audio and buffers before resuming after HITL
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
-    sentenceBufferRef.current = "";
+    handleStopLiveVoice();
     accumulatedTextRef.current = "";
 
     // Clear pending HITL for this thread; other threads may still have pending actions
@@ -1681,7 +1609,7 @@ function MainApp() {
     setError(null);
 
     const token = localStorage.getItem('rie_token');
-    const isVoice = voiceReplyRef.current;
+    const isVoice = false;
 
     const controller = new AbortController();
     abortControllersRef.current[threadId] = controller;
@@ -2334,12 +2262,13 @@ function MainApp() {
   // Dynamic window resizing for bubble size, label & toast in Bubble Mode
   const prevBubbleWidthRef = useRef(180);
   useEffect(() => {
-    if (windowMode !== "floating" || isOpen || isAppInitializing) return;
+    if (windowMode !== "floating" || isOpen || isAppInitializing || suspendBubbleResize()) return;
 
     const adjustBubbleWindow = async () => {
       try {
         const win = getWindow();
         const { currentMonitor, LogicalPosition, LogicalSize } = await import("@tauri-apps/api/window");
+        if (suspendBubbleResize()) return;
 
         const showLabel = settings.bubble_show_label !== false && settings.bubble_show_label !== "false";
         const sizeMode = settings.bubble_size || "medium";
@@ -2387,12 +2316,12 @@ function MainApp() {
     };
 
     adjustBubbleWindow();
-  }, [privacyToast, windowMode, isOpen, isAppInitializing, side, getWindow, settings.bubble_show_label, settings.bubble_size]);
+  }, [privacyToast, windowMode, isOpen, isAppInitializing, side, getWindow, settings.bubble_show_label, settings.bubble_size, suspendBubbleResize]);
 
   // Global mouse event handling
   useEffect(() => {
     const handleGlobalMouseUp = () => {
-      if (isDraggingRef.current && !isOpen && windowMode === "floating") {
+      if (isDraggingRef.current && !isOpen && windowMode === "floating" && !suspendBubbleResize()) {
         isDraggingRef.current = false;
         if (settings.bubble_snap_edge !== false) {
           setTimeout(() => snapToNearestEdge(), 150);
@@ -2565,9 +2494,9 @@ function MainApp() {
       const { key, value } = event.payload;
       const field = key.toLowerCase();
       const isBoolKey = [
-        'SHARE_LOCATION', 'EXCLUDE_FROM_CAPTURE', 'VOICE_REPLY', 'HITL_ENABLED',
+        'SHARE_LOCATION', 'EXCLUDE_FROM_CAPTURE', 'HITL_ENABLED',
         'LANGSMITH_TRACING', 'CONNECTIVITY_NGROK_ENABLED', 'SHOW_BUBBLE',
-        'CAPTURE_SCREEN_AS_TEXT', 'BUBBLE_SHOW_LABEL', 'BUBBLE_TRANSPARENT_BG',
+        'CAPTURE_SCREEN_AS_TEXT', 'WAKE_WORD_ENABLED', 'BUBBLE_SHOW_LABEL', 'BUBBLE_TRANSPARENT_BG',
         'BUBBLE_SNAP_EDGE', 'BUBBLE_SHOW_TOOLS'
       ].includes(key);
 
@@ -2599,12 +2528,6 @@ function MainApp() {
         setChatMode(parsedValue);
       } else if (key === 'SPEED_MODE') {
         setSpeedMode(parsedValue);
-      } else if (key === 'VOICE_REPLY') {
-        voiceReplyRef.current = parsedValue;
-      } else if (key === 'TTS_PROVIDER') {
-        ttsProviderRef.current = parsedValue;
-      } else if (key === 'TTS_VOICE') {
-        ttsVoiceRef.current = parsedValue;
       }
     });
 
@@ -2690,10 +2613,6 @@ function MainApp() {
           setSpeedMode(settings.speed_mode);
         }
 
-        if (settings.hasOwnProperty('voice_reply')) {
-          voiceReplyRef.current = settings.voice_reply;
-        }
-
         if (settings.hasOwnProperty('share_location')) {
           setShareLocationEnabled(settings.share_location);
           if (settings.share_location) {
@@ -2708,14 +2627,6 @@ function MainApp() {
           } catch (e) {
             console.error("Failed to apply capture exclusion preference:", e);
           }
-        }
-
-        if (settings.tts_provider) {
-          ttsProviderRef.current = settings.tts_provider;
-        }
-
-        if (settings.tts_voice) {
-          ttsVoiceRef.current = settings.tts_voice;
         }
 
         // Smooth minimal transition delay
@@ -2739,9 +2650,6 @@ function MainApp() {
           const settingsData = await getSettings();
           setSettings(settingsData);
           const settings = settingsData;
-          if (settings.hasOwnProperty('voice_reply')) {
-            voiceReplyRef.current = settings.voice_reply;
-          }
           if (settings.hasOwnProperty('share_location')) {
             setShareLocationEnabled(settings.share_location);
             if (settings.share_location) {
@@ -2756,12 +2664,6 @@ function MainApp() {
           }
           if (settings.speed_mode) {
             setSpeedMode(settings.speed_mode);
-          }
-          if (settings.tts_provider) {
-            ttsProviderRef.current = settings.tts_provider;
-          }
-          if (settings.tts_voice) {
-            ttsVoiceRef.current = settings.tts_voice;
           }
         } catch (err) {
           console.error("Failed to reload settings:", err);
@@ -2924,10 +2826,14 @@ function MainApp() {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      if (liveSessionRef.current) {
+        liveSessionRef.current.stop();
+        liveSessionRef.current = null;
+      }
     };
   }, []);
 
-  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { isLiveVoiceActiveRef.current = isLiveVoiceActive; }, [isLiveVoiceActive]);
   useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   useEffect(() => {
@@ -2957,16 +2863,14 @@ function MainApp() {
 
         if (!mounted) return;
 
-        // Register Global PTT (Hold to Talk)
+        // Register Global Toggle Live Voice (Press to toggle, not holding)
         await register("Alt+Shift+S", (event) => {
           if (event.state === "Pressed") {
-            if (!isGlobalPTTPressedRef.current) {
-              isGlobalPTTPressedRef.current = true;
-              startRecording();
+            if (isLiveVoiceActiveRef.current) {
+              handleStopLiveVoice();
+            } else {
+              handleStartLiveVoice();
             }
-          } else if (event.state === "Released") {
-            isGlobalPTTPressedRef.current = false;
-            stopRecording();
           }
         });
 
@@ -3010,8 +2914,8 @@ function MainApp() {
         // Register Global Toggle Mic / Mute
         await register("Alt+Shift+M", (event) => {
           if (event.state === "Pressed") {
-            if (isRecordingRef.current) stopRecording();
-            else startRecording();
+            if (isLiveVoiceActiveRef.current) handleStopLiveVoice();
+            else handleStartLiveVoice();
           }
         });
 
@@ -3055,7 +2959,7 @@ function MainApp() {
         try { await unregister(s); } catch (e) { /* ignore */ }
       });
     };
-  }, [startRecording, stopRecording, handleCancelRequest, handleNewChat, handleCaptureScreen, handleOpen, handleMinimize]); // Removed state deps
+  }, [handleStartLiveVoice, handleStopLiveVoice, handleCancelRequest, handleNewChat, handleCaptureScreen, handleOpen, handleMinimize]); // Removed state deps
 
 
   // Set small loading window size & center on desktop screen during init
@@ -3316,13 +3220,11 @@ function MainApp() {
       const u2 = await listen("rie-shortcut-ptt", (event) => {
         const state = event.payload;
         if (state === "Pressed") {
-          if (!isGlobalPTTPressedRef.current) {
-            isGlobalPTTPressedRef.current = true;
-            startRecording();
+          if (isLiveVoiceActiveRef.current) {
+            handleStopLiveVoice();
+          } else {
+            handleStartLiveVoice();
           }
-        } else if (state === "Released") {
-          isGlobalPTTPressedRef.current = false;
-          stopRecording();
         }
       });
       unlistens.push(u2);
@@ -3348,10 +3250,10 @@ function MainApp() {
       unlistens.push(u5);
 
       const u6 = await listen("rie-shortcut-toggle-mute", () => {
-        if (isRecordingRef.current) {
-          stopRecording();
+        if (isLiveVoiceActiveRef.current) {
+          handleStopLiveVoice();
         } else {
-          startRecording();
+          handleStartLiveVoice();
         }
       });
       unlistens.push(u6);
@@ -3394,7 +3296,7 @@ function MainApp() {
       isCancelled = true;
       unlistens.forEach((fn) => fn && fn());
     };
-  }, [startRecording, stopRecording, handleCancelRequest, handleNewChat, handleCaptureScreen, handleOpen, handleMinimize, handlePrivacyShortcutPress, handlePrivacyShortcutRelease]);
+  }, [handleStartLiveVoice, handleStopLiveVoice, handleCancelRequest, handleNewChat, handleCaptureScreen, handleOpen, handleMinimize, handlePrivacyShortcutPress, handlePrivacyShortcutRelease]);
 
   // In-app keydown & keyup shortcuts when focused (Ctrl+Shift+N, Escape, Ctrl+,, Ctrl+Shift+S, Alt+Shift+Q)
   useEffect(() => {
@@ -3406,6 +3308,11 @@ function MainApp() {
         return;
       }
       // Escape to minimize/close when floating/open
+      if (e.key === "Escape" && isLiveVoiceActiveRef.current) {
+        e.preventDefault();
+        handleStopLiveVoice();
+        return;
+      }
       if (e.key === "Escape" && isOpenRef.current && !isSettingsOpen && !isHistoryOpen) {
         handleMinimize();
         return;
@@ -3429,6 +3336,16 @@ function MainApp() {
         handleCaptureScreen();
         return;
       }
+      // Alt + Shift + S -> Toggle Live Voice (press, not holding)
+      if (e.altKey && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (isLiveVoiceActiveRef.current) {
+          handleStopLiveVoice();
+        } else {
+          handleStartLiveVoice();
+        }
+        return;
+      }
     };
 
     const handleKeyUp = (e) => {
@@ -3443,7 +3360,35 @@ function MainApp() {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [handleMinimize, handleNewChat, handleOpenSettingsWindow, handleCaptureScreen, handlePrivacyShortcutPress, handlePrivacyShortcutRelease, isSettingsOpen, isHistoryOpen]);
+  }, [handleMinimize, handleNewChat, handleOpenSettingsWindow, handleCaptureScreen, handleStartLiveVoice, handleStopLiveVoice, handlePrivacyShortcutPress, handlePrivacyShortcutRelease, isSettingsOpen, isHistoryOpen]);
+
+  const handleStartLiveVoiceRef = useRef(handleStartLiveVoice);
+  useEffect(() => {
+    handleStartLiveVoiceRef.current = handleStartLiveVoice;
+  }, [handleStartLiveVoice]);
+
+
+  // Hands-free Wake Word listener ("Rie", "Hey Rie", "Hi Rie", "Rye", "Ree")
+  useEffect(() => {
+    void wakeWordService.configure({
+      enabled: isWakeWordEnabled(settings?.wake_word_enabled),
+      // Read the ref too: a call can start before React flushes this effect.
+      paused: isLiveVoiceActiveRef.current,
+      onWake: (detected) => {
+        console.log(`[WakeWord] Heard "${detected}". Waking Rie Live Voice!`);
+        if (!isLiveVoiceActiveRef.current) {
+          handleStartLiveVoiceRef.current?.();
+        }
+      },
+    }).catch((err) => {
+      console.error("Wake-word microphone transition failed:", err);
+      setError("Could not update the wake-word microphone. Please restart Rie.");
+    });
+  }, [settings?.wake_word_enabled, isLiveVoiceActive]);
+
+  useEffect(() => () => {
+    void wakeWordService.stop().catch((err) => console.error("Could not stop wake-word microphone:", err));
+  }, []);
   //#endregion
 
   return (
@@ -3503,6 +3448,7 @@ function MainApp() {
         <AnimatePresence
           mode="wait"
           onExitComplete={async () => {
+            if (suspendBubbleResize()) return;
             if (!isOpen) {
               try {
                 const win = getWindow();
@@ -3613,10 +3559,8 @@ function MainApp() {
                     onCaptureScreen={handleCaptureScreen}
                     onPickProjectPath={handlePickProjectPath}
                     isCapturing={isCapturing}
-                    isRecording={isRecording}
-                    onStartRecording={startRecording}
-                    onStopRecording={stopRecording}
-                    onToggleRecording={() => (isRecording ? stopRecording() : startRecording())}
+                    onToggleLiveVoice={handleToggleLiveVoice}
+                    voiceControls={voiceControls}
                     isAttachmentPopoverOpen={isAttachmentPopoverOpen}
                     setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
                     attachedClipboardText={attachedClipboardText}
@@ -3666,11 +3610,11 @@ function MainApp() {
           ) : !isOpen ? (
             <FloatingBubble
               key="bubble"
+              suspendWindowResize={suspendBubbleResize}
               privacyToast={privacyToast}
               currentTool={currentTool}
               retryStatus={retryStatus}
               isLoading={isLoading}
-              isRecording={isRecording}
               hasPendingAction={Object.keys(pendingActions).length > 0} // Any thread has pending HITL
               isSnapping={isSnapping}
               onMouseDown={handleBubbleMouseDown}
@@ -3716,10 +3660,8 @@ function MainApp() {
               messagesEndRef={messagesEndRef}
               input={input}
               setInput={setInput}
-              isRecording={isRecording}
-              onStartRecording={startRecording}
-              onStopRecording={stopRecording}
-              onToggleRecording={() => (isRecording ? stopRecording() : startRecording())}
+              onToggleLiveVoice={handleToggleLiveVoice}
+              voiceControls={voiceControls}
               isCapturing={isCapturing}
               isAttachmentPopoverOpen={isAttachmentPopoverOpen}
               setIsAttachmentPopoverOpen={setIsAttachmentPopoverOpen}
