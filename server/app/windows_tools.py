@@ -99,6 +99,36 @@ class ScrapeToolInput(BaseModel):
 
 # --- Tool Implementation Functions ---
 
+# Common Windows applications for fast zero-latency launch
+FAST_APP_TARGETS = {
+    "notepad": "notepad.exe",
+    "calculator": "calc.exe",
+    "calc": "calc.exe",
+    "spotify": "spotify:",
+    "settings": "ms-settings:",
+    "chrome": "chrome.exe",
+    "google chrome": "chrome.exe",
+    "edge": "msedge.exe",
+    "microsoft edge": "msedge.exe",
+    "explorer": "explorer.exe",
+    "file explorer": "explorer.exe",
+    "files": "explorer.exe",
+    "paint": "mspaint.exe",
+    "mspaint": "mspaint.exe",
+    "task manager": "taskmgr.exe",
+    "taskmgr": "taskmgr.exe",
+    "terminal": "wt.exe",
+    "windows terminal": "wt.exe",
+    "cmd": "cmd.exe",
+    "command prompt": "cmd.exe",
+    "powershell": "powershell.exe",
+    "code": "code",
+    "vscode": "code",
+    "vs code": "code",
+    "visual studio code": "code",
+    "discord": "discord:",
+}
+
 def app_tool(mode, name=None, window_loc=None, window_size=None):
     if isinstance(mode, str):
         normalized_mode = mode.lower().strip()
@@ -106,6 +136,15 @@ def app_tool(mode, name=None, window_loc=None, window_size=None):
             mode = "launch"
         elif normalized_mode in ("focus", "bring_to_front"):
             mode = "switch"
+    if mode == "launch" and name:
+        normalized_name = name.lower().strip()
+        target = FAST_APP_TARGETS.get(normalized_name)
+        if target:
+            try:
+                os.startfile(target)
+                return f"{name.title()} launched."
+            except Exception as e:
+                logger.debug(f"Direct startfile for '{name}' failed, falling back to desktop.app: {e}")
     pythoncom.CoInitialize()
     try:
         return desktop.app(mode, name, window_loc, window_size)

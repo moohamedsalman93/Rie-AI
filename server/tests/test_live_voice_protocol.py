@@ -118,9 +118,9 @@ class TestVoiceProtocol(unittest.IsolatedAsyncioTestCase):
         detection = self.setup["realtimeInputConfig"]["automaticActivityDetection"]
         self.assertFalse(detection["disabled"])
         self.assertEqual(detection.get("startOfSpeechSensitivity"), "START_SENSITIVITY_HIGH")
-        self.assertEqual(detection.get("endOfSpeechSensitivity"), "END_SENSITIVITY_LOW")
+        self.assertEqual(detection.get("endOfSpeechSensitivity"), "END_SENSITIVITY_HIGH")
         self.assertEqual(detection["prefixPaddingMs"], 100)
-        self.assertEqual(detection["silenceDurationMs"], 700)
+        self.assertEqual(detection["silenceDurationMs"], 450)
 
     async def test_quiet_audio_and_silence_reach_upstream_unchanged(self):
         await self.ready()

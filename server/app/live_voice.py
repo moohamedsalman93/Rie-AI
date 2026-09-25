@@ -51,6 +51,7 @@ async def gemini_live_voice_websocket(
     thread_id: Optional[str] = Query(None),
     voice: Optional[str] = Query("Aoede"),
     token: Optional[str] = Query(None),
+    greet: Optional[bool] = Query(True),
 ):
     """
     Bidirectional WebSocket proxy between Rie client and Gemini Live API.
@@ -93,11 +94,16 @@ async def gemini_live_voice_websocket(
                         "automaticActivityDetection": {
                             "disabled": False,
                             "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
-                            "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
+                            "endOfSpeechSensitivity": "END_SENSITIVITY_HIGH",
                             "prefixPaddingMs": 100,
-                            # A 250ms cutoff splits normal pauses into separate
-                            # turns. Allow breaths without ending the utterance.
-                            "silenceDurationMs": 700,
+                            # 450ms silence allows natural pauses/breaths without
+                            # delaying the response or causing turn overlaps.
+                            "silenceDurationMs": 450,
+                        }
+                    },
+                    "contextWindowCompression": {
+                        "slidingWindow": {
+                            "targetTokens": 16000
                         }
                     },
                     "generationConfig": {
@@ -157,6 +163,30 @@ async def gemini_live_voice_websocket(
                         break
             await websocket.send_json({"type": "ready"})
             logger.info("[LiveVoice] Gemini setup acknowledged; ready for input.")
+
+            # Trigger an immediate natural spoken greeting from Rie
+            if greet:
+                greeting_message = {
+                    "clientContent": {
+                        "turns": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    {
+                                        "text": (
+                                            "The user just started this live voice session with you. "
+                                            "Greet the user immediately with a warm, natural, friendly, 1-sentence hello "
+                                            "(e.g., 'Hey there! How can I help you today?' or 'Hi! What's on your mind?')."
+                                        )
+                                    }
+                                ]
+                            }
+                        ],
+                        "turnComplete": True
+                    }
+                }
+                await gemini_ws.send(json.dumps(greeting_message))
+                logger.info("[LiveVoice] Automatic greeting trigger sent to Gemini.")
 
             transcripts = VoiceTranscripts()
             tool_tasks = {}

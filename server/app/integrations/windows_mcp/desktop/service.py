@@ -108,10 +108,13 @@ class Desktop:
         return uia.ControlFromCursor()
     
     def get_apps_from_start_menu(self)->dict[str,str]:
+        if hasattr(self, '_cached_start_apps') and self._cached_start_apps:
+            return self._cached_start_apps
         command='Get-StartApps | ConvertTo-Csv -NoTypeInformation'
         apps_info,_=self.execute_command(command)
         reader=csv.DictReader(io.StringIO(apps_info))
-        return {row.get('Name').lower():row.get('AppID') for row in reader}
+        self._cached_start_apps = {row.get('Name').lower():row.get('AppID') for row in reader if row.get('Name')}
+        return self._cached_start_apps
     
     def execute_command(self,command:str)->tuple[str,int]:
         try:
@@ -175,16 +178,13 @@ class Desktop:
         match mode:
             case 'launch':
                 response,status=self.launch_app(name)
-                sleep(1.25)
                 if status!=0:
                     return response
-                consecutive_waits=10
-                for _ in range(consecutive_waits):
-                    if not self.is_app_running(name):
-                        sleep(1.25)
-                    else:
+                for _ in range(3):
+                    if self.is_app_running(name):
                         return f'{name.title()} launched.'
-                return f'Launching {name.title()} wait for it to come load.'
+                    sleep(0.15)
+                return f'{name.title()} launched.'
             case 'resize':
                 response,status=self.resize_app(size=size,loc=loc)
                 if status!=0:

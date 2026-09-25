@@ -116,8 +116,9 @@ export class LiveAudioRecorder {
       if (generation !== this.generation) return;
       this.sourceNode = this.audioContext.createMediaStreamSource(stream);
 
-      // 16ms packets keep capture buffering small.
-      this.processorNode = this.audioContext.createScriptProcessor(256, 1, 1);
+      // 32ms packets (512 samples) keep capture latency imperceptible while
+      // reducing WebSocket JSON serialization frequency and main-thread event churn.
+      this.processorNode = this.audioContext.createScriptProcessor(512, 1, 1);
 
       this.processorNode.onaudioprocess = (e) => {
         // A queued callback from before mute must not leak into a new stream.
@@ -276,8 +277,8 @@ export class LiveAudioPlayer {
       source.connect(this.gainNode);
 
       const currentTime = this.audioContext.currentTime;
-      // If the audio queue ran dry or this is the start of speech, start immediately
-      if (this.nextPlayTime < currentTime) {
+      // If the audio queue ran dry, this is the start of speech, or no nodes are active, start immediately
+      if (this.nextPlayTime < currentTime || this.activeNodes.length === 0) {
         this.nextPlayTime = currentTime + 0.01;
       }
 
@@ -493,6 +494,10 @@ export class LiveVoiceSession {
         void this.startMicrophone();
         break;
       case "audio":
+        if (this.turnComplete) {
+          // Starting a new assistant turn: clear any stale lingering audio from an earlier turn
+          this.player.stopImmediately();
+        }
         this.turnComplete = false;
         this.player.playChunk(msg.data);
         this.updateStatus();
@@ -538,6 +543,10 @@ export class LiveVoiceSession {
 
   sendTextMessage(text) {
     if (this.ready && !this.stopped && this.ws?.readyState === WebSocket.OPEN && text.trim()) {
+      if (this.player.activeNodes.length > 0) {
+        this.player.stopImmediately();
+      }
+      this.turnComplete = true;
       this.ws.send(JSON.stringify({ type: "text", text: text.trim() }));
       this.onTranscript({ id: `voice-${crypto.randomUUID()}`, role: "user", text: text.trim(), content: text.trim(), isPartial: false });
     }

@@ -233,4 +233,14 @@ describe("voice session lifecycle and event flow", () => {
     expect(session.recorder.stop).toHaveBeenCalled();
     expect(callbacks.onStatusChange).toHaveBeenLastCalledWith("closed");
   });
+
+  it("cuts off active audio and resets queue when a text message is sent", async () => {
+    await connect();
+    const stopSpy = vi.spyOn(session.player, "stopImmediately");
+    session.player.activeNodes.push({ stop: vi.fn() });
+    session.sendTextMessage("What is the time?");
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(session.turnComplete).toBe(true);
+    expect(Socket.latest.send).toHaveBeenCalledWith(JSON.stringify({ type: "text", text: "What is the time?" }));
+  });
 });
