@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveAudioRecorder, LiveAudioPlayer, LiveVoiceSession } from "../liveAudioService";
 import { upsertVoiceActivity, upsertVoiceMessage } from "../../utils/voiceActivity";
 
-vi.mock("../chatApi", () => ({ API_BASE_URL: "http://localhost:8000", getAppToken: () => "test" }));
+vi.mock("../chatApi", () => ({
+  API_BASE_URL: "http://localhost:8000",
+  getAppToken: () => "test",
+  getCachedClientContextPayload: () => ({}),
+}));
 
 class Socket {
   static OPEN = 1;
@@ -10,7 +14,10 @@ class Socket {
   bufferedAmount = 0;
   send = vi.fn();
   close = vi.fn();
-  constructor() { Socket.latest = this; }
+  constructor(url) {
+    this.url = url;
+    Socket.latest = this;
+  }
   receive(msg) { this.onmessage?.({ data: JSON.stringify(msg) }); }
 }
 
@@ -243,4 +250,25 @@ describe("voice session lifecycle and event flow", () => {
     expect(session.turnComplete).toBe(true);
     expect(Socket.latest.send).toHaveBeenCalledWith(JSON.stringify({ type: "text", text: "What is the time?" }));
   });
+
+  it("attaches location and timezone query parameters to the WebSocket URL when provided", async () => {
+    const locSession = new LiveVoiceSession({
+      ...callbacks,
+      clientContext: {
+        client_latitude: 13.0827,
+        client_longitude: 80.2707,
+        client_location_accuracy_m: 12,
+        client_timezone: "Asia/Kolkata",
+        client_local_datetime_iso: "2026-09-25T13:46:00+05:30",
+      },
+    });
+    const starting = locSession.start().catch((err) => err);
+    expect(Socket.latest.url).toContain("client_latitude=13.0827");
+    expect(Socket.latest.url).toContain("client_longitude=80.2707");
+    expect(Socket.latest.url).toContain("client_location_accuracy_m=12");
+    expect(Socket.latest.url).toContain("client_timezone=Asia%2FKolkata");
+    locSession.stop();
+    await starting;
+  });
 });
+

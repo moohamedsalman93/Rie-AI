@@ -70,3 +70,19 @@ export function prefetchClientLocation() {
     getClientLocationPayload().catch(() => {});
   }
 }
+
+/**
+ * Synchronous snapshot of cached location (if valid and enabled).
+ * @returns {{ client_latitude?: number, client_longitude?: number, client_location_accuracy_m?: number }}
+ */
+export function getCachedClientLocationPayload() {
+  if (!shareEnabled) {
+    return {};
+  }
+  const now = Date.now();
+  if (cached && now - cachedAt < CACHE_MS) {
+    return { ...cached };
+  }
+  return {};
+}
+

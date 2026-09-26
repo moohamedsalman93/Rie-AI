@@ -12,6 +12,7 @@ function BubbleVoiceBars({
   status = "listening",
   activeTool = null,
   bubbleSize = "medium",
+  getToolDisplayName = (t) => t,
 }) {
   if (isMuted) {
     return (
@@ -82,7 +83,8 @@ function BubbleVoiceBars({
     barGlow = "shadow-[0_0_8px_rgba(245,158,11,0.6)]";
     animationName = "voice-wave-thinking";
     animationDuration = "0.85s";
-    title = activeTool ? `Running ${getToolDisplayName(activeTool.name || activeTool)}...` : "Processing action...";
+    const resolveToolName = typeof getToolDisplayName === "function" ? getToolDisplayName : (t) => t;
+    title = activeTool ? `Running ${resolveToolName(activeTool.name || activeTool)}...` : "Processing action...";
   } else if (isConnecting) {
     barGradient = "bg-gradient-to-t from-indigo-400 via-purple-300 to-cyan-300";
     barGlow = "shadow-[0_0_8px_rgba(99,102,241,0.5)]";
@@ -211,7 +213,8 @@ export function FloatingBubble({
     };
   }, [bubbleRef, privacyToast, currentTool, isLoading, isLiveVoiceActive, liveVoiceStatus, hasPendingAction, bubbleSize, showLabel, transparentBg, showTools, suspendWindowResize]);
 
-  const activeToolText = showTools && (currentTool || liveVoiceActiveTool) ? getToolDisplayName(currentTool || liveVoiceActiveTool.name || liveVoiceActiveTool) : null;
+  const resolveToolName = typeof getToolDisplayName === "function" ? getToolDisplayName : (t) => t;
+  const activeToolText = showTools && (currentTool || liveVoiceActiveTool) ? resolveToolName(currentTool || liveVoiceActiveTool.name || liveVoiceActiveTool) : null;
   const shouldShowText = isToastActive || isLiveVoiceActive || hasPendingAction || activeToolText || Boolean(retryStatus?.message) || isLoading || showLabel;
 
   // Size styling classes
@@ -263,13 +266,7 @@ export function FloatingBubble({
               opacity: 1,
               scale: 1,
               rotate: 0,
-              boxShadow: isSpeaking
-                ? "0 0 16px rgba(168,85,247,0.45), inset 0 0 8px rgba(168,85,247,0.2)"
-                : isUserSpeaking
-                ? "0 0 16px rgba(16,185,129,0.45), inset 0 0 8px rgba(16,185,129,0.2)"
-                : liveVoiceStatus === "tool"
-                ? "0 0 14px rgba(245,158,11,0.4), inset 0 0 6px rgba(245,158,11,0.15)"
-                : "0 0 10px rgba(16,185,129,0.25)",
+              boxShadow: "none",
               borderColor: isSpeaking
                 ? "rgba(168,85,247,0.75)"
                 : isUserSpeaking
@@ -344,6 +341,7 @@ export function FloatingBubble({
               status={liveVoiceStatus}
               activeTool={liveVoiceActiveTool}
               bubbleSize={bubbleSize}
+              getToolDisplayName={getToolDisplayName}
             />
           ) : hasPendingAction ? (
             <>

@@ -37,7 +37,8 @@ class TestLiveToolDispatcher(unittest.IsolatedAsyncioTestCase):
         module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, modules):
             spec.loader.exec_module(module)
-        self.dispatch = module.live_tool_dispatcher.dispatch
+        self.dispatcher = module.live_tool_dispatcher
+        self.dispatch = self.dispatcher.dispatch
 
     async def test_type_and_submit_use_separate_supported_methods(self):
         result = await self.dispatch("browser_type", {"target": "ref-1", "text": "Hello", "press_enter": True})
@@ -96,6 +97,42 @@ class TestLiveToolDispatcher(unittest.IsolatedAsyncioTestCase):
     async def test_empty_search_is_explicit(self):
         self.search.return_value = {"results": []}
         self.assertIn("No search results found", await self.dispatch("internet_search", {"query": "test"}))
+
+    async def test_spawn_subagent_background_returns_immediate_ack(self):
+        with patch.object(self.dispatcher, "_run_subagent", new_callable=AsyncMock):
+            result = await self.dispatch("spawn_subagent", {"task": "Run tests and fix errors", "mode": "background"})
+            self.assertIn("launched in the background", result)
+            self.assertIn("job_", result)
+            import json
+            parsed = json.loads(result)
+            self.assertEqual(parsed["status"], "started")
+            self.assertTrue(parsed["job_id"].startswith("job_"))
+
+    async def test_spawn_subagent_requires_description(self):
+        result = await self.dispatch("spawn_subagent", {})
+        self.assertEqual(result, "Error: task is required.")
+
+    async def test_save_and_search_memory_validation(self):
+        self.assertEqual(await self.dispatch("save_memory", {}), "Error: fact is required.")
+        self.assertEqual(await self.dispatch("search_memory", {}), "Error: query is required.")
+
+    async def test_schedule_task_validation(self):
+        self.assertEqual(await self.dispatch("schedule_task", {}), "Error: run_at_iso and task_text are required.")
+
+    async def test_cancel_subagent_running_job(self):
+        with patch.object(self.dispatcher, "_run_subagent", new_callable=AsyncMock):
+            spawn_res = await self.dispatch("spawn_subagent", {"task": "Build component", "mode": "background"})
+            import json
+            jid = json.loads(spawn_res)["job_id"]
+            cancel_res = await self.dispatch("cancel_subagent", {"job_id": jid})
+            self.assertIn("successfully cancelled", cancel_res)
+
+    def test_tool_declarations_include_tiered_core_tools(self):
+        from app.live_tool_dispatcher import live_tool_dispatcher
+        names = {t["name"] for t in live_tool_dispatcher.get_tool_declarations()}
+        expected = {"spawn_subagent", "cancel_subagent", "app_tool", "press_keys", "internet_search", "browser_open", "save_memory", "search_memory", "schedule_task", "get_desktop_state"}
+        for exp in expected:
+            self.assertIn(exp, names)
 
 
 if __name__ == "__main__":

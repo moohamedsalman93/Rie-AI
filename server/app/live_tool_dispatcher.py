@@ -4,8 +4,11 @@ Exposes Rie's unified tool layer (Camoufox browser, Windows desktop automation,
 PowerShell commands, media shortcuts, and web search) to Gemini Live function calling.
 """
 import asyncio
+import contextvars
+import json
 import logging
-from typing import Dict, Any, List
+import uuid
+from typing import Dict, Any, List, Optional, Callable, Awaitable
 
 from app.browser.service import browser_service
 from app.windows_tools import app_tool, shortcut_tool, state_tool
@@ -13,125 +16,63 @@ from app.tools import internet_search
 
 logger = logging.getLogger("live_tool_dispatcher")
 
-# Gemini Live Function Declarations
+_current_live_context: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar("_current_live_context", default=None)
+
+def set_live_context(ctx: Dict[str, Any]) -> contextvars.Token:
+    """Sets the ambient context for the active live voice session."""
+    return _current_live_context.set(ctx)
+
+def reset_live_context(token: contextvars.Token) -> None:
+    """Resets the ambient context for the active live voice session."""
+    try:
+        _current_live_context.reset(token)
+    except Exception:
+        pass
+
+def get_live_context() -> Dict[str, Any]:
+    """Retrieves the ambient context for the active live voice session."""
+    return _current_live_context.get() or {}
+
+from app.job_manager import job_manager
+
+# Gemini Live Function Declarations (Tiered Fast-Tools + Autonomous Subagent Spawner)
 LIVE_TOOL_DECLARATIONS = [
     {
-        "name": "browser_open",
+        "name": "spawn_subagent",
         "description": (
-            "Opens the web browser on the desktop and navigates to the given URL. "
-            "Use this when the user asks to open a website, watch a video on YouTube, or search for something in the browser."
+            "Spawns Rie's autonomous execution agent to perform tasks requiring "
+            "programming, writing or debugging code, running scripts or tests, executing terminal or PowerShell commands, "
+            "inspecting or editing files, git workflows, deep web research, or multi-step technical problem solving. "
+            "Use mode='background' (default) for long-running workflows so you can continue talking with the user. "
+            "Use mode='foreground' only for quick synchronous checks under 10 seconds."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "url": {
+                "task": {
                     "type": "STRING",
-                    "description": "Full URL to open, e.g. 'https://youtube.com', 'https://google.com', 'https://github.com'."
+                    "description": "Clear and comprehensive prompt of what the agent should accomplish, inspect, or produce."
+                },
+                "mode": {
+                    "type": "STRING",
+                    "enum": ["background", "foreground"],
+                    "description": "Execution mode: 'background' (default, returns job_id immediately and notifies on completion) or 'foreground' (waits for result)."
                 }
             },
-            "required": ["url"]
+            "required": ["task"]
         }
     },
     {
-        "name": "browser_navigate",
-        "description": "Navigates the currently open browser session to a new URL.",
+        "name": "cancel_subagent",
+        "description": "Cancels an active background subagent task or workflow when the user requests to stop, abort, or cancel.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "url": {
+                "job_id": {
                     "type": "STRING",
-                    "description": "Target webpage URL to visit."
-                }
-            },
-            "required": ["url"]
-        }
-    },
-    {
-        "name": "browser_snapshot",
-        "description": "Reads the current browser page title, URL, interactive buttons, inputs, links, and content summary.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "interactive_only": {
-                    "type": "BOOLEAN",
-                    "description": "Whether to focus primarily on interactive elements like links and buttons."
+                    "description": "Optional specific job ID (e.g. 'job_123456'). If omitted, cancels the most recent active running subagent."
                 }
             }
-        }
-    },
-    {
-        "name": "browser_click",
-        "description": "Clicks an interactive element, button, link, or tab on the active webpage.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "target": {
-                    "type": "STRING",
-                    "description": "Reference ID (e.g. 'ref-3'), visible text, or selector of the element to click."
-                }
-            },
-            "required": ["target"]
-        }
-    },
-    {
-        "name": "browser_type",
-        "description": "Types text into an input field or search bar on the active webpage.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "target": {
-                    "type": "STRING",
-                    "description": "Reference ID (e.g. 'ref-5') or description of the text input field."
-                },
-                "text": {
-                    "type": "STRING",
-                    "description": "Text to type into the field."
-                },
-                "press_enter": {
-                    "type": "BOOLEAN",
-                    "description": "Whether to press Enter after typing to submit the form/search."
-                }
-            },
-            "required": ["target", "text"]
-        }
-    },
-    {
-        "name": "browser_scroll",
-        "description": "Scrolls the active webpage up or down.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "direction": {
-                    "type": "STRING",
-                    "description": "Scroll direction: 'down' or 'up'."
-                }
-            },
-            "required": ["direction"]
-        }
-    },
-    {
-        "name": "browser_extract",
-        "description": "Extracts text or specific content from the active webpage based on a question or query.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "query": {
-                    "type": "STRING",
-                    "description": "What specific information to find or extract from the page."
-                }
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "browser_close",
-        "description": (
-            "Closes the active browser session. "
-            "WARNING: Do NOT call this if the user is listening to music, watching a video, or asked to keep the page open."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {}
         }
     },
     {
@@ -159,15 +100,15 @@ LIVE_TOOL_DECLARATIONS = [
         "name": "press_keys",
         "description": (
             "Presses keyboard shortcuts or multimedia control keys. "
-            "Examples: 'playpause' (media play/pause), 'volumeup' (volume up), 'volumedown' (volume down), "
-            "'volumemute' (mute), 'ctrl+c', 'ctrl+v', 'alt+tab', 'space'."
+            "Media keys: 'playpause' (media play/pause), 'nexttrack', 'prevtrack', 'volumeup' (volume up), 'volumedown' (volume down), 'volumemute' (mute). "
+            "Shortcuts: 'ctrl+c', 'ctrl+v', 'alt+tab', 'space', 'enter'."
         ),
         "parameters": {
             "type": "OBJECT",
             "properties": {
                 "keys": {
                     "type": "STRING",
-                    "description": "Key combo or media key name (e.g. 'playpause', 'volumeup', 'volumedown', 'ctrl+shift+esc')."
+                    "description": "Key combo or media key name (e.g. 'playpause', 'volumeup', 'volumedown', 'ctrl+c')."
                 }
             },
             "required": ["keys"]
@@ -176,8 +117,8 @@ LIVE_TOOL_DECLARATIONS = [
     {
         "name": "internet_search",
         "description": (
-            "Searches the web in real-time for up-to-date facts, current news, sports scores, weather, stock prices, or general information. "
-            "Use this whenever the user asks a question about recent events or facts."
+            "Searches the web in real-time for up-to-date facts, current news, sports scores, weather, stock prices, or quick facts. "
+            "Returns top search result snippets."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -188,6 +129,84 @@ LIVE_TOOL_DECLARATIONS = [
                 }
             },
             "required": ["query"]
+        }
+    },
+    {
+        "name": "browser_open",
+        "description": (
+            "Opens the web browser on the desktop and navigates to the given URL. "
+            "Use this when the user asks to open a website, watch a video on YouTube, or search for something in the browser."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "url": {
+                    "type": "STRING",
+                    "description": "Full URL to open, e.g. 'https://youtube.com', 'https://google.com', 'https://github.com'."
+                }
+            },
+            "required": ["url"]
+        }
+    },
+    {
+        "name": "save_memory",
+        "description": (
+            "Saves a user fact, preference, or context into long-term memory across sessions. "
+            "Examples: user's name, preferences, favorite tech stack, birthday, project details."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "fact": {
+                    "type": "STRING",
+                    "description": "The fact, preference, or information to remember."
+                },
+                "category": {
+                    "type": "STRING",
+                    "description": "Category for the memory (e.g. 'personal', 'preference', 'work', 'project')."
+                }
+            },
+            "required": ["fact"]
+        }
+    },
+    {
+        "name": "search_memory",
+        "description": (
+            "Searches long-term memory for previously remembered user facts, preferences, or personal context."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {
+                    "type": "STRING",
+                    "description": "Query to search memories for."
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "schedule_task",
+        "description": (
+            "Schedules a reminder or timed check in Rie. Specify the time in ISO 8601 format."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "run_at_iso": {
+                    "type": "STRING",
+                    "description": "When the task or reminder should trigger in ISO 8601 format (e.g. '2026-09-25T14:00:00+05:30')."
+                },
+                "task_text": {
+                    "type": "STRING",
+                    "description": "Description of the reminder or task."
+                },
+                "intent": {
+                    "type": "STRING",
+                    "description": "Either 'reminder' (notify user), 'analysis_silent', or 'analysis_inform'."
+                }
+            },
+            "required": ["run_at_iso", "task_text"]
         }
     },
     {
@@ -204,15 +223,35 @@ LIVE_TOOL_DECLARATIONS = [
 class RieLiveToolDispatcher:
     """Dispatches Gemini Live function calls to Rie's internal subsystems."""
 
+    def __init__(self):
+        self._context_var: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
+            "rie_live_session_context", default=None
+        )
+
+    def set_context(self, ctx: Dict[str, Any]) -> None:
+        self._context_var.set(ctx)
+
+    def clear_context(self) -> None:
+        self._context_var.set(None)
+
+    def get_context(self) -> Dict[str, Any]:
+        return self._context_var.get() or {}
+
     def get_tool_declarations(self) -> List[Dict[str, Any]]:
         """Returns the function declarations list formatted for Gemini Live setup."""
         return LIVE_TOOL_DECLARATIONS
 
-    async def dispatch(self, tool_name: str, args: Dict[str, Any]) -> str:
+    async def dispatch(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
         Executes the named tool with provided arguments and returns a concise, conversational result string.
         """
         logger.info(f"[LiveDispatcher] Dispatching tool='{tool_name}' with args={args}")
+        ctx = context or self.get_context()
         try:
             # 1. Browser Tools
             if tool_name == "browser_open":
@@ -315,6 +354,119 @@ class RieLiveToolDispatcher:
                                      + (f"\n  Source: {source}" if source else ""))
                 return f"Search results for '{query}':\n" + "\n".join(summaries)
 
+            # 4. Long-Term Memory Tools
+            elif tool_name == "save_memory":
+                fact = str(args.get("fact", "")).strip()
+                category = str(args.get("category", "general")).strip()
+                if not fact:
+                    return "Error: fact is required."
+                from app.ltm_tools import _save_memory
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, _save_memory, fact, category)
+
+            elif tool_name == "search_memory":
+                query = str(args.get("query", "")).strip()
+                if not query:
+                    return "Error: query is required."
+                from app.ltm_tools import _search_memory
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, _search_memory, query)
+
+            # 5. Task & Reminder Scheduling
+            elif tool_name == "schedule_task":
+                run_at_iso = str(args.get("run_at_iso", "")).strip()
+                task_text = str(args.get("task_text", "")).strip()
+                intent = str(args.get("intent", "reminder")).strip()
+                title = args.get("title")
+                if not run_at_iso or not task_text:
+                    return "Error: run_at_iso and task_text are required."
+                from app.scheduler import scheduler_manager
+                ctx = context or get_live_context()
+                thread_id = ctx.get("thread_id") or "voice_session"
+                job_id = scheduler_manager.add_task(
+                    text=task_text,
+                    run_at=run_at_iso,
+                    thread_id=thread_id,
+                    chat_mode="agent",
+                    speed_mode="flash",
+                    intent=intent,
+                    title=title,
+                )
+                return f"Task scheduled successfully (id={job_id}). Intent={intent}."
+
+            # 6. Autonomous Subagent Spawner (Tier 2 Heavy Agent via JobManager)
+            elif tool_name == "spawn_subagent":
+                task = str(args.get("task") or args.get("task_description") or "").strip()
+                if not task:
+                    return "Error: task is required."
+
+                raw_mode = args.get("mode")
+                if raw_mode in ("foreground", "background"):
+                    mode = raw_mode
+                elif args.get("wait_for_result") is True:
+                    mode = "foreground"
+                else:
+                    mode = "background"
+
+                ctx = context or self.get_context()
+                thread_id = ctx.get("thread_id")
+                notify_callback = ctx.get("notify_callback")
+                client_ws = ctx.get("websocket")
+
+                job = job_manager.create_job(task=task, mode=mode, thread_id=thread_id)
+
+                if mode == "foreground":
+                    return await self._run_subagent(
+                        job=job,
+                        notify_callback=notify_callback,
+                        client_ws=client_ws,
+                    )
+                else:
+                    task_handle = asyncio.create_task(
+                        self._run_subagent(
+                            job=job,
+                            notify_callback=notify_callback,
+                            client_ws=client_ws,
+                        )
+                    )
+                    job_manager.register_async_task(job.job_id, task_handle)
+                    return json.dumps({
+                        "job_id": job.job_id,
+                        "status": "started",
+                        "message": (
+                            f"Subagent job '{job.job_id}' launched in the background. "
+                            "Acknowledge to the user that the agent is running and you'll notify them when finished."
+                        )
+                    })
+
+            # 7. Cancel Active Subagent Workflow
+            elif tool_name == "cancel_subagent":
+                job_id = str(args.get("job_id") or "").strip()
+                if not job_id:
+                    running_jobs = [j for j in job_manager.list_jobs(limit=10) if j.status == "running"]
+                    if running_jobs:
+                        job_id = running_jobs[0].job_id
+                    else:
+                        return "No active subagent job is currently running to cancel."
+
+                success = job_manager.cancel_job(job_id)
+                ctx = context or self.get_context()
+                client_ws = ctx.get("websocket")
+                if client_ws:
+                    try:
+                        await client_ws.send_json({
+                            "type": "job_status",
+                            "job_id": job_id,
+                            "status": "cancelled",
+                            "result": "Subagent execution was cancelled by user request.",
+                        })
+                    except Exception:
+                        pass
+                if success:
+                    return f"Subagent job '{job_id}' was successfully cancelled."
+                else:
+                    return f"Subagent job '{job_id}' could not be cancelled or is already finished."
+
             else:
                 logger.warning(f"[LiveDispatcher] Unrecognized tool: {tool_name}")
                 return f"Error: Unknown tool '{tool_name}'."
@@ -322,6 +474,160 @@ class RieLiveToolDispatcher:
         except Exception as e:
             logger.error(f"[LiveDispatcher] Error executing '{tool_name}': {e}", exc_info=True)
             return f"Error executing {tool_name}: {str(e)}"
+
+    async def _run_subagent(
+        self,
+        job: Any,
+        notify_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+        client_ws: Optional[Any] = None,
+    ) -> str:
+        job_id = job.job_id
+        task = job.task
+        logger.info(f"[LiveDispatcher] Starting subagent '{job_id}': {task[:100]}...")
+
+        # Notify client UI that subagent is working
+        if client_ws:
+            try:
+                await client_ws.send_json({
+                    "type": "job_status",
+                    "job_id": job_id,
+                    "task": task,
+                    "status": "running",
+                })
+            except Exception:
+                pass
+
+        sub_thread_id = f"voice_subagent_{job_id}"
+        final_summary = ""
+        try:
+            from app.agent import agent_manager
+            from app.config import settings
+
+            speed_mode = getattr(settings, "SPEED_MODE", "flash") or "flash"
+            user_message = {
+                "role": "user",
+                "content": (
+                    f"{task}\n\n"
+                    "[Instruction: You are an autonomous execution subagent spawned by Rie's voice system. "
+                    "Use all necessary tools (terminal commands, filesystem read/write/edit, browser, desktop, MCP) "
+                    "to thoroughly accomplish this objective. "
+                    "Provide a clear, concise final summary of what was accomplished, verified, or discovered.]"
+                ),
+            }
+
+            ctx = self.get_context()
+            async for chunk in agent_manager.stream(
+                messages=[user_message],
+                thread_id=sub_thread_id,
+                chat_mode="agent",
+                speed_mode=speed_mode,
+                client_timezone=ctx.get("client_timezone"),
+                client_local_datetime_iso=ctx.get("client_local_datetime_iso"),
+                client_latitude=ctx.get("client_latitude"),
+                client_longitude=ctx.get("client_longitude"),
+                client_location_accuracy_m=ctx.get("client_location_accuracy_m"),
+            ):
+                for step, data in chunk.items():
+                    if isinstance(data, dict):
+                        msgs = data.get("messages")
+                        if hasattr(msgs, "value"):
+                            msgs = getattr(msgs, "value")
+                        if isinstance(msgs, list) and msgs:
+                            last_msg = msgs[-1]
+
+                            # Check for tool call events to stream rich progress
+                            tool_calls = getattr(last_msg, "tool_calls", None)
+                            if tool_calls and isinstance(tool_calls, list):
+                                for tc in tool_calls:
+                                    tc_name = tc.get("name", "tool") if isinstance(tc, dict) else getattr(tc, "name", "tool")
+                                    tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                                    if tc_name == "run_terminal_command":
+                                        cmd = str(tc_args.get("command", "")).strip()[:60]
+                                        evt = f"Running command: {cmd}"
+                                    elif tc_name in ("write_file", "edit_file"):
+                                        p = str(tc_args.get("path", "")).strip()
+                                        evt = f"Editing file: {p}"
+                                    elif tc_name == "read_file":
+                                        p = str(tc_args.get("path", "")).strip()
+                                        evt = f"Reading file: {p}"
+                                    elif tc_name == "internet_search":
+                                        q = str(tc_args.get("query", "")).strip()[:50]
+                                        evt = f"Searching web: {q}"
+                                    elif tc_name.startswith("browser_"):
+                                        evt = f"Browser action: {tc_name}"
+                                    elif tc_name == "task":
+                                        sub_t = str(tc_args.get("subagent_type", "worker"))
+                                        evt = f"Delegating to {sub_t}"
+                                    else:
+                                        evt = f"Executing {tc_name}"
+
+                                    job_manager.add_event(job_id, evt, meta={"tool": tc_name, "args": tc_args})
+                                    if client_ws:
+                                        try:
+                                            await client_ws.send_json({
+                                                "type": "job_progress",
+                                                "job_id": job_id,
+                                                "task": task,
+                                                "event": evt,
+                                                "tool_name": tc_name,
+                                                "tool_args": tc_args,
+                                                "status": "running",
+                                            })
+                                        except Exception:
+                                            pass
+
+                            m_type = getattr(last_msg, "type", "")
+                            m_content = getattr(last_msg, "content", "")
+                            if m_type in ("ai", "assistant") and m_content:
+                                if not getattr(last_msg, "tool_calls", None):
+                                    final_summary = str(m_content).strip()
+
+            if not final_summary:
+                final_summary = "The subagent completed execution successfully."
+
+            job_manager.complete_job(job_id, final_summary)
+
+        except Exception as e:
+            logger.error(f"[LiveDispatcher] Subagent '{job_id}' failed: {e}", exc_info=True)
+            final_summary = f"The subagent encountered an error while executing: {str(e)}"
+            job_manager.fail_job(job_id, str(e))
+
+        logger.info(f"[LiveDispatcher] Subagent '{job_id}' finished: {final_summary[:150]}")
+
+        # Notify client UI
+        if client_ws:
+            try:
+                await client_ws.send_json({
+                    "type": "job_status",
+                    "job_id": job_id,
+                    "task": task,
+                    "status": job.status,
+                    "result": final_summary,
+                })
+            except Exception:
+                pass
+
+        # Save to database thread if thread_id is available
+        if job.thread_id:
+            try:
+                from app.database import save_message
+                await asyncio.to_thread(
+                    save_message,
+                    job.thread_id,
+                    "assistant",
+                    f"[Background Agent ({job_id})]: {final_summary}",
+                )
+            except Exception as dberr:
+                logger.warning(f"[LiveDispatcher] Could not save subagent result to DB: {dberr}")
+
+        # Proactively speak result to user via Gemini Live WebSocket if callback provided
+        if notify_callback:
+            try:
+                await notify_callback(task, final_summary)
+            except Exception as notif_err:
+                logger.warning(f"[LiveDispatcher] Notification callback failed: {notif_err}")
+
+        return final_summary
 
 
 # Singleton instance

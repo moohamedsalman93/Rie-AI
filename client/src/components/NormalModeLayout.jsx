@@ -37,8 +37,9 @@ import { ThinkingBlock } from './ThinkingBlock';
 import { QuestionBlock } from './QuestionBlock';
 import VoiceControls from './VoiceControls';
 import VoiceToolActivity from './VoiceToolActivity';
+import VoiceSubAgentActivity from './VoiceSubAgentActivity';
 
-function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion) {
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion, onCancelSubAgent) {
     if (!blocks || blocks.length === 0) return null;
 
     const elements = [];
@@ -64,6 +65,15 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
         } else if (block.type === 'voice_tool') {
             flushToolGroup();
             elements.push(<VoiceToolActivity key={block.id} item={block} />);
+        } else if (block.type === 'voice_subagent') {
+            flushToolGroup();
+            elements.push(
+                <VoiceSubAgentActivity
+                    key={block.id || `voice-subagent-${idx}`}
+                    block={block}
+                    onCancel={onCancelSubAgent}
+                />
+            );
         } else if (block.type === 'subagent') {
             flushToolGroup();
             elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} />);
@@ -196,6 +206,7 @@ export function NormalModeLayout({
     onUpdateSetting,
     onToggleLiveVoice = () => { },
     voiceControls = null,
+    onCancelSubAgent,
 }) {
     const [dragCounter, setDragCounter] = useState(0);
     const [isHistoryVisible, setIsHistoryVisible] = useState(true);
@@ -656,7 +667,8 @@ export function NormalModeLayout({
                                                                     m.blocks || [{ type: 'text', text: m.text }],
                                                                     toolTooltipPlacement,
                                                                     Boolean(m.isPartial) || m.id === streamingBotMessageId,
-                                                                    onAnswerQuestion || ((_id, text) => onSend(text))
+                                                                    onAnswerQuestion || ((_id, text) => onSend(text)),
+                                                                    onCancelSubAgent
                                                                 )}
                                                             </div>
                                                         ) : (

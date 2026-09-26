@@ -25,7 +25,8 @@ import { FloatingChatWindow } from "./components/FloatingChatWindow";
 import { HITLApproval } from "./components/HITLApproval";
 import { ScreenPrivacyToast } from "./components/ScreenPrivacyToast";
 import { LiveVoiceSession } from "./services/liveAudioService";
-import { upsertVoiceActivity, upsertVoiceMessage, upsertVoiceToolMessage } from "./utils/voiceActivity";
+import { getClientContextPayload } from "./services/chatApi";
+import { upsertVoiceActivity, upsertVoiceJobMessage, upsertVoiceMessage, upsertVoiceToolMessage } from "./utils/voiceActivity";
 import { isWakeWordEnabled, wakeWordService } from "./services/wakeWordService";
 import {
   WINDOW_SIZES,
@@ -171,7 +172,7 @@ function MainApp() {
   const scheduleNotifSeenIdsRef = useRef(new Set());
   const prevThreadScheduleNotifIdsRef = useRef(new Set());
 
-  const windowManager = useWindowManager({ isOpen, setIsOpen, windowMode, settings, voiceModeRef: isLiveVoiceActiveRef });
+  const windowManager = useWindowManager({ isOpen, setIsOpen, windowMode, settings });
   const {
     getWindow,
     getWindowPosition,
@@ -189,7 +190,7 @@ function MainApp() {
     isDraggingRef,
   } = windowManager;
 
-  const suspendBubbleResize = useCallback(() => isOpenRef.current || isLiveVoiceActiveRef.current, []);
+  const suspendBubbleResize = useCallback(() => isOpenRef.current, []);
 
   const attachments = useAttachments();
   const knowledgeAttachment = useKnowledgeAttachment();
@@ -479,6 +480,12 @@ function MainApp() {
     setLiveVoiceError(null);
   }, []);
 
+  const handleCancelLiveJob = useCallback((jobId) => {
+    if (liveSessionRef.current) {
+      liveSessionRef.current.cancelJob(jobId);
+    }
+  }, []);
+
   const stopSpeech = handleStopLiveVoice;
 
   const handleStartLiveVoice = useCallback(async () => {
@@ -534,6 +541,22 @@ function MainApp() {
           [currentThreadId]: upsertVoiceToolMessage(prev[currentThreadId] || [], tool),
         }));
       },
+      onJobUpdate: (jobEvent) => {
+        if (liveSessionRef.current !== session) return;
+        setSessions((prev) => ({
+          ...prev,
+          [currentThreadId]: upsertVoiceJobMessage(prev[currentThreadId] || [], jobEvent),
+        }));
+        setLiveVoiceActivity((items) =>
+          upsertVoiceActivity(items, {
+            id: jobEvent.job_id,
+            name: jobEvent.tool_name || "spawn_subagent",
+            status: jobEvent.status,
+            type: "tool",
+            args: { task: jobEvent.task, current_step: jobEvent.event },
+          })
+        );
+      },
       onTranscript: (transcript) => {
         if (liveSessionRef.current !== session || !transcript.text) return;
         setLiveVoiceActivity((items) => upsertVoiceActivity(items, { ...transcript, type: "transcript" }));
@@ -564,7 +587,9 @@ function MainApp() {
       if (liveSessionRef.current !== session) return;
       await handleOpen();
       if (liveSessionRef.current !== session) return;
-      await session.start();
+      const clientContext = await getClientContextPayload().catch(() => null);
+      if (liveSessionRef.current !== session) return;
+      await session.start(clientContext);
     } catch (err) {
       // The session reports startup failures and cleans itself up. An explicit
       // stop rejects startup with AbortError and must not stop a newer session.
@@ -2884,8 +2909,15 @@ function MainApp() {
         });
 
         // Register Global Toggle (Chat/Bubble)
-        await register("Alt+Shift+A", (event) => {
+        await register("Alt+Shift+A", async (event) => {
           if (event.state === "Pressed") {
+            try {
+              const win = getWindow();
+              if (await win.isMinimized()) {
+                handleOpen();
+                return;
+              }
+            } catch {}
             if (isOpenRef.current) {
               handleMinimize();
             } else {
@@ -3208,7 +3240,14 @@ function MainApp() {
     const unlistens = [];
 
     const setup = async () => {
-      const u1 = await listen("rie-shortcut-toggle", () => {
+      const u1 = await listen("rie-shortcut-toggle", async () => {
+        try {
+          const win = getWindow();
+          if (await win.isMinimized()) {
+            handleOpen();
+            return;
+          }
+        } catch {}
         if (isOpenRef.current) {
           handleMinimize();
         } else {
@@ -3603,6 +3642,7 @@ function MainApp() {
                     onAttachKnowledge={attachKnowledge}
                     onDetachKnowledge={detachKnowledge}
                     retryStatus={retryStatus}
+                    onCancelSubAgent={handleCancelLiveJob}
                   />
                 </>
               )}
@@ -3615,6 +3655,11 @@ function MainApp() {
               currentTool={currentTool}
               retryStatus={retryStatus}
               isLoading={isLoading}
+              isLiveVoiceActive={isLiveVoiceActive}
+              liveVoiceStatus={liveVoiceStatus}
+              liveVoiceVolumes={liveVoiceVolumes}
+              liveVoiceMuted={liveVoiceMuted}
+              liveVoiceActiveTool={liveVoiceActiveTool}
               hasPendingAction={Object.keys(pendingActions).length > 0} // Any thread has pending HITL
               isSnapping={isSnapping}
               onMouseDown={handleBubbleMouseDown}
@@ -3736,6 +3781,7 @@ function MainApp() {
                 }
               }}
               onClearKioskSelection={() => setKioskSelection(null)}
+              onCancelSubAgent={handleCancelLiveJob}
             />
           )}
         </AnimatePresence>

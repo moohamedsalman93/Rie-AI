@@ -1,12 +1,13 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { upsertVoiceMessage, upsertVoiceToolMessage } from "../../utils/voiceActivity";
+import { upsertVoiceJobMessage, upsertVoiceMessage, upsertVoiceToolMessage } from "../../utils/voiceActivity";
 import { ChatMessages } from "../../components/ChatMessages";
 import { ChatInputArea } from "../../components/ChatInputArea";
 import { NormalModeLayout } from "../../components/NormalModeLayout";
 import VoiceControls from "../../components/VoiceControls";
 import VoiceToolActivity from "../../components/VoiceToolActivity";
+import VoiceSubAgentActivity from "../../components/VoiceSubAgentActivity";
 
 vi.mock("../chatApi", () => ({
   API_BASE_URL: "http://localhost:8000", getAppToken: () => "test",
@@ -91,5 +92,61 @@ describe("voice in the chat timeline", () => {
     expect(html).toContain("Web search");
     expect(html).toContain("Done");
     expect(html).not.toContain("Searching...");
+  });
+
+  it("updates and renders autonomous subagent status, tool calling, and cancel button", () => {
+    let messages = [];
+    messages = upsertVoiceJobMessage(messages, {
+      job_id: "job_test_123",
+      task: "Fix tests and build project",
+      status: "running",
+      event: "Running command: npm test",
+      tool_name: "run_terminal_command",
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].blocks[0]).toMatchObject({
+      type: "voice_subagent",
+      job_id: "job_test_123",
+      task: "Fix tests and build project",
+      status: "running",
+      latest_event: "Running command: npm test",
+    });
+
+    // Update with another tool call event
+    messages = upsertVoiceJobMessage(messages, {
+      job_id: "job_test_123",
+      status: "running",
+      event: "Editing file: src/App.jsx",
+      tool_name: "edit_file",
+    });
+
+    expect(messages[0].blocks[0].events).toEqual([
+      "Running command: npm test",
+      "Editing file: src/App.jsx",
+    ]);
+
+    const html = renderToStaticMarkup(
+      <ChatMessages messages={messages} isVoiceActive onCancelSubAgent={vi.fn()} />
+    );
+    expect(html).toContain("Autonomous Subagent");
+    expect(html).toContain("job_test_123");
+    expect(html).toContain("Fix tests and build project");
+    expect(html).toContain("Working");
+    expect(html).toContain("Cancel");
+    expect(html).toContain("Editing file: src/App.jsx");
+
+    // Complete the job
+    messages = upsertVoiceJobMessage(messages, {
+      job_id: "job_test_123",
+      status: "completed",
+      result: "All 54 tests passed.",
+    });
+
+    const completedHtml = renderToStaticMarkup(
+      <ChatMessages messages={messages} isVoiceActive />
+    );
+    expect(completedHtml).toContain("Done");
+    expect(completedHtml).not.toContain("Cancel");
   });
 });

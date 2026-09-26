@@ -112,6 +112,7 @@ export function FloatingChatWindow({
   onUpdateSetting,
   onToggleLiveVoice = () => {},
   voiceControls = null,
+  onCancelSubAgent,
   side = "left",
 }) {
   const origin = side === "right" ? "top right" : "top left";
@@ -244,6 +245,7 @@ export function FloatingChatWindow({
                 activeFriendMeta={activeFriendMeta}
                 attachedKnowledge={attachedKnowledge}
                 retryStatus={retryStatus}
+                onCancelSubAgent={onCancelSubAgent}
               />
             </div>
           </div>

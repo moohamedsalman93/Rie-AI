@@ -48,6 +48,54 @@ class TestLiveVoice(unittest.TestCase):
             else:
                 settings._settings.pop("GOOGLE_API_KEY", None)
 
+    def test_live_system_instruction_with_location_enabled(self):
+        from app.live_voice import build_live_system_instruction
+        from app.config import settings
+        orig = settings._settings.get("SHARE_LOCATION")
+        try:
+            settings._settings["SHARE_LOCATION"] = True
+            prompt = build_live_system_instruction(
+                client_timezone="Asia/Kolkata",
+                client_local_datetime_iso="2026-09-25T13:46:00+05:30",
+                client_latitude=13.0827,
+                client_longitude=80.2707,
+                client_location_accuracy_m=15.0,
+            )
+            self.assertIn("Asia/Kolkata", prompt)
+            self.assertIn("13.0827", prompt)
+            self.assertIn("80.2707", prompt)
+            self.assertIn("accuracy ~15 m", prompt)
+            self.assertIn("USER CONTEXT & ENVIRONMENT", prompt)
+        finally:
+            if orig is not None:
+                settings._settings["SHARE_LOCATION"] = orig
+            else:
+                settings._settings.pop("SHARE_LOCATION", None)
+
+    def test_live_system_instruction_with_location_disabled(self):
+        from app.live_voice import build_live_system_instruction
+        from app.config import settings
+        orig = settings._settings.get("SHARE_LOCATION")
+        try:
+            settings._settings["SHARE_LOCATION"] = False
+            prompt = build_live_system_instruction(
+                client_timezone="Asia/Kolkata",
+                client_local_datetime_iso="2026-09-25T13:46:00+05:30",
+                client_latitude=13.0827,
+                client_longitude=80.2707,
+                client_location_accuracy_m=15.0,
+            )
+            self.assertIn("Asia/Kolkata", prompt)
+            self.assertNotIn("13.0827", prompt)
+            self.assertNotIn("80.2707", prompt)
+            self.assertNotIn("User approximate geographic position", prompt)
+        finally:
+            if orig is not None:
+                settings._settings["SHARE_LOCATION"] = orig
+            else:
+                settings._settings.pop("SHARE_LOCATION", None)
+
 
 if __name__ == "__main__":
     unittest.main()
+

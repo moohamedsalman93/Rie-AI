@@ -434,7 +434,10 @@ class Settings:
     @property
     def SHARE_LOCATION(self) -> bool:
         """Whether the client may send GPS coordinates with chat requests."""
-        return self._get("SHARE_LOCATION", "true").lower() == "true"
+        val = self._get("SHARE_LOCATION", True)
+        if isinstance(val, bool):
+            return val
+        return str(val).strip().lower() in ("true", "1", "yes")
 
     @property
     def EXCLUDE_FROM_CAPTURE(self) -> bool:

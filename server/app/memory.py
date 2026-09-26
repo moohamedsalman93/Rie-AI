@@ -28,7 +28,10 @@ class MemoryStore:
 
     async def get_store(self) -> ChromaStore:
         """Get or initialize the persistent Chroma store."""
-        return self.get_store_sync()
+        if self._store is not None:
+            return self._store
+        import asyncio
+        return await asyncio.to_thread(self.get_store_sync)
 
     def close(self) -> None:
         """Release store reference (Chroma PersistentClient has no explicit close)."""

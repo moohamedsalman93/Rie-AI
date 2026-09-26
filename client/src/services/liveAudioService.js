@@ -4,7 +4,7 @@
  * and instantaneous interruption / barge-in handling.
  */
 
-import { API_BASE_URL, getAppToken } from "./chatApi";
+import { API_BASE_URL, getAppToken, getCachedClientContextPayload } from "./chatApi";
 
 /** Convert Float32Array [-1.0, 1.0] to 16-bit linear PCM little-endian ArrayBuffer */
 function floatTo16BitPCM(float32Array) {
@@ -338,6 +338,7 @@ export class LiveVoiceSession {
   constructor(options = {}) {
     this.threadId = options.threadId;
     this.voice = options.voice || "Aoede";
+    this.clientContext = options.clientContext || null;
     this.onStatus = (status) => {
       if (this.status === status) return;
       this.status = status;
@@ -347,6 +348,7 @@ export class LiveVoiceSession {
     this.onTranscript = options.onTranscript || (() => {});
     this.onToolCall = options.onToolCall || (() => {});
     this.onToolResult = options.onToolResult || (() => {});
+    this.onJobUpdate = options.onJobUpdate || (() => {});
     this.onError = options.onError || (() => {});
     this.onVolumes = options.onVolumes || (() => {});
     this.recorder = new LiveAudioRecorder();
@@ -413,7 +415,7 @@ export class LiveVoiceSession {
     return this.setMuted(!this.isMuted);
   }
 
-  start() {
+  start(clientContext = null) {
     this.onStatus("connecting");
     return new Promise((resolve, reject) => {
       this.resolveStart = resolve;
@@ -426,6 +428,24 @@ export class LiveVoiceSession {
         if (this.threadId) params.set("thread_id", this.threadId);
         const token = getAppToken();
         if (token) params.set("token", token);
+
+        const ctx = clientContext || this.clientContext || (typeof getCachedClientContextPayload === "function" ? getCachedClientContextPayload() : {});
+        if (ctx?.client_timezone) {
+          params.set("client_timezone", ctx.client_timezone);
+        }
+        if (ctx?.client_local_datetime_iso) {
+          params.set("client_local_datetime_iso", ctx.client_local_datetime_iso);
+        }
+        if (ctx?.client_latitude != null) {
+          params.set("client_latitude", String(ctx.client_latitude));
+        }
+        if (ctx?.client_longitude != null) {
+          params.set("client_longitude", String(ctx.client_longitude));
+        }
+        if (ctx?.client_location_accuracy_m != null) {
+          params.set("client_location_accuracy_m", String(ctx.client_location_accuracy_m));
+        }
+
         const ws = new WebSocket(`${API_BASE_URL.replace(/^http/, "ws")}/ws/voice-live?${params}`);
         this.ws = ws;
         ws.onopen = () => {
@@ -463,8 +483,10 @@ export class LiveVoiceSession {
         (data) => {
           if (!this.stopped && !this.isMuted && this.ws?.readyState === WebSocket.OPEN) {
             // Never build an unbounded backlog of stale microphone audio.
-            if (this.ws.bufferedAmount > 256 * 1024) {
-              this.fail("Voice connection is too slow. Please reconnect.");
+            if (this.ws.bufferedAmount > 128 * 1024) {
+              if (this.ws.bufferedAmount > 1024 * 1024) {
+                this.fail("Voice connection is too slow. Please reconnect.");
+              }
               return;
             }
             this.ws.send(JSON.stringify({ type: "audio", data }));
@@ -523,6 +545,10 @@ export class LiveVoiceSession {
         this.onToolResult(msg);
         this.updateStatus();
         break;
+      case "job_status":
+      case "job_progress":
+        this.onJobUpdate(msg);
+        break;
       case "interrupted":
         this.turnComplete = true;
         this.player.stopImmediately();
@@ -549,6 +575,12 @@ export class LiveVoiceSession {
       this.turnComplete = true;
       this.ws.send(JSON.stringify({ type: "text", text: text.trim() }));
       this.onTranscript({ id: `voice-${crypto.randomUUID()}`, role: "user", text: text.trim(), content: text.trim(), isPartial: false });
+    }
+  }
+
+  cancelJob(jobId) {
+    if (this.ready && !this.stopped && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: "cancel_job", job_id: jobId }));
     }
   }
 

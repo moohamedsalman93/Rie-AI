@@ -2,7 +2,7 @@
  * API service for communicating with server chat backend
  */
 
-import { getClientLocationPayload } from "../utils/locationUtils";
+import { getClientLocationPayload, getCachedClientLocationPayload } from "../utils/locationUtils";
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:14300";
 
@@ -41,6 +41,17 @@ export async function getClientContextPayload() {
     getClientLocationPayload(),
   ]);
   return { ...datetime, ...location };
+}
+
+/**
+ * Synchronous snapshot of device clock + cached GPS (if available).
+ * @returns {Record<string, unknown>}
+ */
+export function getCachedClientContextPayload() {
+  return {
+    ...getClientDatetimePayload(),
+    ...getCachedClientLocationPayload(),
+  };
 }
 
 let appToken = null;

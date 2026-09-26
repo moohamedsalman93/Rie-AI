@@ -48,3 +48,45 @@ export function upsertVoiceToolMessage(messages, event) {
   if (index < 0) return [...messages, message];
   return messages.map((item, i) => i === index ? message : item);
 }
+
+// Subagent jobs stream live status, tool calls, and completion/cancellation
+export function upsertVoiceJobMessage(messages, jobEvent) {
+  if (!jobEvent.job_id) return messages;
+  const id = `voice-job:${jobEvent.job_id}`;
+  const index = messages.findIndex((message) => message.id === id);
+  const previous = index >= 0 ? messages[index] : null;
+  const prevBlock = previous?.blocks?.[0] || {};
+
+  const events = [...(prevBlock.events || [])];
+  if (jobEvent.event && (!events.length || events[events.length - 1] !== jobEvent.event)) {
+    events.push(jobEvent.event);
+  }
+
+  const status = jobEvent.status || prevBlock.status || "running";
+
+  const message = {
+    ...previous,
+    id,
+    from: "bot",
+    text: "",
+    blocks: [
+      {
+        ...prevBlock,
+        type: "voice_subagent",
+        id: jobEvent.job_id,
+        job_id: jobEvent.job_id,
+        task: jobEvent.task || prevBlock.task || "Autonomous execution task",
+        status,
+        latest_event: jobEvent.event || prevBlock.latest_event || "Subagent running...",
+        events,
+        tool_name: jobEvent.tool_name || prevBlock.tool_name,
+        tool_args: jobEvent.tool_args || prevBlock.tool_args,
+        result: jobEvent.result || prevBlock.result,
+      },
+    ],
+    timestamp: previous?.timestamp || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
+
+  if (index < 0) return [...messages, message];
+  return messages.map((item, i) => (i === index ? message : item));
+}

@@ -113,25 +113,37 @@ def _client_device_system_content(
     client_location_accuracy_m: Optional[float] = None,
 ) -> Optional[str]:
     """Ephemeral system text: local clock and/or GPS for scheduling and location-aware answers."""
+    from app.config import settings
+    if not getattr(settings, "SHARE_LOCATION", True):
+        client_latitude = None
+        client_longitude = None
+        client_location_accuracy_m = None
+
+    safe_lat = float(client_latitude) if isinstance(client_latitude, (int, float)) and not isinstance(client_latitude, bool) else None
+    safe_lon = float(client_longitude) if isinstance(client_longitude, (int, float)) and not isinstance(client_longitude, bool) else None
+    safe_acc = float(client_location_accuracy_m) if isinstance(client_location_accuracy_m, (int, float)) and not isinstance(client_location_accuracy_m, bool) else None
+    safe_tz = str(client_timezone).strip() if isinstance(client_timezone, str) and client_timezone.strip() else None
+    safe_dt = str(client_local_datetime_iso).strip() if isinstance(client_local_datetime_iso, str) and client_local_datetime_iso.strip() else None
+
     parts: list[str] = []
-    if client_local_datetime_iso:
+    if safe_dt:
         parts.append(
-            f"User device local date and time (authoritative 'now'): {client_local_datetime_iso}"
+            f"User device local date and time (authoritative 'now'): {safe_dt}"
         )
-    if client_timezone:
-        parts.append(f"User device IANA timezone: {client_timezone}")
-    if client_timezone or client_local_datetime_iso:
+    if safe_tz:
+        parts.append(f"User device IANA timezone: {safe_tz}")
+    if safe_tz or safe_dt:
         parts.append(
             "Use this when interpreting relative dates (tomorrow, next Monday, etc.) and when calling "
             "schedule_chat_task; pass run_at_iso in ISO 8601 consistent with this timezone."
         )
-    if client_latitude is not None and client_longitude is not None:
+    if safe_lat is not None and safe_lon is not None:
         loc = (
             f"User approximate geographic position (WGS84): "
-            f"latitude {client_latitude:.6f}, longitude {client_longitude:.6f}"
+            f"latitude {safe_lat:.6f}, longitude {safe_lon:.6f}"
         )
-        if client_location_accuracy_m is not None:
-            loc += f" (accuracy ~{int(client_location_accuracy_m)} m)"
+        if safe_acc is not None:
+            loc += f" (accuracy ~{int(safe_acc)} m)"
         parts.append(loc)
         parts.append(
             "Use for nearby places, local weather, travel context, and 'where am I' questions. "

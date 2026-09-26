@@ -195,4 +195,6 @@ export const MarkdownMessage = memo(MarkdownMessageImpl, (prevProps, nextProps) 
 
 MarkdownMessage.displayName = 'MarkdownMessage';
 
+export default MarkdownMessage;
+
 

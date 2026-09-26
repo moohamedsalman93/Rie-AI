@@ -10,7 +10,7 @@ import {
   POSITION_STABLE_THRESHOLD,
 } from "../constants/appConfig";
 
-export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {}, voiceModeRef }) {
+export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} }) {
   const [isSnapping, setIsSnapping] = useState(false);
   const [side, setSide] = useState("left");
 
@@ -69,7 +69,7 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {},
 
     return new Promise((resolve) => {
       const animateStep = async (currentTime) => {
-        if (stopAnimationRef.current || voiceModeRef?.current) {
+        if (stopAnimationRef.current) {
           resolve();
           return;
         }
@@ -101,7 +101,7 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {},
   }, [getWindow]);
 
   const snapToNearestEdge = useCallback(async () => {
-    if (isOpen || windowMode === "normal" || voiceModeRef?.current) return;
+    if (isOpen || windowMode === "normal") return;
     if (settings?.bubble_snap_edge === false || settings?.bubble_snap_edge === "false") return;
 
     try {
@@ -113,7 +113,6 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {},
         getWindowPosition(),
         getWindowSize(),
       ]);
-      if (voiceModeRef?.current) return;
 
       const { x: windowX, y: windowY } = position;
       const { width: windowWidth, height: windowHeight } = size;
@@ -165,11 +164,10 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {},
       await new Promise(resolve => setTimeout(resolve, 50));
 
       const win = getWindow();
-      if (voiceModeRef?.current && isOpen) {
-        await win.show();
+      try {
         await win.unminimize();
-        await win.setFocus();
-        return;
+      } catch {
+        // ignore
       }
       const pos = await getWindowPosition();
       const screenWidth = window.screen.availWidth;
@@ -214,13 +212,9 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {},
       console.error("Failed to handle open:", err);
       setIsOpen(true);
     }
-  }, [getWindow, getWindowPosition, getWindowSize, windowMode, setIsOpen, isOpen, voiceModeRef]);
+  }, [getWindow, getWindowPosition, getWindowSize, windowMode, setIsOpen]);
 
   const handleMinimize = useCallback(async () => {
-    if (voiceModeRef?.current) {
-      try { await getWindow().minimize(); } catch { /* Browser preview. */ }
-      return;
-    }
     if (windowMode === "normal") {
       try {
         try {
@@ -245,10 +239,6 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {},
   }, [windowMode, getWindow, setIsOpen]);
 
   const minimizeToBottomCenter = useCallback(() => {
-    if (voiceModeRef?.current) {
-      void getWindow().minimize().catch(() => {});
-      return;
-    }
     if (windowMode === "normal") return;
     try {
       const bubble = WINDOW_SIZES.BUBBLE;
