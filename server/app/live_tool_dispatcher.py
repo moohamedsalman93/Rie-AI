@@ -216,6 +216,142 @@ LIVE_TOOL_DECLARATIONS = [
             "type": "OBJECT",
             "properties": {}
         }
+    },
+    {
+        "name": "get_work_summary",
+        "description": (
+            "Summarizes the user's desktop activity and work completed during a specific timeframe "
+            "(e.g. 'today', 'yesterday', 'this_morning', 'last_hour', 'last_7_days'). "
+            "Returns total active time, application breakdown, recent terminal commands, and top files or windows."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "timeframe": {
+                    "type": "STRING",
+                    "description": "Timeframe to summarize (e.g. 'today', 'yesterday', 'last_hour', 'this_morning'). Defaults to 'today'."
+                }
+            }
+        }
+    },
+    {
+        "name": "search_activity",
+        "description": (
+            "Searches through past desktop activity, window titles, files worked on, visited websites, executed terminal commands, and copied clipboard snippets."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "query": {
+                    "type": "STRING",
+                    "description": "Keyword or topic to search for in past activity."
+                },
+                "timeframe": {
+                    "type": "STRING",
+                    "description": "Optional timeframe constraint (e.g. 'today', 'yesterday', 'last_7_days')."
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "get_activity_timeline",
+        "description": (
+            "Retrieves a chronological sequence of desktop window switches, terminal commands, and tasks over a given timeframe (e.g. 'today', 'yesterday', 'last_hour')."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "timeframe": {
+                    "type": "STRING",
+                    "description": "Timeframe to retrieve timeline for. Defaults to 'today'."
+                },
+                "app_name": {
+                    "type": "STRING",
+                    "description": "Optional app or shell filter (e.g. 'terminal', 'PowerShell', 'Git Bash', 'CMD', 'Code')."
+                },
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Maximum events to return (default: 50)."
+                }
+            }
+        }
+    },
+    {
+        "name": "get_terminal_history",
+        "description": (
+            "Retrieves executed terminal/shell commands from PowerShell, CMD, and Git Bash. "
+            "Answers 'what commands did I run?', 'what was the last test I ran?', 'what project was I working on in the terminal?', or 'what failed commands did I execute?'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "timeframe": {
+                    "type": "STRING",
+                    "description": "Timeframe to query commands for (e.g. 'today', 'yesterday', 'last_hour'). Defaults to 'today'."
+                },
+                "query": {
+                    "type": "STRING",
+                    "description": "Optional command keyword filter (e.g. 'pytest', 'test', 'git', 'npm', 'poetry')."
+                },
+                "cwd": {
+                    "type": "STRING",
+                    "description": "Optional working directory or project folder filter."
+                },
+                "failed_only": {
+                    "type": "BOOLEAN",
+                    "description": "If true, only returns commands that failed (exit code != 0)."
+                },
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Maximum number of commands to return (default: 30)."
+                }
+            }
+        }
+    },
+    {
+        "name": "get_last_work_session",
+        "description": (
+            "Retrieves the user's most recent work session, including active project, git branch, modified files, terminal commands, and narrative summary. "
+            "Use this tool when the user asks: 'Where did I leave off?', 'Continue what I was doing', 'Continue my work', or 'What was I doing before stepping away?'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "project": {
+                    "type": "STRING",
+                    "description": "Optional project filter (e.g. 'Rie-AI')."
+                }
+            }
+        }
+    },
+    {
+        "name": "get_work_sessions",
+        "description": (
+            "Retrieves semantic work sessions clustered and synthesized from past desktop, browser, IDE, and terminal activity. "
+            "Use this tool when the user asks: 'What was I working on yesterday?', 'What did I do this morning?', 'What was I doing when I worked on Workstream?'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "timeframe": {
+                    "type": "STRING",
+                    "description": "Timeframe to retrieve sessions for (e.g. 'yesterday', 'today', 'last_7_days')."
+                },
+                "project": {
+                    "type": "STRING",
+                    "description": "Optional project name filter."
+                },
+                "topic": {
+                    "type": "STRING",
+                    "description": "Optional topic or feature filter (e.g. 'terminal tracking', 'live_tool_dispatcher')."
+                },
+                "limit": {
+                    "type": "INTEGER",
+                    "description": "Maximum number of sessions to return."
+                }
+            }
+        }
     }
 ]
 
@@ -466,6 +602,59 @@ class RieLiveToolDispatcher:
                     return f"Subagent job '{job_id}' was successfully cancelled."
                 else:
                     return f"Subagent job '{job_id}' could not be cancelled or is already finished."
+
+            # 8. Workstream & Past Activity Tools
+            elif tool_name == "get_work_summary":
+                timeframe = str(args.get("timeframe", "today")).strip()
+                from app.workstream.tools import get_work_summary_func
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, get_work_summary_func, timeframe)
+
+            elif tool_name == "search_activity":
+                query = str(args.get("query", "")).strip()
+                timeframe = args.get("timeframe")
+                if not query:
+                    return "Error: query is required."
+                from app.workstream.tools import search_activity_func
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, search_activity_func, query, timeframe)
+
+            elif tool_name == "get_activity_timeline":
+                timeframe = str(args.get("timeframe", "today")).strip()
+                app_name = args.get("app_name")
+                limit = int(args.get("limit", 50))
+                from app.workstream.tools import get_activity_timeline_func
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, get_activity_timeline_func, timeframe, app_name, limit)
+
+            elif tool_name == "get_terminal_history":
+                timeframe = str(args.get("timeframe", "today")).strip()
+                query = args.get("query")
+                cwd = args.get("cwd")
+                failed_only = bool(args.get("failed_only", False))
+                limit = int(args.get("limit", 30))
+                from app.workstream.tools import get_terminal_history_func
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, get_terminal_history_func, timeframe, query, cwd, failed_only, limit)
+
+            elif tool_name == "get_last_work_session":
+                project = args.get("project")
+                from app.workstream.tools import get_last_work_session_func
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, get_last_work_session_func, project)
+
+            elif tool_name == "get_work_sessions":
+                timeframe = str(args.get("timeframe", "today")).strip()
+                project = args.get("project")
+                topic = args.get("topic")
+                file = args.get("file")
+                domain = args.get("domain")
+                limit = int(args.get("limit", 10))
+                from app.workstream.tools import get_work_sessions_func
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(
+                    None, get_work_sessions_func, timeframe, project, topic, file, domain, limit
+                )
 
             else:
                 logger.warning(f"[LiveDispatcher] Unrecognized tool: {tool_name}")

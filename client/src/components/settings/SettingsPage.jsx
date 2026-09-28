@@ -13,6 +13,7 @@ import { KnowledgeManager } from './KnowledgeManager';
 import { SkillsManager } from './SkillsManager';
 import BrowserSettingsSection from './BrowserSettingsSection';
 import ConnectorsManager from './tabs/ConnectorsManager';
+import WorkstreamSettingsSection from './WorkstreamSettingsSection';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
@@ -23,6 +24,7 @@ import {
   SETTINGS_NAV_GROUPS,
   filterNavGroups,
   searchSettings,
+  MEMORY_SUB_TABS,
   DIAGNOSTICS_SUB_TABS,
   ADVANCED_SUB_TABS,
   CAPABILITY_SUB_TABS,
@@ -88,6 +90,14 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   const [advancedSubTab, setAdvancedSubTab] = useState(() =>
     normalizeTabId(initialTab) === 'advanced' ? normalizeSubTab('advanced', initialSubTab) || 'orchestration' : 'orchestration'
   );
+  const [memorySubTab, setMemorySubTab] = useState(() => {
+    const norm = normalizeTabId(initialTab);
+    if (norm === 'memory') {
+      if (initialTab === 'workstream' || initialTab === 'sensors' || initialTab === 'activity') return 'sensors';
+      return normalizeSubTab('memory', initialSubTab) || 'general';
+    }
+    return 'general';
+  });
   const [settingsSearch, setSettingsSearch] = useState('');
   const isMountedRef = useRef(true);
   const searchTimeoutRef = useRef(null);
@@ -1026,6 +1036,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
           if (hit.tab === 'capabilities') setCapabilityTab(hit.subTab);
           if (hit.tab === 'diagnostics') setDiagnosticsSubTab(hit.subTab);
           if (hit.tab === 'advanced') setAdvancedSubTab(hit.subTab);
+          if (hit.tab === 'memory') setMemorySubTab(hit.subTab);
         }
       }
     }, 250);
@@ -3076,12 +3087,23 @@ Separate keywords by commas. Commands containing these words will be blocked."
                 </div>
               )}
 
+
               {activeTab === 'memory' && (
                 <div className={SL.tabStack}>
                   <div className={SL.pageHeader}>
                     <h3 className={SL.pageTitle}>Memory</h3>
-                    <p className={SL.pageDesc}>Web search provider and memory embeddings.</p>
+                    <p className={SL.pageDesc}>Search providers, custom knowledge, embeddings, and activity sensors.</p>
                   </div>
+
+                  <SubTabBar tabs={MEMORY_SUB_TABS} activeId={memorySubTab} onChange={setMemorySubTab} />
+
+                  {memorySubTab === 'sensors' && (
+                    <WorkstreamSettingsSection />
+                  )}
+
+                  {memorySubTab === 'general' && (
+                    <>
+                  
 
                   <div className="premium-card rounded-xl p-5 space-y-4">
                     <div className={SL.cardHeader}>
@@ -3274,6 +3296,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       )}
                     </div>
                   </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -3362,6 +3386,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </button>
                     </div>
                   </div>
+                    
                 </div>
               )}
 

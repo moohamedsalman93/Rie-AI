@@ -60,7 +60,7 @@ app.add_middleware(
         "https://tauri.localhost",
         "http://tauri.localhost",
     ],
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|tauri\.localhost)(:\d+)?",
+    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1|tauri\.localhost)(:\d+)?|chrome-extension://.*|edge-extension://.*|moz-extension://.*)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -132,6 +132,14 @@ async def _background_initialization():
         await asyncio.to_thread(try_start_ngrok_tunnel_on_startup)
         _subsystem_status["ngrok"] = getattr(settings, "CONNECTIVITY_NGROK_ENABLED", False)
         logger.info("Ngrok autostart check complete.")
+
+        # 4. Background session aggregation loop (every 3 minutes)
+        try:
+            from app.workstream.session_aggregator import session_aggregator
+            await session_aggregator.start_background_loop(interval_seconds=180)
+            logger.info("Background session aggregation loop started.")
+        except Exception as agg_err:
+            logger.warning("Could not start background session aggregator: %s", agg_err)
     except Exception as e:
         logger.exception("Error during background initialization: %s", e)
 
@@ -143,8 +151,14 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up MCP sessions and scheduler on app shutdown"""
+    """Clean up MCP sessions, aggregator, and scheduler on app shutdown"""
     logger.info("Shutting down, cleaning up...")
+    try:
+        from app.workstream.session_aggregator import session_aggregator
+        await session_aggregator.stop_background_loop()
+    except Exception:
+        pass
+
     # Avoid hanging uvicorn reload if a cleanup routine blocks.
     try:
         await asyncio.wait_for(mcp_manager.cleanup(), timeout=5)
@@ -168,11 +182,13 @@ from app.security import verify_app_token
 from fastapi import Depends
 from app.browser.routes import router as browser_router
 from app.live_voice import router as live_voice_router
+from app.workstream.router import router as workstream_router
 
 # Include routers
 app.include_router(router, dependencies=[Depends(verify_app_token)])
 app.include_router(browser_router)
 app.include_router(live_voice_router)
+app.include_router(workstream_router)
 
 
 if __name__ == "__main__":

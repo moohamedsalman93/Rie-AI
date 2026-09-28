@@ -88,6 +88,7 @@ from app.custom_tools import get_external_tools
 from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 from app.scheduler_tools import SCHEDULER_TOOLS, schedule_chat_task_tool
 from app.remote_friend_tools import remote_friend_ask_tool
+from app.workstream import WORKSTREAM_TOOLS
 
 from app.browser import LANGGRAPH_BROWSER_TOOLS, browser_service, InteractionMode
 from app.runtime_context import set_agent_context, reset_agent_context
@@ -213,6 +214,17 @@ DOMAIN_RULES: dict[str, str] = {
     "skills": (
         "- Skills & Specialized Domain Knowledge: You have access to specialized procedural skills in your library. "
         "When a task requires specialized domain guidelines or procedures from your Available Skills list, invoke `load_skill` with the exact skill name to load the complete instructions."
+    ),
+    "workstream": (
+        "- Workstream & Past Activity: You have direct access to a continuous desktop activity timeline tracked by Rie via `get_activity_timeline`, `get_work_summary`, `get_terminal_history`, and `search_activity`. "
+        "When the user asks what they were doing, what changes they made, what terminal commands they ran, or requests a summary of their work/standup "
+        "(e.g., 'what did I work on yesterday?', 'what was I doing in the last 10 minutes?', 'summarize my day', 'what was I doing before lunch?', "
+        "'what commands did I run while working on Rie today?', 'what was the last test I ran?', 'what did I do before the tests started failing?', "
+        "'what project was I working on in the terminal?'), "
+        "ALWAYS invoke `get_terminal_history`, `get_activity_timeline`, `get_work_summary`, or `search_activity`. NEVER claim that you do not keep an activity log or cannot inspect recent actions — "
+        "always query these workstream tools first. "
+        "When the user asks to recall a past article, visited page, or copied code snippet ('what was that code I copied?', 'find the website about X'), "
+        "invoke `search_activity`."
     ),
 }
 
@@ -2585,6 +2597,7 @@ class AgentManager:
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
+            **WORKSTREAM_TOOLS,
         }
 
         try:
@@ -3413,6 +3426,7 @@ class AgentManager:
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
+            **WORKSTREAM_TOOLS,
         }
 
         loaded_mcp_tools: list[Any] = []
@@ -3597,6 +3611,9 @@ class AgentManager:
             if "load_skill" in all_tools_map:
                 tools_to_use.append(all_tools_map["load_skill"])
             tools_to_use.extend(LTM_TOOLS)
+            for wt_name in ("get_work_summary", "get_activity_timeline", "search_activity", "get_terminal_history"):
+                if wt_name in all_tools_map:
+                    tools_to_use.append(all_tools_map[wt_name])
             # Include connected plugin tools so DynamicToolRoutingMiddleware can route them when requested
             existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
             for extra_tool in loaded_plugin_tools:
@@ -3659,6 +3676,10 @@ class AgentManager:
             "update_scheduled_task",
             "cancel_scheduled_task",
             "remote_friend_ask",
+            "get_work_summary",
+            "get_activity_timeline",
+            "search_activity",
+            "get_terminal_history",
         ]
 
         existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}

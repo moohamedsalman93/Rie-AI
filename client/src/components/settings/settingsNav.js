@@ -19,6 +19,9 @@ export const LEGACY_TAB_MAP = {
   observability: 'diagnostics',
   orchestration: 'advanced',
   connectivity: 'advanced',
+  workstream: 'memory',
+  sensors: 'memory',
+  activity: 'memory',
 };
 
 export const DEFAULT_TAB = 'assistant';
@@ -29,6 +32,10 @@ export function normalizeTabId(tab) {
 }
 
 export function normalizeSubTab(tab, subTab) {
+  if (tab === 'memory') {
+    if (subTab === 'sensors' || subTab === 'activity' || subTab === 'workstream') return 'sensors';
+    return subTab || 'general';
+  }
   if (tab === 'diagnostics') {
     if (subTab === 'observability' || subTab === 'tracing') return 'tracing';
     if (subTab === 'logs') return 'logs';
@@ -72,6 +79,11 @@ export const SETTINGS_NAV_GROUPS = [
   },
 ];
 
+export const MEMORY_SUB_TABS = [
+  { id: 'general', label: 'Search & Knowledge' },
+  { id: 'sensors', label: 'Activity Sensors' },
+];
+
 export const DIAGNOSTICS_SUB_TABS = [
   { id: 'logs', label: 'Logs', description: 'Local backend log output' },
   { id: 'tracing', label: 'Tracing', description: 'Optional LangSmith cloud tracing' },
@@ -96,16 +108,17 @@ export const SETTINGS_SEARCH_INDEX = [
   { terms: ['assistant', 'provider', 'llm', 'gemini', 'groq', 'openai', 'ollama', 'vertex', 'rie', 'api key', 'model'], tab: 'assistant' },
   { terms: ['tools', 'capabilities', 'builtin', 'terminal', 'mouse', 'keyboard', 'desktop', 'mcp', 'external api'], tab: 'capabilities' },
   { terms: ['skills', 'rules', 'instructions', 'skill library'], tab: 'capabilities', subTab: 'skills' },
-  { terms: ['tavily', 'brave', 'duckduckgo', 'internet search', 'web search', 'web search provider'], tab: 'memory' },
+  { terms: ['tavily', 'brave', 'duckduckgo', 'internet search', 'web search', 'web search provider'], tab: 'memory', subTab: 'general' },
   { terms: ['web search tool'], tab: 'capabilities', subTab: 'builtin' },
   { terms: ['voice', 'tts', 'speech', 'edge tts', 'orpheus', 'voice reply'], tab: 'voice' },
-  { terms: ['memory', 'embedding', 'ltm', 'bundled', 'nomic'], tab: 'memory' },
+  { terms: ['memory', 'embedding', 'ltm', 'bundled', 'nomic'], tab: 'memory', subTab: 'general' },
   { terms: ['privacy', 'security', 'hitl', 'terminal restrictions', 'location', 'share location', 'gps', 'kiosk', 'kiosk overlay'], tab: 'privacy' },
   { terms: ['auto-start', 'autostart', 'launch', 'about', 'docs', 'documentation', 'update', 'check for updates', 'version', 'software update'], tab: 'privacy' },
   { terms: ['logs', 'debug', 'system logs'], tab: 'diagnostics', subTab: 'logs' },
   { terms: ['langsmith', 'tracing', 'observability', 'trace'], tab: 'diagnostics', subTab: 'tracing' },
   { terms: ['orchestration', 'planner', 'solo', 'team', 'agent mode'], tab: 'advanced', subTab: 'orchestration' },
   { terms: ['connectivity', 'ngrok', 'pairing', 'remote', 'friends', 'tunnel'], tab: 'advanced', subTab: 'remote' },
+  { terms: ['workstream', 'activity', 'sensors', 'window focus', 'idle', 'clipboard', 'browser extension', 'ide', 'terminal', 'session aggregation', 'activity memory', 'control center'], tab: 'memory', subTab: 'sensors' },
 ];
 
 export function searchSettings(query) {

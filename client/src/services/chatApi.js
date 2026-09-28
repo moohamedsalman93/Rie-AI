@@ -1237,5 +1237,118 @@ export async function getBrowserCookies() {
   return response.json();
 }
 
+/**
+ * Workstream and Activity Memory Sensor API endpoints
+ */
+export async function getWorkstreamConfig() {
+  const response = await fetch(`${API_BASE_URL}/workstream/config`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to fetch Workstream configuration");
+  return response.json();
+}
+
+export async function updateWorkstreamConfig(config) {
+  const response = await fetch(`${API_BASE_URL}/workstream/config`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to update Workstream configuration");
+  return response.json();
+}
+
+export async function getWorkstreamSensorsStatus() {
+  const response = await fetch(`${API_BASE_URL}/workstream/sensors/status`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to fetch Workstream sensor status");
+  return response.json();
+}
+
+export async function getWorkstreamSummary(timeframe = "today") {
+  const response = await fetch(`${API_BASE_URL}/workstream/summary?timeframe=${encodeURIComponent(timeframe)}`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to fetch Workstream summary");
+  return response.json();
+}
+
+export async function triggerWorkstreamAggregation(timeframe = "today", force = false) {
+  const response = await fetch(`${API_BASE_URL}/workstream/sessions/aggregate`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ timeframe, force }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to trigger session aggregation");
+  return response.json();
+}
+
+export async function pruneWorkstreamEvents(retentionDays = 60) {
+  const response = await fetch(`${API_BASE_URL}/workstream/prune`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ retention_days: retentionDays }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to prune workstream events");
+  return response.json();
+}
+
+/** Plugin Manager APIs (On-Demand Installation) **/
+
+export async function getWorkstreamPluginsStatus() {
+  const response = await fetch(`${API_BASE_URL}/workstream/plugins/status`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to fetch plugins status");
+  return response.json();
+}
+
+export async function installIdePlugin() {
+  const response = await fetch(`${API_BASE_URL}/workstream/plugins/install-ide`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to install IDE companion");
+  return response.json();
+}
+
+export async function uninstallIdePlugin() {
+  const response = await fetch(`${API_BASE_URL}/workstream/plugins/uninstall-ide`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to uninstall IDE companion");
+  return response.json();
+}
+
+export async function installTerminalPlugin() {
+  const response = await fetch(`${API_BASE_URL}/workstream/plugins/install-terminal`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to inject terminal hooks");
+  return response.json();
+}
+
+export async function uninstallTerminalPlugin() {
+  const response = await fetch(`${API_BASE_URL}/workstream/plugins/uninstall-terminal`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to remove terminal hooks");
+  return response.json();
+}
+
+export async function openBrowserPluginFolder() {
+  const response = await fetch(`${API_BASE_URL}/workstream/plugins/open-browser-folder`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to open browser extension folder");
+  return response.json();
+}
+
+
 
 

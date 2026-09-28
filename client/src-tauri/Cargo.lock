@@ -3480,11 +3480,13 @@ dependencies = [
 name = "rie-ai"
 version = "0.6.8"
 dependencies = [
+ "chrono",
  "cpal",
  "hound",
  "rand 0.8.6",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",

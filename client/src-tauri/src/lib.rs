@@ -1,6 +1,8 @@
 mod audio;
 mod kiosk_overlay;
 mod location;
+#[cfg(target_os = "windows")]
+mod workstream;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -56,6 +58,18 @@ fn set_window_capture_excluded(app: tauri::AppHandle, exclude: bool) -> Result<(
     }
     let _ = app;
     let _ = exclude;
+    Ok(())
+}
+
+#[tauri::command]
+fn update_workstream_sensor_config(config: serde_json::Value) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(cfg) = serde_json::from_value::<workstream::WorkstreamConfig>(config) {
+            workstream::update_sensor_config(cfg);
+        }
+    }
+    let _ = config;
     Ok(())
 }
 
@@ -325,6 +339,11 @@ pub fn run() {
                 }
             });
 
+            #[cfg(target_os = "windows")]
+            {
+                workstream::start_collector();
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -345,6 +364,7 @@ pub fn run() {
             kiosk_overlay::set_kiosk_overlay_mode,
             kiosk_overlay::get_kiosk_overlay_mode,
             kiosk_overlay::force_topmost,
+            update_workstream_sensor_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
