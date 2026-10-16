@@ -140,6 +140,15 @@ async def _background_initialization():
             logger.info("Background session aggregation loop started.")
         except Exception as agg_err:
             logger.warning("Could not start background session aggregator: %s", agg_err)
+
+        # 5. Pre-warm speaker verification model and profile into RAM (eliminates 1.2s cold start)
+        try:
+            from speaker_id.service import speaker_verification_service
+            await asyncio.to_thread(speaker_verification_service.ensure_model_loaded)
+            await asyncio.to_thread(speaker_verification_service.ensure_profile_loaded)
+            logger.info("Speaker verification ONNX model pre-warmed into RAM.")
+        except Exception as spk_err:
+            logger.warning("Could not pre-warm speaker verification model: %s", spk_err)
     except Exception as e:
         logger.exception("Error during background initialization: %s", e)
 
@@ -184,11 +193,14 @@ from app.browser.routes import router as browser_router
 from app.live_voice import router as live_voice_router
 from app.workstream.router import router as workstream_router
 
+from app.speaker_routes import router as speaker_router
+
 # Include routers
 app.include_router(router, dependencies=[Depends(verify_app_token)])
 app.include_router(browser_router)
 app.include_router(live_voice_router)
 app.include_router(workstream_router)
+app.include_router(speaker_router)
 
 
 if __name__ == "__main__":

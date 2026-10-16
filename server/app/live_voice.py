@@ -67,6 +67,12 @@ def build_live_system_instruction(
     base_prompt = (
         "You are Rie, an ultra-fast, helpful, warm, concise, and highly capable desktop AI companion. "
         "You are interacting with the user via real-time spoken voice conversation.\n\n"
+        "## STRICT LANGUAGE POLICY (ENGLISH & TAMIL ONLY):\n"
+        "- The ONLY supported languages are ENGLISH and TAMIL (தமிழ் / Tanglish).\n"
+        "- NEVER converse, respond, output, or transcribe in Telugu (తెలుగు) or Hindi (हिंदी).\n"
+        "- You must NEVER output Telugu script or Devanagari script under any circumstances.\n"
+        "- The user speaks English and Tamil. Interpret all user speech strictly as English or Tamil, never as Telugu or Hindi.\n"
+        "- Seamlessly speak in Tamil (தமிழ்) or English based on the language the user speaks to you.\n\n"
         "## CORE ARCHITECTURAL PRINCIPLES:\n"
         "1. CONVERSATIONAL BRAIN: You are the voice and intent coordinator. Fast tools are your reflexes, and the autonomous subagent is your hands.\n"
         "2. ROUTING FIRST: Never independently decide that an executable capability is unavailable. When the user asks for an action, file operation, coding, terminal command, or technical task, route the request to the appropriate fast tool or to `spawn_subagent`.\n"
@@ -75,7 +81,12 @@ def build_live_system_instruction(
         "5. PROMPT ACKNOWLEDGMENT: When launching a background subagent, immediately speak a brief natural confirmation (e.g. 'I've started the agent on that. I'll let you know as soon as it's finished!'). You can continue conversing with the user while the agent works.\n"
         "6. NOTIFICATION SUMMARIES: When the background agent finishes, you will receive a notification event. Naturally speak a concise 1-2 sentence update summarizing the completed outcome.\n"
         "7. CANCEL SUBAGENT: If the user asks to cancel, stop, or abort the agent or task, immediately invoke `cancel_subagent()` to stop the background subagent.\n"
-        "8. SPOKEN STYLE: Keep spoken answers short, punchy, and natural (1 to 2 sentences max) so it feels like a snappy back-and-forth chat. Avoid reading raw markdown or code aloud."
+        "8. SPOKEN STYLE: Keep spoken answers short, punchy, and natural (1 to 2 sentences max) so it feels like a snappy back-and-forth chat. Avoid reading raw markdown or code aloud.\n"
+        "9. MULTI-SPEAKER & ROOM AWARENESS: You hear the ambient room audio. The primary enrolled user is your owner. Other people in the room (e.g., nephew, colleagues, guests) may also speak.\n"
+        "   - If the user asks about who spoke in the room (e.g. 'was that a single person or two persons?', 'who spoke? / யார் யார்?'), use the conversational history and distinct voices/topics to accurately answer in the user's language.\n"
+        "   - When the user explicitly instructs you to answer or talk to someone else (e.g. 'answer him', 'reply to my nephew', 'tell John...', 'அவனுக்கு பதில் சொல்லு'), address that person and answer their question.\n"
+        "   - If the user tells you to ignore someone (e.g. 'ignore him', 'don't answer him', 'இக்னோர் பண்ணிடு'), respect that and stay focused exclusively on the primary user.\n"
+        "   - Seamlessly converse exclusively in Tamil (தமிழ்) and English based on the language the user speaks."
     )
 
     if device_context:
@@ -226,6 +237,14 @@ async def gemini_live_voice_websocket(
             transcripts = VoiceTranscripts()
             tool_tasks = {}
             tool_lock = asyncio.Lock()
+            turn_state = {
+                "speaker": "USER",
+                "authorized": True,
+                "score": 0.0,
+                "user_delegated": False,
+                "suppress_assistant": not greet,
+                "verifying": False,
+            }
 
             async def notify_gemini(task_desc: str, result_summary: str):
                 try:
@@ -269,12 +288,20 @@ async def gemini_live_voice_websocket(
                 })
 
             async def finish_transcript(role, interrupted=False, notify=True):
+                if role == "assistant" and turn_state["suppress_assistant"]:
+                    # Hard Response Firewall: Drop unauthorized assistant answer from db and stream
+                    transcripts.finish("assistant", interrupted=True)
+                    return
                 item = transcripts.finish(role, interrupted)
                 if not item:
                     return
+                if role == "user":
+                    item["speaker"] = turn_state["speaker"]
+                    item["authorized"] = turn_state["authorized"] or turn_state["user_delegated"]
                 if thread_id and item["text"].strip():
                     try:
-                        await asyncio.to_thread(save_message, thread_id, role, item["text"].strip())
+                        label = f"[{turn_state['speaker']}] {item['text'].strip()}" if turn_state["speaker"] == "OTHER" else item['text'].strip()
+                        await asyncio.to_thread(save_message, thread_id, role, label)
                     except Exception:
                         logger.exception("[LiveVoice] Failed saving transcript")
                 if notify:
@@ -283,6 +310,36 @@ async def gemini_live_voice_websocket(
             async def run_tool(call):
                 call_id, name, args = call["id"], call["name"], call.get("args", {})
                 try:
+                    # Security Firewall: Block tool execution if current speech turn is unauthorized
+                    if turn_state.get("verifying", False):
+                        logger.info("[LiveVoice Security Firewall] Tool call '%s' arrived while speaker verification in-flight. Waiting for verdict...", name)
+                        for _ in range(30):
+                            await asyncio.sleep(0.05)
+                            if not turn_state.get("verifying", False):
+                                break
+
+                    is_authorized = turn_state["authorized"] or turn_state["user_delegated"]
+                    if not is_authorized:
+                        logger.warning(
+                            "[LiveVoice Security Firewall] Blocked tool execution '%s' (id=%s) - unauthorized speaker '%s'",
+                            name, call_id, turn_state["speaker"]
+                        )
+                        # Acknowledge rejection to Gemini Live upstream so it does not hang
+                        await gemini_ws.send(json.dumps({"toolResponse": {"functionResponses": [{
+                            "id": call_id,
+                            "name": name,
+                            "response": {"error": "Unauthorized: Speaker is not authorized to invoke tools."}
+                        }]}}))
+                        # Notify client UI that tool execution was rejected by security policy
+                        await websocket.send_json({
+                            "type": "tool_result",
+                            "id": call_id,
+                            "name": name,
+                            "result": "Security Error: Tool execution rejected. Speaker is not authorized to invoke tools.",
+                            "status": "unauthorized",
+                        })
+                        return
+
                     # Keep desktop actions ordered while the receiver remains free
                     # to handle audio, transcripts, and cancellation messages.
                     async with tool_lock:
@@ -361,6 +418,7 @@ async def gemini_live_voice_websocket(
                                 await gemini_ws.send(json.dumps(client_content))
 
                         elif msg_type == "audio_end":
+                            logger.info("[LiveVoice] Speech turn concluded (audio_end). Signaling audioStreamEnd to Gemini Live.")
                             await gemini_ws.send(json.dumps({"realtimeInput": {"audioStreamEnd": True}}))
 
                         elif msg_type == "cancel_job":
@@ -378,6 +436,42 @@ async def gemini_live_voice_websocket(
                                     "status": "cancelled",
                                     "result": "Subagent execution was cancelled by user.",
                                 })
+
+                        elif msg_type == "speech_onset":
+                            turn_state["speaker"] = "VERIFYING"
+                            turn_state["authorized"] = False
+                            turn_state["user_delegated"] = False
+                            turn_state["suppress_assistant"] = True
+                            turn_state["verifying"] = True
+                            logger.info("[LiveVoice] Speech onset detected. Locking response authorization pending verification.")
+
+                        elif msg_type == "speaker_tag":
+                            speaker = str(msg.get("speaker") or "UNKNOWN")
+                            authorized = bool(msg.get("authorized", False))
+                            score = float(msg.get("score", 0.0))
+                            is_delegated = bool(msg.get("isDelegated") or msg.get("is_delegated", False))
+
+                            turn_state["speaker"] = speaker
+                            turn_state["authorized"] = authorized
+                            turn_state["score"] = score
+                            turn_state["user_delegated"] = is_delegated
+                            turn_state["suppress_assistant"] = not (authorized or is_delegated)
+                            turn_state["verifying"] = False
+                            logger.info(
+                                f"[LiveVoice] Speaker Tag: {speaker} (auth={authorized}, delegated={is_delegated}, suppress={turn_state['suppress_assistant']}, score={score:.4f})"
+                            )
+
+                        elif msg_type == "abort_response":
+                            turn_state["authorized"] = False
+                            turn_state["verifying"] = False
+                            reason = str(msg.get("reason") or "")
+                            if reason in ("transient_noise", "assistant_echo"):
+                                turn_state["suppress_assistant"] = False
+                                turn_state["speaker"] = "USER"
+                                turn_state["authorized"] = True
+                            else:
+                                turn_state["suppress_assistant"] = True
+                            logger.info(f"[LiveVoice Response Firewall] Received abort_response from client (reason={reason}). Suppressing assistant={turn_state['suppress_assistant']}.")
 
                         elif msg_type == "ping":
                             await websocket.send_json({"type": "pong"})
@@ -441,7 +535,12 @@ async def gemini_live_voice_websocket(
 
                         for field, role in (("inputTranscription", "user"), ("outputTranscription", "assistant")):
                             transcription = server_content.get(field, {})
-                            item = transcripts.append(role, transcription.get("text", ""))
+                            text = transcription.get("text", "")
+                            if role == "assistant" and turn_state["suppress_assistant"]:
+                                # Hard Response Firewall: Drop assistant transcription for unauthorized turn
+                                logger.debug("[LiveVoice Response Firewall] Suppressed assistant transcription for unauthorized turn: %s", text)
+                                continue
+                            item = transcripts.append(role, text)
                             if item:
                                 await websocket.send_json(item)
                             if transcription.get("finished"):
@@ -452,15 +551,21 @@ async def gemini_live_voice_websocket(
 
                         model_turn = server_content.get("modelTurn")
                         if model_turn and not server_content.get("interrupted"):
-                            for part in model_turn.get("parts", []):
-                                # Audio chunk (PCM 24kHz base64)
-                                inline_data = part.get("inlineData")
-                                if inline_data and inline_data.get("data"):
-                                    await websocket.send_json({
-                                        "type": "audio",
-                                        "data": inline_data["data"],
-                                        "sampleRate": 24000
-                                    })
+                            if turn_state["suppress_assistant"]:
+                                logger.debug(
+                                    "[LiveVoice Response Firewall] Suppressed modelTurn audio for unauthorized speaker: %s",
+                                    turn_state["speaker"]
+                                )
+                            else:
+                                for part in model_turn.get("parts", []):
+                                    # Audio chunk (PCM 24kHz base64)
+                                    inline_data = part.get("inlineData")
+                                    if inline_data and inline_data.get("data"):
+                                        await websocket.send_json({
+                                            "type": "audio",
+                                            "data": inline_data["data"],
+                                            "sampleRate": 24000
+                                        })
 
                                 # Native audio captions come from outputTranscription.
                                 # modelTurn.text can contain thoughts, not spoken words.
@@ -468,8 +573,18 @@ async def gemini_live_voice_websocket(
                         # Turn completed
                         if server_content.get("turnComplete"):
                             await finish_transcript("user")
-                            await finish_transcript("assistant")
-                            await websocket.send_json({"type": "turn_complete"})
+                            if not turn_state["suppress_assistant"]:
+                                await finish_transcript("assistant")
+                            await websocket.send_json({
+                                "type": "turn_complete",
+                                "suppressed": turn_state["suppress_assistant"],
+                            })
+                            # Reset turn state when idle between turns
+                            turn_state["speaker"] = "USER"
+                            turn_state["authorized"] = True
+                            turn_state["user_delegated"] = False
+                            turn_state["suppress_assistant"] = False
+                            turn_state["verifying"] = False
 
                 except asyncio.CancelledError:
                     pass

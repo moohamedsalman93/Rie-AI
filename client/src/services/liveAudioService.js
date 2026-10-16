@@ -5,6 +5,11 @@
  */
 
 import { API_BASE_URL, getAppToken, getCachedClientContextPayload } from "./chatApi";
+import { SmartVoiceGate, GATE_STATES } from "./smartVoiceGate";
+import { isNoiseOnlyTranscript } from "./addressDetectionService";
+
+/** Feature flag to control Smart Voice Gating (Stage 1 SpeakerGate + Stage 2 AddressDetection) */
+export const ENABLE_SMART_VOICE_GATE = true;
 
 /** Convert Float32Array [-1.0, 1.0] to 16-bit linear PCM little-endian ArrayBuffer */
 function floatTo16BitPCM(float32Array) {
@@ -15,6 +20,22 @@ function floatTo16BitPCM(float32Array) {
     view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
   }
   return buffer;
+}
+
+/** Fast linear resampler to guarantee 16000 Hz PCM stream even if audio hardware runs at 44.1kHz or 48kHz */
+function downsampleTo16k(inputData, inputSampleRate) {
+  if (!inputData || inputSampleRate === 16000) return inputData;
+  const ratio = inputSampleRate / 16000;
+  const outputLength = Math.round(inputData.length / ratio);
+  const result = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const srcIdx = i * ratio;
+    const lower = Math.floor(srcIdx);
+    const upper = Math.min(lower + 1, inputData.length - 1);
+    const frac = srcIdx - lower;
+    result[i] = inputData[lower] * (1 - frac) + inputData[upper] * frac;
+  }
+  return result;
 }
 
 /** Convert ArrayBuffer to base64 string */
@@ -114,6 +135,7 @@ export class LiveAudioRecorder {
         await this.audioContext.resume();
       }
       if (generation !== this.generation) return;
+      console.log("[LiveAudioRecorder] Microphone opened. AudioContext sampleRate:", this.audioContext.sampleRate);
       this.sourceNode = this.audioContext.createMediaStreamSource(stream);
 
       // 32ms packets (512 samples) keep capture latency imperceptible while
@@ -124,7 +146,11 @@ export class LiveAudioRecorder {
         // A queued callback from before mute must not leak into a new stream.
         if (generation !== this.generation || !this.isRecording || this.isMuted) return;
 
-        const inputData = e.inputBuffer.getChannelData(0);
+        const actualRate = e.inputBuffer?.sampleRate || this.audioContext?.sampleRate || 16000;
+        let inputData = e.inputBuffer.getChannelData(0);
+        if (actualRate !== 16000) {
+          inputData = downsampleTo16k(inputData, actualRate);
+        }
 
         // Compute RMS volume for the visualizer, never as a speech/noise gate.
         let sum = 0;
@@ -137,7 +163,7 @@ export class LiveAudioRecorder {
         // Keep quiet syllables and word endings intact. The browser suppresses
         // noise; Gemini detects speech. Send silence too for turn timing.
         const pcmBuffer = floatTo16BitPCM(inputData);
-        this.onChunkCallback?.(arrayBufferToBase64(pcmBuffer));
+        this.onChunkCallback?.(arrayBufferToBase64(pcmBuffer), rms);
       };
 
       this.sourceNode.connect(this.processorNode);
@@ -222,6 +248,7 @@ export class LiveAudioPlayer {
     this.activeNodes = [];
     this.onVolumeCallback = null;
     this._volumeInterval = null;
+    this.lastPlayEndTime = 0;
   }
 
   init(onVolume) {
@@ -261,6 +288,17 @@ export class LiveAudioPlayer {
     }
   }
 
+  /**
+   * Returns true if audio is actively playing or in acoustic reverb/buffer decay tail (~350ms).
+   */
+  isPlaying(reverbPaddingMs = 350) {
+    if (this.activeNodes.length > 0) return true;
+    if (this.lastPlayEndTime > 0 && Date.now() - this.lastPlayEndTime < reverbPaddingMs) {
+      return true;
+    }
+    return false;
+  }
+
   playChunk(base64Data) {
     if (!this.audioContext) return;
     if (this.audioContext.state === "suspended") {
@@ -291,7 +329,10 @@ export class LiveAudioPlayer {
         if (idx !== -1) {
           this.activeNodes.splice(idx, 1);
         }
-        if (this.activeNodes.length === 0) this.onIdle?.();
+        if (this.activeNodes.length === 0) {
+          this.lastPlayEndTime = Date.now();
+          this.onIdle?.();
+        }
       };
     } catch (err) {
       console.error("[LiveAudioPlayer] Play chunk error:", err);
@@ -308,6 +349,7 @@ export class LiveAudioPlayer {
       } catch {}
     }
     this.activeNodes = [];
+    this.lastPlayEndTime = Date.now();
     if (this.audioContext) {
       this.nextPlayTime = this.audioContext.currentTime;
     }
@@ -351,6 +393,8 @@ export class LiveVoiceSession {
     this.onJobUpdate = options.onJobUpdate || (() => {});
     this.onError = options.onError || (() => {});
     this.onVolumes = options.onVolumes || (() => {});
+    this.enableSmartVoiceGate = options.enableSmartVoiceGate ?? ENABLE_SMART_VOICE_GATE;
+    this.onGateDecision = options.onGateDecision || (() => {});
     this.recorder = new LiveAudioRecorder();
     this.player = new LiveAudioPlayer();
     this.ws = null;
@@ -365,6 +409,62 @@ export class LiveVoiceSession {
     this.transcripts = new Map();
     this.volumes = { userVolume: 0, assistantVolume: 0 };
     this.lastVolumeTime = 0;
+    this.pendingTransitionAudio = options.transitionAudio || null;
+
+    if (this.enableSmartVoiceGate) {
+      const savedGateMode = typeof localStorage !== "undefined" ? localStorage.getItem("rie_gate_mode") : null;
+      const effectiveGateMode = options.gateMode || savedGateMode || "drop";
+      this.smartVoiceGate = new SmartVoiceGate({
+        mode: effectiveGateMode,
+        isAssistantSpeaking: () => this.player.isPlaying(350),
+        onDispatch: (chunk) => this.sendToGemini(chunk),
+        onDecision: (decision) => {
+          this.onGateDecision(decision);
+          options.onGateDecision?.(decision);
+        },
+        onAbortTurn: (abortInfo) => {
+          if (abortInfo?.reason === "assistant_echo") {
+            // Echo suppression: do NOT stop the audio player!
+            if (!this.stopped && this.ws?.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({ type: "abort_response", ...(abortInfo || {}) }));
+            }
+            return;
+          }
+          if (this.player.activeNodes.length > 0) {
+            this.player.stopImmediately();
+          }
+          this.turnComplete = true;
+          if (!this.stopped && this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: "abort_response", ...(abortInfo || {}) }));
+          }
+          this.updateStatus();
+        },
+      });
+
+      this.smartVoiceGate.setSpeakerTagCallback((tag) => {
+        if (!this.stopped && this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: "speaker_tag", ...tag }));
+        }
+      });
+
+      this.smartVoiceGate.onSpeechOnset = () => {
+        if (!this.stopped && this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: "speech_onset" }));
+        }
+      };
+
+      this.smartVoiceGate.onTurnComplete = (turnInfo) => {
+        if (!this.stopped && !this.isMuted && this.ws?.readyState === WebSocket.OPEN) {
+          if (turnInfo?.speaker === GATE_STATES.USER || this.smartVoiceGate.mode === "tagger") {
+            this.turnComplete = false;
+            this.updateStatus();
+            this.ws.send(JSON.stringify({ type: "audio_end" }));
+          }
+        }
+      };
+    } else {
+      this.smartVoiceGate = null;
+    }
   }
 
   emitVolume(role, volume) {
@@ -415,7 +515,10 @@ export class LiveVoiceSession {
     return this.setMuted(!this.isMuted);
   }
 
-  start(clientContext = null) {
+  start(clientContext = null, transitionAudio = null) {
+    if (transitionAudio) {
+      this.pendingTransitionAudio = transitionAudio;
+    }
     this.onStatus("connecting");
     return new Promise((resolve, reject) => {
       this.resolveStart = resolve;
@@ -472,24 +575,89 @@ export class LiveVoiceSession {
     });
   }
 
+  sendToGemini(data) {
+    if (!this.stopped && !this.isMuted && this.ws?.readyState === WebSocket.OPEN) {
+      // Never build an unbounded backlog of stale microphone audio.
+      if (this.ws.bufferedAmount > 128 * 1024) {
+        if (this.ws.bufferedAmount > 1024 * 1024) {
+          this.fail("Voice connection is too slow. Please reconnect.");
+        }
+        return;
+      }
+      this.ws.send(JSON.stringify({ type: "audio", data }));
+    }
+  }
+
+  dispatchTransitionAudio(base64Pcm) {
+    if (!base64Pcm || this.stopped || this.isMuted) return;
+    try {
+      const binary = typeof window !== "undefined" && typeof window.atob === "function"
+        ? window.atob(base64Pcm)
+        : Buffer.from(base64Pcm, "base64").toString("binary");
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      // 512 samples at 16kHz 16-bit PCM = 1024 bytes per 32ms chunk
+      const chunkSize = 1024;
+      let totalDispatched = 0;
+      for (let offset = 0; offset < len; offset += chunkSize) {
+        const slice = bytes.subarray(offset, Math.min(offset + chunkSize, len));
+        let chunkBinary = "";
+        for (let j = 0; j < slice.length; j++) {
+          chunkBinary += String.fromCharCode(slice[j]);
+        }
+        const chunkB64 = typeof window !== "undefined" && typeof window.btoa === "function"
+          ? window.btoa(chunkBinary)
+          : Buffer.from(chunkBinary, "binary").toString("base64");
+
+        // Calculate approximate RMS for volume / smartVoiceGate
+        const int16 = new Int16Array(slice.buffer, slice.byteOffset, Math.floor(slice.byteLength / 2));
+        let sum = 0;
+        for (let s = 0; s < int16.length; s++) {
+          const norm = int16[s] / 32768.0;
+          sum += norm * norm;
+        }
+        const rms = Math.sqrt(sum / Math.max(1, int16.length));
+
+        this.sendToGemini(chunkB64);
+        totalDispatched += slice.byteLength;
+      }
+      console.log(`[LiveVoice] Dispatched ${totalDispatched} bytes (${(totalDispatched / 32000).toFixed(2)}s) of protected command transition audio.`);
+    } catch (err) {
+      console.warn("[LiveVoice] Error dispatching transition audio:", err);
+    }
+  }
+
   async startMicrophone() {
     if (this.ready || this.stopped) return;
     this.ready = true;
     const version = ++this.microphoneVersion;
     this.microphoneStarting = !this.isMuted;
     this.updateStatus();
+    if (this.enableSmartVoiceGate && this.smartVoiceGate) {
+      this.smartVoiceGate.startSession({ threadId: this.threadId, voice: this.voice });
+    }
+    console.log("[LiveVoice] Live session microphone active. Smart Voice Gate running:", Boolean(this.smartVoiceGate));
+
+    // Dispatch protected command audio captured during verification and connection handoff
+    if (this.pendingTransitionAudio) {
+      const audioToDispatch = this.pendingTransitionAudio;
+      this.pendingTransitionAudio = null;
+      this.dispatchTransitionAudio(audioToDispatch);
+    }
     try {
       await this.recorder.start(
-        (data) => {
-          if (!this.stopped && !this.isMuted && this.ws?.readyState === WebSocket.OPEN) {
-            // Never build an unbounded backlog of stale microphone audio.
-            if (this.ws.bufferedAmount > 128 * 1024) {
-              if (this.ws.bufferedAmount > 1024 * 1024) {
-                this.fail("Voice connection is too slow. Please reconnect.");
-              }
-              return;
-            }
-            this.ws.send(JSON.stringify({ type: "audio", data }));
+        (data, rms) => {
+          if (this.stopped || this.isMuted) return;
+
+          if (this.enableSmartVoiceGate && this.smartVoiceGate) {
+            this.smartVoiceGate.processAudioChunk(data, rms, (allowedChunk) => {
+              this.sendToGemini(allowedChunk);
+            });
+          } else {
+            this.sendToGemini(data);
           }
         },
         (volume) => this.emitVolume("userVolume", volume),
@@ -515,24 +683,77 @@ export class LiveVoiceSession {
       case "ready":
         void this.startMicrophone();
         break;
-      case "audio":
+      case "audio": {
+        const canSpeak = this.smartVoiceGate ? this.smartVoiceGate.authorizationPolicy.canSpeak() : true;
+        if (!canSpeak) {
+          // Hearing without authority: Rie hears room context, but stays silent
+          this.player.stopImmediately();
+          this.turnComplete = true;
+          this.updateStatus();
+          break;
+        }
+
         if (this.turnComplete) {
           // Starting a new assistant turn: clear any stale lingering audio from an earlier turn
           this.player.stopImmediately();
         }
         this.turnComplete = false;
+
+        this.smartVoiceGate?.recordAssistantTurn();
         this.player.playChunk(msg.data);
         this.updateStatus();
         break;
+      }
       case "transcript": {
         if (!msg.id || !["user", "assistant"].includes(msg.role) || typeof msg.text !== "string") return;
-        const transcript = { ...msg, content: msg.text };
+
+        // Suppress non-speech noise artifacts (e.g. "<noise>", "[music]", "<silence>") from user turns
+        if (msg.role === "user" && isNoiseOnlyTranscript(msg.text)) {
+          this.transcripts.delete(msg.id);
+          if (this.enableSmartVoiceGate && this.smartVoiceGate) {
+            this.smartVoiceGate.handleUserTranscript(msg.text);
+          }
+          break;
+        }
+
+        // Hard Response Firewall: suppress assistant transcript if current turn is unauthorized
+        if (msg.role === "assistant") {
+          const canSpeak = this.smartVoiceGate ? this.smartVoiceGate.authorizationPolicy.canSpeak() : true;
+          if (!canSpeak) {
+            console.log(`[LiveVoice Response Firewall] Suppressed assistant transcript for unauthorized turn: "${msg.text}"`);
+            this.transcripts.delete(msg.id);
+            break;
+          }
+        }
+
+        const speaker = msg.role === "user" ? (this.smartVoiceGate?.currentTurnSpeaker || "USER") : "assistant";
+        const isUserTurn = speaker === "USER";
+        const transcript = {
+          ...msg,
+          content: msg.text,
+          speaker: msg.role === "user" ? speaker : undefined,
+          authorized: msg.role === "user" ? isUserTurn : undefined,
+        };
         if (msg.isPartial) this.transcripts.set(msg.id, transcript);
         else this.transcripts.delete(msg.id);
         this.onTranscript(transcript);
+
+        if (msg.role === "user" && this.enableSmartVoiceGate && this.smartVoiceGate) {
+          this.smartVoiceGate.handleUserTranscript(msg.text);
+        }
         break;
       }
       case "tool_call":
+        // Security Firewall: Block tool calls triggered by unauthorized speakers
+        if (this.smartVoiceGate && !this.smartVoiceGate.authorizationPolicy.canExecuteTools()) {
+          console.warn(`[LiveVoice Security Firewall] Blocked tool_call '${msg.name}' (${msg.id}) from unauthorized speaker.`);
+          this.onToolResult({
+            ...msg,
+            status: "unauthorized",
+            result: "Security Error: Tool execution rejected. Speaker is not authorized to invoke tools.",
+          });
+          break;
+        }
         this.tools.set(msg.id, msg);
         this.onToolCall(msg);
         this.updateStatus();
@@ -556,6 +777,7 @@ export class LiveVoiceSession {
         break;
       case "turn_complete":
         this.turnComplete = true;
+        this.smartVoiceGate?.completeDialogueTurn();
         this.updateStatus();
         break;
       case "error":
@@ -597,6 +819,7 @@ export class LiveVoiceSession {
     clearTimeout(this.setupTimer);
     this.rejectStart?.(error);
     this.resolveStart = this.rejectStart = null;
+    this.smartVoiceGate?.endSession();
     this.recorder.stop();
     this.player.close();
     for (const transcript of this.transcripts.values()) {

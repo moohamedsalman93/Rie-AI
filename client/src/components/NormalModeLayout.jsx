@@ -635,9 +635,9 @@ export function NormalModeLayout({
                                                         </div>
                                                     )}
 
-                                                    <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === 'user'
-                                                        ? `bg-neutral-800 text-neutral-100 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-700'}`
-                                                        : ' text-neutral-100  '
+                                                    <div className={`min-w-0 max-w-full break-words overflow-x-hidden shadow-sm transition-all ${m.from === 'user'
+                                                        ? `rounded-2xl rounded-br-sm px-4 py-2.5 text-[13.5px] leading-relaxed ${m.error ? 'border border-red-500/40 bg-red-950/25 text-red-100' : 'bg-neutral-800/90 text-neutral-100 border border-neutral-700/60 shadow-neutral-950/20 backdrop-blur-sm'}`
+                                                        : 'text-[13.5px] leading-relaxed text-neutral-100'
                                                         }`}>
                                                         {m.image_url && (
                                                             <div className="mb-2 overflow-hidden rounded-lg">
@@ -676,7 +676,7 @@ export function NormalModeLayout({
                                                         )}
                                                     </div>
                                                 </div>
-                                                <span className={`mt-1 text-[10px] font-medium text-neutral-600 ${m.error ? 'text-red-500/50' : ''}`}>
+                                                <span className={`mt-1 px-1 text-[10px] font-medium tracking-wide select-none ${m.error ? 'text-red-400' : 'text-neutral-500'}`}>
                                                     {m.from === 'user' ? 'You' : 'Assistant'} {m.error && '• Failed'}
                                                 </span>
                                             </motion.div>
@@ -687,22 +687,23 @@ export function NormalModeLayout({
                                     <motion.div
                                         initial={{ opacity: 0, y: 4 }}
                                         animate={{ opacity: 1, y: 0 }}
-                                        className="flex flex-col items-start w-full py-1"
+                                        transition={{ duration: 0.2 }}
+                                        className="flex items-center gap-2.5 text-neutral-400 py-1.5 px-1 select-none"
                                     >
                                         {retryStatus?.message ? (
-                                            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-300 animate-pulse">
-                                                <RotateCw size={12} className="animate-spin text-amber-400 shrink-0" />
+                                            <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400 font-medium">
+                                                <RotateCw size={12} className="animate-spin text-neutral-400 shrink-0" />
                                                 <span>{retryStatus.message}</span>
-                                            </div>
+                                            </span>
                                         ) : (
-                                            <div className="flex items-center gap-2 text-neutral-400 py-1">
-                                                <span className="flex gap-1 items-center">
+                                            <>
+                                                <span className="flex gap-1 items-center shrink-0">
                                                     <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse" />
                                                     <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse [animation-delay:200ms]" />
                                                     <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse [animation-delay:400ms]" />
                                                 </span>
                                                 <span className="text-[12px] text-neutral-500 font-medium">Thinking...</span>
-                                            </div>
+                                            </>
                                         )}
                                     </motion.div>
                                 )}

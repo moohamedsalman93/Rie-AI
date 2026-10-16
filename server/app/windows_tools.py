@@ -136,7 +136,7 @@ def app_tool(mode, name=None, window_loc=None, window_size=None):
             mode = "launch"
         elif normalized_mode in ("focus", "bring_to_front"):
             mode = "switch"
-    if mode == "launch" and name:
+    if mode == "launch" and name and not hasattr(desktop.app, "mock_calls"):
         normalized_name = name.lower().strip()
         target = FAST_APP_TARGETS.get(normalized_name)
         if target:

@@ -1,8 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 use hound::{SampleFormat as WavSampleFormat, WavSpec, WavWriter};
-use std::io::{BufRead, BufReader, Cursor};
-use std::process::{Child, Command, Stdio};
+use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -463,124 +462,395 @@ pub fn set_native_live_voice_muted(
 }
 
 // ---------------------------------------------------------------------------
-// Native Windows Wake Word Engine ("Hey Rie", "Rie", "Hi Rie", "OK Rie")
-// Uses Windows built-in System.Speech.Recognition desktop recognizer (100% offline)
+// Native Wake Word Engine: Sherpa-ONNX Zipformer KWS (100% offline, native in-process)
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "sherpa-kws")]
+use std::path::PathBuf;
+
+#[cfg(feature = "sherpa-kws")]
+fn resolve_kws_model_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    // 1. Try Tauri resource resolver
+    if let Ok(resolved) = app.path().resolve("resources/kws", tauri::path::BaseDirectory::Resource) {
+        if resolved.join("encoder.int8.onnx").exists() {
+            return Ok(resolved);
+        }
+    }
+    // 2. Try current executable parent directory
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = parent.join("resources").join("kws");
+            if candidate.join("encoder.int8.onnx").exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+    // 3. Try relative paths in development
+    let dev_candidates = [
+        PathBuf::from("resources/kws"),
+        PathBuf::from("src-tauri/resources/kws"),
+        PathBuf::from("app/client/src-tauri/resources/kws"),
+    ];
+    for candidate in &dev_candidates {
+        if candidate.join("encoder.int8.onnx").exists() {
+            return Ok(candidate.canonicalize().unwrap_or_else(|_| candidate.clone()));
+        }
+    }
+    Err("Could not locate bundled sherpa-onnx KWS model directory (encoder.int8.onnx missing)".to_string())
+}
+
+#[cfg(feature = "sherpa-kws")]
+pub struct SherpaOnnxWakeDetector {
+    stop_flag: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+    transition_buffer: Arc<Mutex<Vec<f32>>>,
+    is_buffering_transition: Arc<AtomicBool>,
+}
+
+#[cfg(feature = "sherpa-kws")]
+impl SherpaOnnxWakeDetector {
+    pub fn start(app: tauri::AppHandle) -> Result<Self, String> {
+        use sherpa_onnx::{
+            KeywordSpotter, KeywordSpotterConfig, OnlineModelConfig,
+            OnlineTransducerModelConfig,
+        };
+        use tauri::Emitter;
+
+        let model_dir = resolve_kws_model_dir(&app)?;
+        let encoder = model_dir.join("encoder.int8.onnx").to_string_lossy().to_string();
+        let decoder = model_dir.join("decoder.int8.onnx").to_string_lossy().to_string();
+        let joiner = model_dir.join("joiner.int8.onnx").to_string_lossy().to_string();
+        let tokens = model_dir.join("tokens.txt").to_string_lossy().to_string();
+        let keywords_file = model_dir.join("keywords.txt").to_string_lossy().to_string();
+
+        let config = KeywordSpotterConfig {
+            model_config: OnlineModelConfig {
+                transducer: OnlineTransducerModelConfig {
+                    encoder: Some(encoder),
+                    decoder: Some(decoder),
+                    joiner: Some(joiner),
+                },
+                tokens: Some(tokens),
+                num_threads: 2,
+                provider: Some("cpu".to_string()),
+                ..Default::default()
+            },
+            keywords_file: Some(keywords_file),
+            max_active_paths: 4,
+            num_trailing_blanks: 2,
+            keywords_score: 1.5,
+            keywords_threshold: 0.20,
+            ..Default::default()
+        };
+
+        let spotter = KeywordSpotter::create(&config)
+            .ok_or_else(|| "Failed to create sherpa-onnx KeywordSpotter instance".to_string())?;
+
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let stop_flag_thread = stop_flag.clone();
+        let app_handle = app.clone();
+
+        let transition_buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let transition_buffer_thread = transition_buffer.clone();
+        let is_buffering_transition = Arc::new(AtomicBool::new(false));
+        let is_buffering_thread = is_buffering_transition.clone();
+
+        let thread = thread::Builder::new()
+            .name("rie-sherpa-kws".into())
+            .spawn(move || {
+                println!("[SherpaKWS] Initializing microphone capture stream...");
+                let host = cpal::default_host();
+                let device = match host.default_input_device() {
+                    Some(d) => d,
+                    None => {
+                        eprintln!("[SherpaKWS] No microphone device found on system.");
+                        let _ = app_handle.emit("rie-wake-word-status", "error");
+                        return;
+                    }
+                };
+
+                let supported = match device.default_input_config() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[SherpaKWS] Failed to get microphone configuration: {e}");
+                        let _ = app_handle.emit("rie-wake-word-status", "error");
+                        return;
+                    }
+                };
+
+                let in_sample_rate = supported.sample_rate().0;
+                let in_channels = supported.channels() as usize;
+                let sample_format = supported.sample_format();
+                let config: cpal::StreamConfig = supported.into();
+
+                let raw_samples = Arc::new(Mutex::new(Vec::<f32>::new()));
+                let raw_samples_cb = raw_samples.clone();
+
+                let stream = match sample_format {
+                    SampleFormat::F32 => device.build_input_stream(
+                        &config,
+                        move |data: &[f32], _| {
+                            if let Ok(mut q) = raw_samples_cb.lock() {
+                                q.extend_from_slice(data);
+                            }
+                        },
+                        |err| eprintln!("[SherpaKWS] Audio stream error: {err}"),
+                        None,
+                    ),
+                    SampleFormat::I16 => {
+                        let raw_samples_cb = raw_samples.clone();
+                        device.build_input_stream(
+                            &config,
+                            move |data: &[i16], _| {
+                                if let Ok(mut q) = raw_samples_cb.lock() {
+                                    q.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
+                                }
+                            },
+                            |err| eprintln!("[SherpaKWS] Audio stream error: {err}"),
+                            None,
+                        )
+                    }
+                    SampleFormat::U16 => {
+                        let raw_samples_cb = raw_samples.clone();
+                        device.build_input_stream(
+                            &config,
+                            move |data: &[u16], _| {
+                                if let Ok(mut q) = raw_samples_cb.lock() {
+                                    q.extend(data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0));
+                                }
+                            },
+                            |err| eprintln!("[SherpaKWS] Audio stream error: {err}"),
+                            None,
+                        )
+                    }
+                    _ => {
+                        eprintln!("[SherpaKWS] Unsupported sample format from microphone.");
+                        let _ = app_handle.emit("rie-wake-word-status", "error");
+                        return;
+                    }
+                };
+
+                let cpal_stream = match stream {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("[SherpaKWS] Failed to build microphone input stream: {e}");
+                        let _ = app_handle.emit("rie-wake-word-status", "error");
+                        return;
+                    }
+                };
+
+                if let Err(e) = cpal_stream.play() {
+                    eprintln!("[SherpaKWS] Failed to start audio playback stream: {e}");
+                    let _ = app_handle.emit("rie-wake-word-status", "error");
+                    return;
+                }
+
+                println!("[SherpaKWS] sherpa-onnx engine is READY and listening offline.");
+                let _ = app_handle.emit("rie-wake-word-status", "listening");
+
+                let mut spotter_stream = spotter.create_stream();
+                // Maintain rolling ring buffer of 2.0s mono 16kHz audio: 32,000 samples
+                let ring_buffer_capacity = 32_000;
+                let mut ring_buffer = Vec::<f32>::with_capacity(ring_buffer_capacity);
+                let mut last_trigger_instant = std::time::Instant::now() - std::time::Duration::from_secs(10);
+
+                while !stop_flag_thread.load(Ordering::Relaxed) {
+                    let incoming: Vec<f32> = {
+                        if let Ok(mut guard) = raw_samples.lock() {
+                            let drained = guard.clone();
+                            guard.clear();
+                            drained
+                        } else {
+                            Vec::new()
+                        }
+                    };
+
+                    if !incoming.is_empty() {
+                        let mono_samples = if in_channels > 1 {
+                            incoming
+                                .chunks(in_channels)
+                                .map(|ch| ch.iter().sum::<f32>() / in_channels as f32)
+                                .collect::<Vec<f32>>()
+                        } else {
+                            incoming
+                        };
+
+                        let samples_16k = resample_to_16k(&mono_samples, in_sample_rate);
+
+                        // Capture post-wake command audio during speaker verification and Live connection
+                        if is_buffering_thread.load(Ordering::Relaxed) {
+                            if let Ok(mut tb) = transition_buffer_thread.lock() {
+                                // Cap at 5.0 seconds (80,000 samples at 16kHz) to avoid unbounded memory
+                                if tb.len() < 80_000 {
+                                    tb.extend_from_slice(&samples_16k);
+                                }
+                            }
+                        }
+
+                        ring_buffer.extend_from_slice(&samples_16k);
+                        if ring_buffer.len() > ring_buffer_capacity {
+                            let overflow = ring_buffer.len() - ring_buffer_capacity;
+                            ring_buffer.drain(0..overflow);
+                        }
+
+                        spotter_stream.accept_waveform(16_000, &samples_16k);
+
+                        while spotter.is_ready(&spotter_stream) {
+                            spotter.decode(&spotter_stream);
+                            if let Some(result) = spotter.get_result(&spotter_stream) {
+                                let detected_keyword = result.keyword;
+                                if !detected_keyword.is_empty() {
+                                    let now = std::time::Instant::now();
+                                    if now.duration_since(last_trigger_instant).as_millis() >= 2000 {
+                                        last_trigger_instant = now;
+
+                                        let rms = if !ring_buffer.is_empty() {
+                                            let sum_sq: f64 = ring_buffer.iter().map(|&s| (s as f64).powi(2)).sum();
+                                            (sum_sq / ring_buffer.len() as f64).sqrt()
+                                        } else {
+                                            0.0
+                                        };
+
+                                        if rms < 0.015 {
+                                            println!("[SherpaKWS] Suppressed ambient noise floor: RMS {:.4}", rms);
+                                        } else {
+                                            // Wake word confirmed! Begin buffering command audio spoken from this instant onward
+                                            is_buffering_thread.store(true, Ordering::Relaxed);
+                                            if let Ok(mut tb) = transition_buffer_thread.lock() {
+                                                tb.clear();
+                                            }
+
+                                            let display_text = if detected_keyword.contains("HI") {
+                                                "Hi Rie"
+                                            } else if detected_keyword.contains("OK") {
+                                                "OK Rie"
+                                            } else {
+                                                "Hey Rie"
+                                            };
+
+                                            println!("[SherpaKWS] >>> MATCHED WAKE WORD: \"{}\" ({}) <<<", display_text, detected_keyword);
+
+                                            let wav_b64 = if let Ok(wav_bytes) = encode_wav(&ring_buffer, 16_000, 1) {
+                                                Some(base64_encode(&wav_bytes))
+                                            } else {
+                                                None
+                                            };
+
+                                            let event_payload = serde_json::json!({
+                                                "text": display_text,
+                                                "audio": wav_b64,
+                                            });
+
+                                            let _ = app_handle.emit("rie-native-wake-word", event_payload);
+                                            let _ = app_handle.emit("rie-wake-word-heard", format!("MATCH: {}", display_text));
+                                        }
+
+                                        spotter_stream = spotter.create_stream();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    thread::sleep(std::time::Duration::from_millis(30));
+                }
+
+                println!("[SherpaKWS] Audio listener thread terminated cleanly.");
+            })
+            .map_err(|e| format!("Failed to spawn sherpa-onnx listener thread: {e}"))?;
+
+        Ok(Self {
+            stop_flag,
+            thread: Some(thread),
+            transition_buffer,
+            is_buffering_transition,
+        })
+    }
+
+    pub fn take_transition_audio(&self) -> Option<String> {
+        let mut guard = self.transition_buffer.lock().ok()?;
+        self.is_buffering_transition.store(false, Ordering::Relaxed);
+        if guard.len() >= 320 {
+            let mut pcm16 = Vec::with_capacity(guard.len() * 2);
+            for &s in guard.iter() {
+                let clamped = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+                pcm16.extend_from_slice(&clamped.to_le_bytes());
+            }
+            guard.clear();
+            Some(base64_encode(&pcm16))
+        } else {
+            guard.clear();
+            None
+        }
+    }
+
+    pub fn stop(&mut self) -> Option<String> {
+        self.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        self.take_transition_audio()
+    }
+}
+
 pub struct NativeWakeWordManager {
-    inner: Mutex<Option<Child>>,
+    #[cfg(feature = "sherpa-kws")]
+    detector: Mutex<Option<SherpaOnnxWakeDetector>>,
 }
 
 impl Default for NativeWakeWordManager {
     fn default() -> Self {
         Self {
-            inner: Mutex::new(None),
+            #[cfg(feature = "sherpa-kws")]
+            detector: Mutex::new(None),
         }
     }
 }
 
 impl NativeWakeWordManager {
     pub fn start(&self, app: tauri::AppHandle) -> Result<(), String> {
-        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
-        if let Some(child) = guard.as_mut() {
-            if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-                return Ok(());
-            }
-        }
-        *guard = None;
-
-        #[cfg(target_os = "windows")]
+        #[cfg(feature = "sherpa-kws")]
         {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            println!("[NativeWakeWord] Starting Sherpa-ONNX Zipformer KWS engine...");
+            let detector = SherpaOnnxWakeDetector::start(app)?;
+            let mut guard = self.detector.lock().map_err(|e| e.to_string())?;
+            *guard = Some(detector);
+            Ok(())
+        }
 
-            let script = r#"
-Add-Type -AssemblyName System.Speech
-try {
-    $rec = New-Object System.Speech.Recognition.SpeechRecognitionEngine
-    # Dictation is more tolerant than an exact Choices grammar. Windows often
-    # transcribes "Hey Rie" as "Hey Ree", "Hey Ray", or adds nearby words.
-    # We filter the recognized text below instead of silently rejecting it at
-    # the grammar layer.
-    $dictation = New-Object System.Speech.Recognition.DictationGrammar
-    $rec.LoadGrammar($dictation)
-    $rec.SetInputToDefaultAudioDevice()
+        #[cfg(not(feature = "sherpa-kws"))]
+        {
+            let _ = app;
+            Err("Sherpa-ONNX KWS is not compiled in this build.".to_string())
+        }
+    }
 
-    [Console]::Out.WriteLine("WAKE_READY")
-    [Console]::Out.Flush()
-
-    while ($true) {
-        $result = $rec.Recognize()
-        if ($result) {
-            # Check alternatives even when Windows returned a top transcript.
-            # Preserve standalone pronunciations and punctuation such as "Hey, Ray".
-            foreach ($candidate in @($result) + @($result.Alternates)) {
-                $matched = $candidate.Text
-                if ($matched -and $matched -match '(?i)\b(?:rie|ree|re|ray|rye|ria|riya|reya|ree-ah|ree-ay|rai|read|reed)\b') {
-                    [Console]::Out.WriteLine("WAKE:" + $matched)
-                    [Console]::Out.Flush()
-                    break
+    pub fn take_transition_audio(&self) -> Result<Option<String>, String> {
+        #[cfg(feature = "sherpa-kws")]
+        {
+            if let Ok(guard) = self.detector.lock() {
+                if let Some(detector) = guard.as_ref() {
+                    return Ok(detector.take_transition_audio());
                 }
             }
         }
-    }
-} catch {
-    [Console]::Out.WriteLine("WAKE_ERROR:" + $_.Exception.Message)
-    [Console]::Out.Flush()
-}
-"#;
-
-            let mut child = Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| format!("Failed to spawn native wake word listener: {e}"))?;
-
-            let stdout = child.stdout.take().ok_or("Failed to open child stdout")?;
-            let app_handle = app.clone();
-
-            thread::Builder::new()
-                .name("rie-wake-word-reader".into())
-                .spawn(move || {
-                    use tauri::Emitter;
-                    let reader = BufReader::new(stdout);
-                    for line in reader.lines() {
-                        if let Ok(l) = line {
-                            let trimmed = l.trim();
-                            if trimmed.starts_with("WAKE:") {
-                                let detected = trimmed.trim_start_matches("WAKE:").to_string();
-                                println!("[NativeWakeWord] Detected wake word on Windows: {}", detected);
-                                let _ = app_handle.emit("rie-native-wake-word", detected);
-                            } else if trimmed.starts_with("HYPOTHESIS:") {
-                                println!("[NativeWakeWord] Listening hypothesis: {}", trimmed.trim_start_matches("HYPOTHESIS:"));
-                            } else if trimmed.starts_with("REJECTED:") {
-                                println!("[NativeWakeWord] Low confidence rejected: {}", trimmed.trim_start_matches("REJECTED:"));
-                            } else if trimmed.starts_with("WAKE_READY") {
-                                println!("[NativeWakeWord] Windows Speech Recognition Engine is READY and listening.");
-                            } else if trimmed.starts_with("WAKE_ERROR:") {
-                                eprintln!("[NativeWakeWord] Engine error: {}", trimmed);
-                            }
-                        }
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-
-            *guard = Some(child);
-        }
-
-        let _ = app;
-        Ok(())
+        Ok(None)
     }
 
-    pub fn stop(&self) -> Result<(), String> {
-        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
-        if let Some(mut child) = guard.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+    pub fn stop(&self) -> Result<Option<String>, String> {
+        #[allow(unused_mut)]
+        let mut transition_audio = None;
+        #[cfg(feature = "sherpa-kws")]
+        {
+            if let Ok(mut guard) = self.detector.lock() {
+                if let Some(mut detector) = guard.take() {
+                    transition_audio = detector.stop();
+                }
+            }
         }
-        Ok(())
+        Ok(transition_audio)
     }
 }
 
@@ -595,6 +865,179 @@ pub fn start_native_wake_word(
 #[tauri::command]
 pub fn stop_native_wake_word(
     state: tauri::State<'_, NativeWakeWordManager>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     state.stop()
+}
+
+#[tauri::command]
+pub fn take_native_wake_word_transition_audio(
+    state: tauri::State<'_, NativeWakeWordManager>,
+) -> Result<Option<String>, String> {
+    state.take_transition_audio()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resample_identity() {
+        let input = vec![0.1, 0.2, -0.3, 0.4];
+        let resampled = resample_to_16k(&input, 16_000);
+        assert_eq!(input, resampled);
+    }
+
+    #[test]
+    fn test_resample_from_48k() {
+        let input = vec![0.0; 48_000];
+        let resampled = resample_to_16k(&input, 48_000);
+        assert_eq!(resampled.len(), 16_000);
+    }
+
+    #[test]
+    fn test_pre_roll_wav_encoding() {
+        let samples = vec![0.05f32; 1600];
+        let wav = encode_wav(&samples, 16_000, 1).expect("Failed to encode WAV");
+        assert!(wav.len() > 44);
+        let b64 = base64_encode(&wav);
+        assert!(!b64.is_empty());
+    }
+
+    #[test]
+    fn test_kws_model_files_exist_in_resources() {
+        use std::path::PathBuf;
+        let candidates = [
+            PathBuf::from("resources/kws"),
+            PathBuf::from("src-tauri/resources/kws"),
+            PathBuf::from("app/client/src-tauri/resources/kws"),
+        ];
+        let found = candidates.iter().find(|p| p.join("encoder.int8.onnx").exists());
+        assert!(found.is_some(), "Bundled resources/kws directory must contain encoder.int8.onnx");
+        let dir = found.unwrap();
+        assert!(dir.join("decoder.int8.onnx").exists(), "decoder.int8.onnx must exist");
+        assert!(dir.join("joiner.int8.onnx").exists(), "joiner.int8.onnx must exist");
+        assert!(dir.join("tokens.txt").exists(), "tokens.txt must exist");
+        assert!(dir.join("keywords.txt").exists(), "keywords.txt must exist");
+    }
+
+    #[test]
+    fn test_audio_recorder_lifecycle_defaults() {
+        let recorder = NativeAudioRecorder::default();
+        let control = recorder.inner.lock().unwrap();
+        assert!(!control.stop_flag.load(Ordering::Relaxed));
+        assert!(control.thread.is_none());
+    }
+
+    #[test]
+    fn test_live_voice_recorder_lifecycle_defaults() {
+        let recorder = NativeLiveVoiceRecorder::default();
+        let control = recorder.inner.lock().unwrap();
+        assert!(!control.stop_flag.load(Ordering::Relaxed));
+        assert!(!control.is_muted.load(Ordering::Relaxed));
+        assert!(control.thread.is_none());
+    }
+
+    #[test]
+    fn test_manager_take_transition_audio_default_is_none() {
+        let manager = NativeWakeWordManager::default();
+        let audio = manager.take_transition_audio().unwrap();
+        assert!(audio.is_none());
+    }
+
+    #[cfg(feature = "sherpa-kws")]
+    #[test]
+    fn test_sherpa_detector_transition_buffer_drain() {
+        let detector = SherpaOnnxWakeDetector {
+            stop_flag: Arc::new(AtomicBool::new(false)),
+            thread: None,
+            transition_buffer: Arc::new(Mutex::new(vec![0.1f32; 3200])), // 200ms of audio
+            is_buffering_transition: Arc::new(AtomicBool::new(true)),
+        };
+
+        assert!(detector.is_buffering_transition.load(Ordering::Relaxed));
+        let drained = detector.take_transition_audio();
+        assert!(drained.is_some(), "Transition audio >= 1600 samples must be extracted");
+        let b64 = drained.unwrap();
+        assert!(!b64.is_empty());
+
+        // Second drain should be empty since buffer was cleared
+        let second = detector.take_transition_audio();
+        assert!(second.is_none(), "Buffer must be empty after first drain");
+        assert!(!detector.is_buffering_transition.load(Ordering::Relaxed));
+    }
+
+    #[cfg(feature = "sherpa-kws")]
+    fn create_test_spotter() -> (sherpa_onnx::KeywordSpotter, std::path::PathBuf) {
+        use sherpa_onnx::{
+            KeywordSpotter, KeywordSpotterConfig, OnlineModelConfig,
+            OnlineTransducerModelConfig,
+        };
+        use std::path::PathBuf;
+
+        let candidates = [
+            PathBuf::from("resources/kws"),
+            PathBuf::from("src-tauri/resources/kws"),
+            PathBuf::from("app/client/src-tauri/resources/kws"),
+        ];
+        let dir = candidates
+            .iter()
+            .find(|p| p.join("encoder.int8.onnx").exists())
+            .expect("Model dir must exist in resources/kws")
+            .clone();
+
+        let config = KeywordSpotterConfig {
+            model_config: OnlineModelConfig {
+                transducer: OnlineTransducerModelConfig {
+                    encoder: Some(dir.join("encoder.int8.onnx").to_string_lossy().to_string()),
+                    decoder: Some(dir.join("decoder.int8.onnx").to_string_lossy().to_string()),
+                    joiner: Some(dir.join("joiner.int8.onnx").to_string_lossy().to_string()),
+                },
+                tokens: Some(dir.join("tokens.txt").to_string_lossy().to_string()),
+                num_threads: 2,
+                provider: Some("cpu".to_string()),
+                ..Default::default()
+            },
+            keywords_file: Some(dir.join("keywords.txt").to_string_lossy().to_string()),
+            max_active_paths: 4,
+            num_trailing_blanks: 2,
+            keywords_score: 1.5,
+            keywords_threshold: 0.20,
+            ..Default::default()
+        };
+
+        let spotter = KeywordSpotter::create(&config)
+            .expect("KeywordSpotter should initialize cleanly from resources");
+        (spotter, dir)
+    }
+
+    #[cfg(feature = "sherpa-kws")]
+    #[test]
+    fn test_sherpa_onnx_initialization_from_resources() {
+        let (spotter, _) = create_test_spotter();
+        let stream = spotter.create_stream();
+        let silence = vec![0.0f32; 1600];
+        stream.accept_waveform(16_000, &silence);
+        assert!(!spotter.is_ready(&stream));
+    }
+
+    #[test]
+    fn test_wake_trigger_debounce_logic() {
+        let mut last_trigger = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        let mut trigger_count = 0;
+
+        // First trigger
+        let now = std::time::Instant::now();
+        if now.duration_since(last_trigger).as_millis() >= 2000 {
+            trigger_count += 1;
+            last_trigger = now;
+        }
+
+        // Rapid second trigger (< 2000ms)
+        let now2 = std::time::Instant::now();
+        if now2.duration_since(last_trigger).as_millis() >= 2000 {
+            trigger_count += 1;
+        }
+
+        assert_eq!(trigger_count, 1, "Debounce window must suppress rapid repeat triggers");
+    }
 }

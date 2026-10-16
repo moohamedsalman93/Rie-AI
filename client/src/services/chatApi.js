@@ -1349,6 +1349,61 @@ export async function openBrowserPluginFolder() {
   return response.json();
 }
 
+// -------------------------------------------------------------
+// Speaker Verification & Voice Profile API
+// -------------------------------------------------------------
 
+export async function getSpeakerStatus() {
+  const response = await fetch(`${API_BASE_URL}/api/speaker/status`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to get speaker verification status");
+  return response.json();
+}
 
+export async function getSpeakerProfile() {
+  const response = await fetch(`${API_BASE_URL}/api/speaker/profile`, {
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to get speaker voice profile");
+  return response.json();
+}
 
+export async function updateSpeakerThresholds({ user_threshold, unknown_threshold }) {
+  const response = await fetch(`${API_BASE_URL}/api/speaker/thresholds`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ user_threshold, unknown_threshold }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to update speaker thresholds");
+  return response.json();
+}
+
+export async function enrollSpeakerVoice({ samples, speaker_name = "USER", sample_rate = 16000 }) {
+  const response = await fetch(`${API_BASE_URL}/api/speaker/enroll`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ samples, speaker_name, sample_rate }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to enroll voice samples");
+  return response.json();
+}
+
+export async function deleteSpeakerProfile() {
+  const response = await fetch(`${API_BASE_URL}/api/speaker/profile`, {
+    method: "DELETE",
+    headers: getHeaders(),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to delete speaker voice profile");
+  return response.json();
+}
+
+export async function verifySpeakerAudio({ audio, sample_rate = 16000 }) {
+  const response = await fetch(`${API_BASE_URL}/api/speaker/verify`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ audio, sample_rate }),
+  });
+  if (!response.ok) await throwHttpError(response, "Failed to test speaker verification");
+  return response.json();
+}

@@ -35,7 +35,8 @@
             "icons/icon.ico"
         ],
         "resources": {
-            "bin/_internal/": "_internal/"
+            "bin/_internal/": "_internal/",
+            "resources/kws/": "resources/kws/"
         },
         "externalBin": [
             "bin/rie-backend"

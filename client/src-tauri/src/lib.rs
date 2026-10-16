@@ -358,6 +358,7 @@ pub fn run() {
             audio::set_native_live_voice_muted,
             audio::start_native_wake_word,
             audio::stop_native_wake_word,
+            audio::take_native_wake_word_transition_audio,
             location::get_native_location,
             set_foreground_lock,
             set_window_capture_excluded,

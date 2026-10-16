@@ -14,6 +14,7 @@ import { SkillsManager } from './SkillsManager';
 import BrowserSettingsSection from './BrowserSettingsSection';
 import ConnectorsManager from './tabs/ConnectorsManager';
 import WorkstreamSettingsSection from './WorkstreamSettingsSection';
+import SpeakerVoiceSettings from './SpeakerVoiceSettings';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
@@ -3313,7 +3314,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     <div className="flex items-center justify-between gap-4">
                       <div>
                         <div className="flex items-center gap-2">
-                          <Sparkles className="text-purple-400" size={18} />
+                          <Sparkles className="text-emerald-400" size={18} />
                           <h4 className="text-sm font-medium text-neutral-200">Gemini Live Voice Persona</h4>
                         </div>
                         <p className="text-[10px] text-neutral-500 mt-0.5">
@@ -3324,7 +3325,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <select
                           value={settings.gemini_live_voice || 'Aoede'}
                           onChange={(e) => handleLocalSettingChange('GEMINI_LIVE_VOICE', e.target.value)}
-                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-purple-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
+                          className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
                         >
                           <option value="Aoede">Aoede (Warm & Conversational)</option>
                           <option value="Kore">Kore (Calm & Thoughtful)</option>
@@ -3348,7 +3349,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             setSelectedProvider('gemini');
                             setActiveTab('assistant');
                           }}
-                          className="text-purple-400 hover:text-purple-300 font-semibold shrink-0"
+                          className="text-emerald-400 hover:text-emerald-300 font-semibold shrink-0"
                         >
                           Configure Key in Assistant →
                         </button>
@@ -3386,7 +3387,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </button>
                     </div>
                   </div>
-                    
+
+                  {/* Offline Speaker Identification & Voice Enrollment */}
+                  <SpeakerVoiceSettings settings={settings} onSettingChange={handleLocalSettingChange} />
                 </div>
               )}
 

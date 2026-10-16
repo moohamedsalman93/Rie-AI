@@ -584,12 +584,13 @@ function MainApp() {
     try {
       // Do not let the offline listener compete with the call's microphone.
       await wakeWordService.pause();
+      const transitionAudio = wakeWordService.consumeTransitionAudio();
       if (liveSessionRef.current !== session) return;
       await handleOpen();
       if (liveSessionRef.current !== session) return;
       const clientContext = await getClientContextPayload().catch(() => null);
       if (liveSessionRef.current !== session) return;
-      await session.start(clientContext);
+      await session.start(clientContext, transitionAudio);
     } catch (err) {
       // The session reports startup failures and cleans itself up. An explicit
       // stop rejects startup with AbortError and must not stop a newer session.

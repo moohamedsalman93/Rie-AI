@@ -203,7 +203,15 @@ function ChatMessagesImpl({
                   )}
                 </div>
               )}
-              <div className={`min-w-0 max-w-full break-words overflow-x-hidden rounded-xl px-3.5 py-2 text-sm leading-snug shadow-sm transition ${m.from === "user" ? `bg-neutral-700 text-neutral-50 border ${m.error ? 'border-red-500/50 bg-red-900/10' : 'border-neutral-600/40'}` : "bg-neutral-800 text-neutral-100 border border-neutral-700/50"}`}>
+              <div className={`min-w-0 max-w-full break-words overflow-x-hidden shadow-sm transition-all ${
+                m.from === "user"
+                  ? `rounded-2xl rounded-br-sm px-4 py-2.5 text-[13.5px] leading-relaxed ${
+                      m.error
+                        ? 'border border-red-500/40 bg-red-950/25 text-red-100'
+                        : 'bg-neutral-800/90 text-neutral-100 border border-neutral-700/60 shadow-neutral-950/20 backdrop-blur-sm'
+                    }`
+                  : `rounded-2xl rounded-tl-sm px-4 py-2.5 text-[13.5px] leading-relaxed bg-neutral-900/70 text-neutral-100 border border-neutral-800/80 shadow-neutral-950/20 backdrop-blur-sm`
+              }`}>
                 {m.image_url && (
                   <div className="mb-2 overflow-hidden rounded-lg">
                     <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />
@@ -247,7 +255,7 @@ function ChatMessagesImpl({
                 )}
               </div>
             </div>
-            <span className={`mt-1 text-[10px] font-medium text-neutral-500 ${m.error ? 'text-red-500/50' : ''}`}>
+            <span className={`mt-1 px-1 text-[10px] font-medium tracking-wide select-none ${m.error ? 'text-red-400' : 'text-neutral-500'}`}>
               {m.from === "user" ? "You" : "Assistant"} {m.error && '• Failed'}
             </span>
           </div>
@@ -257,22 +265,22 @@ function ChatMessagesImpl({
         <motion.div
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex flex-col items-start w-full py-1"
+          className="flex items-center gap-2.5 text-neutral-400 py-1.5 px-1 select-none"
         >
           {retryStatus?.message ? (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-[11px] font-medium text-amber-300 animate-pulse">
-              <RotateCw size={12} className="animate-spin text-amber-400 shrink-0" />
+            <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400 font-medium">
+              <RotateCw size={12} className="animate-spin text-neutral-400 shrink-0" />
               <span>{retryStatus.message}</span>
-            </div>
+            </span>
           ) : (
-            <div className="flex items-center gap-2 text-neutral-400 py-1">
-              <span className="flex gap-1 items-center">
+            <>
+              <span className="flex gap-1 items-center shrink-0">
                 <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse" />
                 <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse [animation-delay:200ms]" />
                 <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse [animation-delay:400ms]" />
               </span>
               <span className="text-[12px] text-neutral-500 font-medium">Thinking...</span>
-            </div>
+            </>
           )}
         </motion.div>
       )}

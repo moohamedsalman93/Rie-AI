@@ -751,14 +751,92 @@ def _sanitize_gemini_tool_declarations(tools_spec: Any) -> Any:
     return tools_spec
 
 
+def _ensure_gemini_thought_signatures(request: Any, messages: List[BaseMessage]) -> None:
+    """
+    Ensure every functionCall part in request.contents has a thought_signature.
+    Gemini 3.x strictly requires thought_signature on functionCall parts in multi-turn history.
+    If missing (from unpatched SDK, prior turns, or non-Gemini fallback like Ollama/Groq),
+    inject either the preserved thought signature or Google's official bypass sentinel.
+    """
+    if not hasattr(request, "contents") or not request.contents:
+        return
+
+    sig_lookup: dict[str, bytes] = {}
+    last_sig: Optional[bytes] = None
+
+    if messages:
+        for msg in messages:
+            if isinstance(msg, AIMessage):
+                ak = getattr(msg, "additional_kwargs", {}) or {}
+                if "thought_signature" in ak and ak["thought_signature"]:
+                    s = ak["thought_signature"]
+                    if isinstance(s, str):
+                        s = s.encode("utf-8")
+                    last_sig = s
+                if "thought_signatures" in ak and isinstance(ak["thought_signatures"], dict):
+                    for k, v in ak["thought_signatures"].items():
+                        if v:
+                            sig_lookup[k] = v.encode("utf-8") if isinstance(v, str) else v
+                            last_sig = sig_lookup[k]
+
+    for content in request.contents:
+        if hasattr(content, "parts") and content.parts:
+            for part in content.parts:
+                if getattr(part, "function_call", None) and not getattr(part, "thought_signature", None):
+                    fc_name = getattr(part.function_call, "name", "")
+                    clean_name = fc_name.split(":")[-1] if ":" in fc_name else fc_name
+                    part.thought_signature = (
+                        sig_lookup.get(fc_name)
+                        or sig_lookup.get(clean_name)
+                        or last_sig
+                        or b"skip_thought_signature_validator"
+                    )
+
+
 _SafeChatGoogleGenerativeAICls = None
 
 
 def _get_safe_chat_google_generative_ai_cls():
-    """Lazily import and subclass ChatGoogleGenerativeAI with automatic Gemini schema sanitization."""
+    """Lazily import and subclass ChatGoogleGenerativeAI with automatic Gemini schema sanitization and thought_signature handling."""
     global _SafeChatGoogleGenerativeAICls
     if _SafeChatGoogleGenerativeAICls is None:
+        import langchain_google_genai.chat_models as cm
         from langchain_google_genai import ChatGoogleGenerativeAI
+
+        # Monkey-patch _parse_response_candidate once to capture thought_signature when emitted by Gemini
+        if not getattr(cm, "_thought_signature_patched", False):
+            orig_parse_response_candidate = cm._parse_response_candidate
+
+            def _safe_parse_response_candidate(response_candidate: Any, streaming: bool = False) -> Any:
+                msg = orig_parse_response_candidate(response_candidate, streaming=streaming)
+                try:
+                    if hasattr(response_candidate, "content") and hasattr(response_candidate.content, "parts"):
+                        for part in response_candidate.content.parts:
+                            sig = getattr(part, "thought_signature", None)
+                            if sig:
+                                if hasattr(msg, "additional_kwargs"):
+                                    msg.additional_kwargs["thought_signature"] = sig
+                                    fc_name = getattr(getattr(part, "function_call", None), "name", None)
+                                    if fc_name:
+                                        msg.additional_kwargs.setdefault("thought_signatures", {})[fc_name] = sig
+                except Exception:
+                    pass
+                return msg
+
+            cm._parse_response_candidate = _safe_parse_response_candidate
+            cm._thought_signature_patched = True
+
+        # Monkey-patch base ChatGoogleGenerativeAI._prepare_request to ensure thought signatures globally
+        if not getattr(ChatGoogleGenerativeAI, "_thought_signature_patched", False):
+            orig_prepare_request = ChatGoogleGenerativeAI._prepare_request
+
+            def _global_safe_prepare_request(self, messages: List[BaseMessage], **kwargs: Any) -> Any:
+                req = orig_prepare_request(self, messages, **kwargs)
+                _ensure_gemini_thought_signatures(req, messages)
+                return req
+
+            ChatGoogleGenerativeAI._prepare_request = _global_safe_prepare_request
+            ChatGoogleGenerativeAI._thought_signature_patched = True
 
         class _SafeChatGoogleGenerativeAI(ChatGoogleGenerativeAI):
             """ChatGoogleGenerativeAI with automatic Gemini schema sanitization on _prepare_request and bind_tools."""
@@ -771,6 +849,7 @@ def _get_safe_chat_google_generative_ai_cls():
                             for fd in tool_obj.function_declarations:
                                 if hasattr(fd, "parameters") and fd.parameters:
                                     _sanitize_proto_schema(fd.parameters)
+                _ensure_gemini_thought_signatures(request, messages)
                 return request
 
             def bind_tools(self, tools: Any, **kwargs: Any) -> Any:

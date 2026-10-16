@@ -110,7 +110,7 @@ export const SETTINGS_SEARCH_INDEX = [
   { terms: ['skills', 'rules', 'instructions', 'skill library'], tab: 'capabilities', subTab: 'skills' },
   { terms: ['tavily', 'brave', 'duckduckgo', 'internet search', 'web search', 'web search provider'], tab: 'memory', subTab: 'general' },
   { terms: ['web search tool'], tab: 'capabilities', subTab: 'builtin' },
-  { terms: ['voice', 'tts', 'speech', 'edge tts', 'orpheus', 'voice reply'], tab: 'voice' },
+  { terms: ['voice', 'tts', 'speech', 'edge tts', 'orpheus', 'voice reply', 'speaker identification', 'speaker id', 'voice profile', 'enroll voice', 'identify voice'], tab: 'voice' },
   { terms: ['memory', 'embedding', 'ltm', 'bundled', 'nomic'], tab: 'memory', subTab: 'general' },
   { terms: ['privacy', 'security', 'hitl', 'terminal restrictions', 'location', 'share location', 'gps', 'kiosk', 'kiosk overlay'], tab: 'privacy' },
   { terms: ['auto-start', 'autostart', 'launch', 'about', 'docs', 'documentation', 'update', 'check for updates', 'version', 'software update'], tab: 'privacy' },

@@ -160,3 +160,138 @@ describe("wake-word microphone ownership", () => {
     expect(listen).not.toHaveBeenCalled();
   });
 });
+
+describe("speaker-gated wake word for registered users", () => {
+  let service, onWake, mockSpeakerVerification, wake;
+
+  beforeEach(() => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invoke.mockReset().mockResolvedValue();
+    listen.mockReset().mockImplementation(async (_, callback) => {
+      wake = callback;
+      return vi.fn();
+    });
+    onWake = vi.fn();
+    mockSpeakerVerification = {
+      isUserEnrolledSync: vi.fn().mockReturnValue(true),
+      isUserEnrolled: vi.fn().mockResolvedValue(true),
+      verifyPCM: vi.fn(),
+      clearEnrolledCache: vi.fn(),
+    };
+    service = new WakeWordService({ speakerVerification: mockSpeakerVerification });
+  });
+
+  afterEach(async () => {
+    await service.stop();
+    vi.unstubAllGlobals();
+  });
+
+  it("permits wake word when registered user speaks", async () => {
+    mockSpeakerVerification.verifyPCM.mockResolvedValueOnce({
+      speaker: "USER",
+      score: 0.82,
+      is_user: true,
+      verdict: "ALLOW",
+    });
+
+    await service.start({ onWake });
+    await wake({ payload: { text: "hey rie", audio: "base64_wav_data" } });
+
+    expect(mockSpeakerVerification.verifyPCM).toHaveBeenCalledWith("base64_wav_data");
+    expect(onWake).toHaveBeenCalledWith("hey rie");
+  });
+
+  it("blocks wake word when an unauthorized speaker speaks", async () => {
+    mockSpeakerVerification.verifyPCM.mockResolvedValueOnce({
+      speaker: "OTHER",
+      score: 0.22,
+      is_user: false,
+      verdict: "DISCARD",
+    });
+
+    await service.start({ onWake });
+    await wake({ payload: { text: "hey rie", audio: "base64_other_wav" } });
+
+    expect(mockSpeakerVerification.verifyPCM).toHaveBeenCalledWith("base64_other_wav");
+    expect(onWake).not.toHaveBeenCalled();
+    expect(service.consumeTransitionAudio()).toBeNull();
+  });
+
+  it("blocks wake word when user is registered but audio is unavailable", async () => {
+    await service.start({ onWake });
+    await wake({ payload: { text: "hey rie", audio: null } });
+
+    expect(mockSpeakerVerification.verifyPCM).not.toHaveBeenCalled();
+    expect(onWake).not.toHaveBeenCalled();
+    expect(service.consumeTransitionAudio()).toBeNull();
+  });
+
+  it("allows wake word unconditionally when user is NOT registered", async () => {
+    mockSpeakerVerification.isUserEnrolledSync.mockReturnValue(false);
+    mockSpeakerVerification.isUserEnrolled.mockResolvedValue(false);
+
+    await service.start({ onWake });
+    await wake({ payload: { text: "hey rie", audio: "some_audio" } });
+
+    expect(mockSpeakerVerification.verifyPCM).not.toHaveBeenCalled();
+    expect(onWake).toHaveBeenCalledWith("hey rie");
+  });
+
+  it("blocks wake word when an unknown speaker is detected", async () => {
+    mockSpeakerVerification.verifyPCM.mockResolvedValueOnce({
+      speaker: "UNKNOWN",
+      score: 0.1,
+      is_user: false,
+      verdict: "DISCARD",
+    });
+
+    await service.start({ onWake });
+    await wake({ payload: { text: "hey rie", audio: "base64_unknown_wav" } });
+
+    expect(mockSpeakerVerification.verifyPCM).toHaveBeenCalledWith("base64_unknown_wav");
+    expect(onWake).not.toHaveBeenCalled();
+    expect(service.consumeTransitionAudio()).toBeNull();
+  });
+
+  it("blocks wake word and purges transition audio when speaker verification throws an error (fail-closed)", async () => {
+    mockSpeakerVerification.verifyPCM.mockRejectedValueOnce(new Error("Network / inference failure"));
+
+    await service.start({ onWake });
+    await wake({ payload: { text: "hey rie", audio: "base64_wav" } });
+
+    expect(onWake).not.toHaveBeenCalled();
+    expect(service.consumeTransitionAudio()).toBeNull();
+  });
+
+  it("allows wake word when profile was deleted or not found (HTTP 404)", async () => {
+    mockSpeakerVerification.isUserEnrolledSync.mockReturnValue(true);
+    const notFoundError = new Error("Speaker verification failed [HTTP 404]: Speaker profile not found");
+    notFoundError.status = 404;
+    mockSpeakerVerification.verifyPCM.mockRejectedValueOnce(notFoundError);
+
+    await service.start({ onWake });
+    await wake({ payload: { text: "hey rie", audio: "base64_wav" } });
+
+    expect(mockSpeakerVerification.clearEnrolledCache).toHaveBeenCalled();
+    expect(onWake).toHaveBeenCalledWith("hey rie");
+  });
+
+  it("buffers and consumes command transition audio on pause/stop", async () => {
+    invoke.mockImplementation((cmd) => {
+      if (cmd === "stop_native_wake_word") {
+        return Promise.resolve("mock_transition_pcm_base64");
+      }
+      return Promise.resolve();
+    });
+
+    await service.start({ onWake });
+    await service.pause();
+
+    const transitionAudio = service.consumeTransitionAudio();
+    expect(transitionAudio).toBe("mock_transition_pcm_base64");
+
+    // Second consumption must be null since it was consumed
+    expect(service.consumeTransitionAudio()).toBeNull();
+  });
+});
+

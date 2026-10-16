@@ -270,5 +270,111 @@ describe("voice session lifecycle and event flow", () => {
     locSession.stop();
     await starting;
   });
+
+  it("Hard Response Firewall: suppresses assistant audio and transcripts on OTHER turn", async () => {
+    await connect();
+    const playSpy = vi.spyOn(session.player, "playChunk");
+    const stopSpy = vi.spyOn(session.player, "stopImmediately");
+
+    // Other speaker speaks (e.g. John: "What's the weather tomorrow?")
+    session.smartVoiceGate.authorizationPolicy.evaluateSpeaker({ speaker: "OTHER", score: 0.15, isUser: false });
+    expect(session.smartVoiceGate.authorizationPolicy.canSpeak()).toBe(false);
+
+    // Gemini generates audio response to John
+    Socket.latest.receive({ type: "audio", data: "chunk1" });
+
+    // Output Firewall: Audio must NOT be played!
+    expect(playSpy).not.toHaveBeenCalled();
+    expect(stopSpy).toHaveBeenCalled();
+
+    // Gemini sends assistant text response
+    Socket.latest.receive({ type: "transcript", id: "a1", role: "assistant", text: "Tomorrow will be sunny", isPartial: false });
+
+    // Output Firewall: Assistant text must NOT be shown as assistant message
+    expect(callbacks.onTranscript).not.toHaveBeenCalledWith(expect.objectContaining({ role: "assistant" }));
+  });
+
+  it("Hard Response Firewall: OTHER saying 'Rie, what's the weather?' produces zero audible or visible assistant output", async () => {
+    await connect();
+    const playSpy = vi.spyOn(session.player, "playChunk");
+    const stopSpy = vi.spyOn(session.player, "stopImmediately");
+
+    // John says "Rie, what's the weather?"
+    // SpeakerGate tags speaker as OTHER (biometrics 0.16)
+    session.smartVoiceGate.handleSpeakerDecision({
+      speaker: "OTHER",
+      score: 0.16,
+      isUser: false,
+    });
+    // Transcript arrives: "Rie, what's the weather?"
+    session.smartVoiceGate.handleUserTranscript("Rie, what's the weather?");
+
+    // Verify authority: Saying 'Rie' NEVER authenticates the speaker!
+    expect(session.smartVoiceGate.authorizationPolicy.canSpeak()).toBe(false);
+    expect(session.smartVoiceGate.authorizationPolicy.canExecuteTools()).toBe(false);
+
+    // Gemini generates audio chunk
+    Socket.latest.receive({ type: "audio", data: "chunk_weather" });
+    expect(playSpy).not.toHaveBeenCalled();
+    expect(stopSpy).toHaveBeenCalled();
+
+    // Gemini generates transcript
+    Socket.latest.receive({ type: "transcript", id: "a_weather", role: "assistant", text: "It's 72 degrees and sunny", isPartial: false });
+    expect(callbacks.onTranscript).not.toHaveBeenCalledWith(expect.objectContaining({ role: "assistant" }));
+  });
+
+  it("Hard Response Firewall: permits assistant response when USER explicitly delegates", async () => {
+    await connect();
+    const playSpy = vi.spyOn(session.player, "playChunk");
+
+    // John spoke previously (OTHER)
+    session.smartVoiceGate.authorizationPolicy.recordThirdPartyUtterance("What's the weather tomorrow?", "John");
+
+    // User speaks and explicitly delegates: "Rie, answer him."
+    session.smartVoiceGate.authorizationPolicy.evaluateSpeaker({ speaker: "USER", score: 0.88, isUser: true });
+    session.smartVoiceGate.handleUserTranscript("Rie, answer him.");
+    expect(session.smartVoiceGate.authorizationPolicy.canSpeak()).toBe(true);
+
+    // Gemini generates audio response
+    Socket.latest.receive({ type: "audio", data: "chunk1" });
+    expect(playSpy).toHaveBeenCalledWith("chunk1");
+
+    // Gemini sends assistant transcript
+    Socket.latest.receive({ type: "transcript", id: "a2", role: "assistant", text: "John, tomorrow will be sunny", isPartial: false });
+    expect(callbacks.onTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      role: "assistant",
+      text: "John, tomorrow will be sunny",
+    }));
+  });
+
+  it("signals audio_end to WebSocket on speech turn complete so Gemini responds without manual mute", async () => {
+    await connect();
+    Socket.latest.send.mockClear();
+
+    // User speech turn concludes after silence hangover
+    session.smartVoiceGate.onTurnComplete({ speaker: "USER", turnId: 1 });
+
+    expect(Socket.latest.send).toHaveBeenCalledWith(JSON.stringify({ type: "audio_end" }));
+    expect(session.turnComplete).toBe(false);
+  });
+
+  it("flushes protected command transition audio to Gemini Live on ready", async () => {
+    const sampleBytes = new Uint8Array(1024);
+    let sampleBinary = "";
+    for (let i = 0; i < sampleBytes.length; i++) sampleBinary += String.fromCharCode(sampleBytes[i]);
+    const mockPcmB64 = btoa(sampleBinary);
+
+    const started = session.start(null, mockPcmB64);
+    Socket.latest.onopen();
+    Socket.latest.send.mockClear();
+
+    Socket.latest.receive({ type: "ready" });
+    await started;
+
+    // Check that transition audio was dispatched to WebSocket
+    expect(Socket.latest.send).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"audio"')
+    );
+  });
 });
 
