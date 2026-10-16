@@ -254,6 +254,27 @@ class TestVoiceProtocol(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.task, 3)
         self.assertFalse(any(event.get("status") == "completed" for event in self.client.sent))
 
+    async def test_disconnect_session_signals_client_and_responds_upstream(self):
+        self.dispatcher.dispatch.return_value = "Voice session disconnected. Goodbye!"
+        await self.ready()
+        self.upstream.incoming.put_nowait({
+            "toolCall": {
+                "functionCalls": [{
+                    "id": "dc_1",
+                    "name": "disconnect_session",
+                    "args": {"farewell": "Goodbye! See you soon."}
+                }]
+            }
+        })
+        dc_event = await self.client.event("disconnect_session")
+        self.assertEqual(dc_event["type"], "disconnect_session")
+        self.assertEqual(dc_event["reason"], "user_farewell")
+        self.assertEqual(dc_event["farewell"], "Goodbye! See you soon.")
+        resp = await self.upstream.event("toolResponse")
+        self.assertIn("Voice session disconnected", resp["toolResponse"]["functionResponses"][0]["response"]["output"])
+        self.assertFalse(any(e.get("type") in ("tool_call", "tool_result") for e in self.client.sent))
+
+
 
 class TestVoiceHelpers(unittest.TestCase):
     def test_new_turn_gets_new_id(self):

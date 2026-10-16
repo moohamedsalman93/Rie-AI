@@ -6,6 +6,8 @@ import json
 import asyncio
 import logging
 import secrets
+import random
+import re
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 import websockets
@@ -46,6 +48,174 @@ def _verify_ws_token(token: Optional[str]) -> bool:
     return False
 
 
+def resolve_user_name() -> str:
+    """Resolves the user's preferred first name from settings, LTM memory, or default."""
+    try:
+        from app.config import settings
+        custom_name = settings._get("USER_NAME") or settings._get("user_name")
+        if custom_name and str(custom_name).strip():
+            return str(custom_name).strip()
+    except Exception:
+        pass
+
+    try:
+        from app.memory import memory_store
+        store = memory_store.get_store_sync()
+        items = list(store.search(("users", "default_user"), query="user name", limit=3))
+        for item in items:
+            content = str(item.value.get("content", ""))
+            m = re.search(r"(?:user(?:'s)? name is|named)\s+([A-Za-z]+)", content, re.IGNORECASE)
+            if m:
+                return m.group(1).strip()
+    except Exception as e:
+        logger.debug(f"[LiveVoice] Error reading user name from LTM: {e}")
+
+    return "Salman"
+
+
+async def get_last_work_topic() -> Optional[str]:
+    """Retrieves the most recent work topic from workstream sessions or desktop history."""
+    try:
+        from app.workstream.tools import get_last_work_session_func
+        loop = asyncio.get_running_loop()
+        text = await asyncio.wait_for(
+            loop.run_in_executor(None, get_last_work_session_func),
+            timeout=1.5,
+        )
+        if not text:
+            return None
+        m_title = re.search(r"###\s*Last Work Session:\s*(.+)", text)
+        if m_title:
+            raw_title = m_title.group(1).strip()
+            # Clean off boilerplate prefixes
+            cleaned = re.sub(
+                r"^(?:debugging and resolving issues in|working on|active on|investigating|resolving issues in)\s+",
+                "",
+                raw_title,
+                flags=re.IGNORECASE,
+            ).strip().rstrip(".")
+            if cleaned and len(cleaned) <= 60:
+                return cleaned
+        m_proj = re.search(r"\*\*Project\*\*:\s*([^\|\n]+)", text)
+        if m_proj:
+            proj = m_proj.group(1).strip()
+            if proj and proj.lower() not in ("none", "unknown"):
+                return proj
+    except Exception as e:
+        logger.debug(f"[LiveVoice] Could not fetch last work session: {e}")
+    return None
+
+
+async def build_dynamic_greeting_prompt(
+    client_local_datetime_iso: Optional[str] = None,
+    client_timezone: Optional[str] = None,
+) -> str:
+    """
+    Constructs a spontaneous, highly personalized opening turn prompt for Gemini Live.
+    Uses user name, last work topic, time-of-day, and randomly chosen agent persona flavor
+    so every greeting sounds fresh, dynamic, and like a true intelligent personal agent.
+    """
+    user_name = resolve_user_name()
+    last_work = await get_last_work_topic()
+
+    hour = None
+    time_str = ""
+    period = "day"
+    if client_local_datetime_iso:
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(client_local_datetime_iso)
+            hour = dt.hour
+            time_str = dt.strftime("%I:%M %p").lstrip("0")
+        except Exception:
+            pass
+
+    if hour is None:
+        try:
+            from datetime import datetime
+            dt = datetime.now()
+            hour = dt.hour
+            time_str = dt.strftime("%I:%M %p").lstrip("0")
+        except Exception:
+            hour = 12
+
+    is_late_night = (0 <= hour < 5) or (hour >= 23)
+    if 5 <= hour < 12:
+        period = "morning"
+    elif 12 <= hour < 17:
+        period = "afternoon"
+    elif 17 <= hour < 23:
+        period = "evening"
+    else:
+        period = "tonight"
+
+    available_flavors = ["casual_direct"]
+    weights = [25]
+
+    if last_work:
+        available_flavors.append("work_continuity")
+        weights.append(45)
+
+    if is_late_night or period in ("morning", "afternoon", "evening"):
+        available_flavors.append("ambient_time")
+        weights.append(25)
+
+    available_flavors.append("bilingual")
+    weights.append(10)
+
+    chosen_flavor = random.choices(available_flavors, weights=weights, k=1)[0]
+
+    if chosen_flavor == "work_continuity" and last_work:
+        return (
+            f"The user {user_name} just connected via live voice. "
+            f"His most recent work was: '{last_work}'. "
+            f"Greet {user_name} warmly and naturally by name in 1 brief sentence (maximum 15 words), "
+            f"asking if he needs any help regarding {last_work} or what he wants to work on right now "
+            f"(e.g., 'Hey {user_name}! Need any help regarding {last_work}, or what are we working on?' "
+            f"or 'Hey {user_name}, ready to jump back into {last_work}, or what's up?'). "
+            "Speak spontaneously as a real AI companion. NEVER use repetitive canned scripts like 'What's on your mind today?'."
+        )
+
+    elif chosen_flavor == "ambient_time":
+        if is_late_night:
+            return (
+                f"The user {user_name} just connected via live voice late at night ({time_str}). "
+                f"Greet {user_name} warmly by name in 1 brief natural sentence, "
+                f"casually acknowledging he's working late or asking how you can help him tonight "
+                f"(e.g., 'Working late tonight, {user_name}? What can I help you with?' "
+                f"or 'Hey {user_name}, burning the midnight oil! What are we working on?'). "
+                "Keep it completely natural, friendly, and brief."
+            )
+        else:
+            return (
+                f"The user {user_name} just connected via live voice during the {period}. "
+                f"Greet {user_name} warmly by name in 1 brief natural sentence suited to the {period} "
+                f"(e.g., 'Good {period} {user_name}! What are we building today?' "
+                f"or 'Hey {user_name}, hope your {period} is going well! What's on your desk?'). "
+                "Keep it spontaneous, friendly, and varied."
+            )
+
+    elif chosen_flavor == "bilingual":
+        return (
+            f"The user {user_name} just connected via live voice. He speaks English and Tamil. "
+            f"Greet {user_name} warmly by name in 1 brief sentence with a friendly bilingual touch "
+            f"(e.g., 'ஹே {user_name}! How can I help you today?' "
+            f"or 'Hey {user_name}! சொல்லுங்க, what are we working on today?'). "
+            "Keep it natural, spontaneous, and warm."
+        )
+
+    else:
+        # casual_direct
+        return (
+            f"The user {user_name} just connected via live voice. "
+            f"Greet {user_name} warmly, casually, and directly by name in 1 brief snappy sentence "
+            f"(e.g., 'Hey {user_name}! Ready when you are, what's on the agenda?' "
+            f"or 'Hey {user_name}, good to hear from you! What are we diving into?' "
+            f"or 'Hey {user_name}! What can I help you with right now?'). "
+            "Vary your phrasing naturally. Never use repetitive robotic lines."
+        )
+
+
 def build_live_system_instruction(
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
@@ -64,9 +234,15 @@ def build_live_system_instruction(
         client_location_accuracy_m=client_location_accuracy_m,
     )
 
+    user_name = resolve_user_name()
+
     base_prompt = (
-        "You are Rie, an ultra-fast, helpful, warm, concise, and highly capable desktop AI companion. "
-        "You are interacting with the user via real-time spoken voice conversation.\n\n"
+        f"You are Rie, an ultra-fast, helpful, warm, concise, and highly capable desktop AI companion. "
+        f"You are interacting with your owner and friend, {user_name}, via real-time spoken voice conversation.\n\n"
+        f"## USER IDENTITY & CONVERSATIONAL NATURALNESS:\n"
+        f"- The user's name is {user_name}. Always know {user_name} as your primary user and owner.\n"
+        f"- Address him naturally by name (e.g. '{user_name}') when greeting him or when appropriate.\n"
+        "- ACT LIKE A REAL, LIVING COMPANION: Never speak like an interactive voice response (IVR) phone tree or canned recording. Avoid cliché, repetitive phrases like 'What's on your mind today?' or 'How can I assist you today?'. Speak with spontaneous human warmth, variation, and personality.\n\n"
         "## STRICT LANGUAGE POLICY (ENGLISH & TAMIL ONLY):\n"
         "- The ONLY supported languages are ENGLISH and TAMIL (தமிழ் / Tanglish).\n"
         "- NEVER converse, respond, output, or transcribe in Telugu (తెలుగు) or Hindi (हिंदी).\n"
@@ -86,7 +262,10 @@ def build_live_system_instruction(
         "   - If the user asks about who spoke in the room (e.g. 'was that a single person or two persons?', 'who spoke? / யார் யார்?'), use the conversational history and distinct voices/topics to accurately answer in the user's language.\n"
         "   - When the user explicitly instructs you to answer or talk to someone else (e.g. 'answer him', 'reply to my nephew', 'tell John...', 'அவனுக்கு பதில் சொல்லு'), address that person and answer their question.\n"
         "   - If the user tells you to ignore someone (e.g. 'ignore him', 'don't answer him', 'இக்னோர் பண்ணிடு'), respect that and stay focused exclusively on the primary user.\n"
-        "   - Seamlessly converse exclusively in Tamil (தமிழ்) and English based on the language the user speaks."
+        "   - Seamlessly converse exclusively in Tamil (தமிழ்) and English based on the language the user speaks.\n"
+        "10. FAREWELL & DISCONNECT (GO TO SLEEP): When the user says goodbye, bye, bye-bye, see you later, let's see later, let see later, go to sleep, sleep now, good night, stop listening, disconnect, or indicates that they are done talking (e.g. 'bye', 'see you later', 'let see later', 'go to sleep', 'sleep now', 'good night', 'போய் வா', 'பாய்', 'தூங்கு', 'கிளம்பு'):\n"
+        "   - Speak a warm, brief 1-sentence farewell (e.g. 'Goodbye! Talk to you soon!', 'Going to sleep now, bye!', 'சரி, அப்புறம் பார்க்கலாம்!').\n"
+        "   - IMMEDIATELY invoke the `disconnect_session` tool. This will cleanly close the live voice call and return you to sleep, where the user can wake you up again anytime by saying 'Hey Rie'."
     )
 
     if device_context:
@@ -212,6 +391,10 @@ async def gemini_live_voice_websocket(
 
             # Trigger an immediate natural spoken greeting from Rie
             if greet:
+                greeting_prompt = await build_dynamic_greeting_prompt(
+                    client_local_datetime_iso=client_local_datetime_iso,
+                    client_timezone=client_timezone,
+                )
                 greeting_message = {
                     "clientContent": {
                         "turns": [
@@ -219,11 +402,7 @@ async def gemini_live_voice_websocket(
                                 "role": "user",
                                 "parts": [
                                     {
-                                        "text": (
-                                            "The user just started this live voice session with you. "
-                                            "Greet the user immediately with a warm, natural, friendly, 1-sentence hello "
-                                            "(e.g., 'Hey there! How can I help you today?' or 'Hi! What's on your mind?')."
-                                        )
+                                        "text": greeting_prompt,
                                     }
                                 ]
                             }
@@ -232,7 +411,7 @@ async def gemini_live_voice_websocket(
                     }
                 }
                 await gemini_ws.send(json.dumps(greeting_message))
-                logger.info("[LiveVoice] Automatic greeting trigger sent to Gemini.")
+                logger.info(f"[LiveVoice] Spoken dynamic greeting trigger sent: {greeting_prompt[:80]}...")
 
             transcripts = VoiceTranscripts()
             tool_tasks = {}
@@ -343,10 +522,20 @@ async def gemini_live_voice_websocket(
                     # Keep desktop actions ordered while the receiver remains free
                     # to handle audio, transcripts, and cancellation messages.
                     async with tool_lock:
-                        await websocket.send_json({
-                            "type": "tool_call", "id": call_id, "name": name,
-                            "args": args, "status": "running",
-                        })
+                        if name in ("disconnect_session", "end_call", "disconnect_call", "go_to_sleep"):
+                            try:
+                                await websocket.send_json({
+                                    "type": "disconnect_session",
+                                    "reason": "user_farewell",
+                                    "farewell": str(args.get("farewell") or "Goodbye!").strip(),
+                                })
+                            except Exception:
+                                pass
+                        else:
+                            await websocket.send_json({
+                                "type": "tool_call", "id": call_id, "name": name,
+                                "args": args, "status": "running",
+                            })
                         try:
                             result = await asyncio.wait_for(
                                 live_tool_dispatcher.dispatch(name, args),
@@ -363,10 +552,11 @@ async def gemini_live_voice_websocket(
                                     name, call_id, tool_result_status(result), len(str(result)))
                         # Done means the result was also handed back to the model,
                         # not just that the local search/action finished.
-                        await websocket.send_json({
-                            "type": "tool_result", "id": call_id, "name": name,
-                            "result": result, "status": tool_result_status(result),
-                        })
+                        if name not in ("disconnect_session", "end_call", "disconnect_call", "go_to_sleep"):
+                            await websocket.send_json({
+                                "type": "tool_result", "id": call_id, "name": name,
+                                "result": result, "status": tool_result_status(result),
+                            })
                 except asyncio.CancelledError:
                     raise
                 except Exception:
@@ -517,10 +707,11 @@ async def gemini_live_voice_websocket(
                                 call_id = call["id"]
                                 if call_id in tool_tasks:
                                     continue
-                                await websocket.send_json({
-                                    "type": "tool_call", "id": call_id, "name": call["name"],
-                                    "args": call.get("args", {}), "status": "queued",
-                                })
+                                if call["name"] not in ("disconnect_session", "end_call", "disconnect_call", "go_to_sleep"):
+                                    await websocket.send_json({
+                                        "type": "tool_call", "id": call_id, "name": call["name"],
+                                        "args": call.get("args", {}), "status": "queued",
+                                    })
                                 tool_tasks[call_id] = asyncio.create_task(run_tool(call))
                             continue
 

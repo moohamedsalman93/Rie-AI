@@ -1,5 +1,6 @@
 // Events carry complete snapshots; repeated updates replace the same row.
 export function upsertVoiceActivity(items, update, limit = 100) {
+  if (["disconnect_session", "end_call", "disconnect_call", "go_to_sleep"].includes(update?.name)) return items;
   const index = items.findIndex((item) => item.id === update.id);
   if (index < 0) {
     const next = [...items, update];
@@ -33,7 +34,7 @@ export function upsertVoiceMessage(messages, transcript) {
 // Tool calls share the chat timeline with captions. Results update their call
 // row, even when they arrive after another transcript or out of order.
 export function upsertVoiceToolMessage(messages, event) {
-  if (!event.id) return messages;
+  if (!event?.id || ["disconnect_session", "end_call", "disconnect_call", "go_to_sleep"].includes(event?.name)) return messages;
   const id = `voice-tool:${event.id}`;
   const index = messages.findIndex((message) => message.id === id);
   const previous = index >= 0 ? messages[index] : null;

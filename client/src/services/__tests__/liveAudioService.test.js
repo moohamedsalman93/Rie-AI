@@ -376,5 +376,53 @@ describe("voice session lifecycle and event flow", () => {
       expect.stringContaining('"type":"audio"')
     );
   });
+
+  it("gracefully disconnects session when disconnect_session event is received after farewell audio finishes", async () => {
+    await connect();
+    const isPlayingSpy = vi.spyOn(session.player, "isPlaying").mockReturnValue(true);
+
+    Socket.latest.receive({
+      type: "disconnect_session",
+      reason: "user_farewell",
+      farewell: "Goodbye! Talk to you later.",
+    });
+
+    expect(session.disconnectPending).toBe(true);
+    expect(session.recorder.isMuted).toBe(true);
+    expect(session.stopped).toBe(false);
+
+    // Initial timeout expires while audio is still playing; session must NOT prematurely close
+    await vi.advanceTimersByTimeAsync(500);
+    expect(session.stopped).toBe(false);
+
+    // Audio finishes playing, turn completes
+    isPlayingSpy.mockReturnValue(false);
+    Socket.latest.receive({ type: "turn_complete" });
+    await vi.advanceTimersByTimeAsync(400);
+
+    expect(session.stopped).toBe(true);
+    expect(callbacks.onStatusChange).toHaveBeenLastCalledWith("closed");
+  });
+
+  it("auto-disconnects on safety timeout when disconnect_session is triggered", async () => {
+    await connect();
+    Socket.latest.receive({
+      type: "tool_call",
+      id: "dc1",
+      name: "disconnect_session",
+      args: { farewell: "Going to sleep now, bye!" },
+      status: "running",
+    });
+
+    expect(session.disconnectPending).toBe(true);
+    expect(session.stopped).toBe(false);
+    expect(callbacks.onToolCall).not.toHaveBeenCalled();
+
+    // Advance 5 seconds to trigger safety timeout
+    await vi.advanceTimersByTimeAsync(5001);
+    expect(session.stopped).toBe(true);
+    expect(callbacks.onStatusChange).toHaveBeenLastCalledWith("closed");
+  });
 });
+
 

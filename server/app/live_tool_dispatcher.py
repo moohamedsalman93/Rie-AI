@@ -76,6 +76,26 @@ LIVE_TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "disconnect_session",
+        "description": (
+            "Disconnects and ends the active live voice session / call. "
+            "Call this tool immediately whenever the user says goodbye, bye, bye-bye, see you later, let's see later, "
+            "let see later, go to sleep, sleep now, good night, stop listening, disconnect, or indicates that they are done talking "
+            "(e.g. 'bye', 'see you later', 'let see later', 'go to sleep', 'sleep now', 'good night', 'போய் வா', 'பாய்', 'தூங்கு', 'கிளம்பு'). "
+            "Always speak a friendly, brief 1-sentence farewell (e.g. 'Goodbye! Talk to you later.' or 'Going to sleep now, bye!' "
+            "or in Tamil 'சரி, அப்புறம் பார்க்கலாம்!') before or when calling this tool."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "farewell": {
+                    "type": "STRING",
+                    "description": "Optional brief polite sign-off or goodbye phrase spoken to user."
+                }
+            }
+        }
+    },
+    {
         "name": "app_tool",
         "description": (
             "Launches or switches to a Windows desktop application. "
@@ -603,7 +623,23 @@ class RieLiveToolDispatcher:
                 else:
                     return f"Subagent job '{job_id}' could not be cancelled or is already finished."
 
-            # 8. Workstream & Past Activity Tools
+            # 8. Disconnect Voice Session / Go to Sleep
+            elif tool_name in ("disconnect_session", "end_call", "disconnect_call", "go_to_sleep"):
+                farewell = str(args.get("farewell") or "Goodbye!").strip()
+                ctx = context or self.get_context()
+                client_ws = ctx.get("websocket")
+                if client_ws:
+                    try:
+                        await client_ws.send_json({
+                            "type": "disconnect_session",
+                            "reason": "user_farewell",
+                            "farewell": farewell,
+                        })
+                    except Exception as err:
+                        logger.warning(f"[LiveDispatcher] Failed to send disconnect_session to client: {err}")
+                return f"Voice session disconnected. {farewell}"
+
+            # 9. Workstream & Past Activity Tools
             elif tool_name == "get_work_summary":
                 timeframe = str(args.get("timeframe", "today")).strip()
                 from app.workstream.tools import get_work_summary_func

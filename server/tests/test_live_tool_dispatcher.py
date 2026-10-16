@@ -127,13 +127,25 @@ class TestLiveToolDispatcher(unittest.IsolatedAsyncioTestCase):
             cancel_res = await self.dispatch("cancel_subagent", {"job_id": jid})
             self.assertIn("successfully cancelled", cancel_res)
 
+    async def test_disconnect_session_dispatches_cleanly(self):
+        ws_mock = AsyncMock()
+        context = {"websocket": ws_mock}
+        res = await self.dispatcher.dispatch("disconnect_session", {"farewell": "Goodbye! See you soon."}, context=context)
+        self.assertIn("Voice session disconnected. Goodbye! See you soon.", res)
+        ws_mock.send_json.assert_awaited_once_with({
+            "type": "disconnect_session",
+            "reason": "user_farewell",
+            "farewell": "Goodbye! See you soon.",
+        })
+
     def test_tool_declarations_include_tiered_core_tools(self):
         from app.live_tool_dispatcher import live_tool_dispatcher
         names = {t["name"] for t in live_tool_dispatcher.get_tool_declarations()}
-        expected = {"spawn_subagent", "cancel_subagent", "app_tool", "press_keys", "internet_search", "browser_open", "save_memory", "search_memory", "schedule_task", "get_desktop_state"}
+        expected = {"spawn_subagent", "cancel_subagent", "disconnect_session", "app_tool", "press_keys", "internet_search", "browser_open", "save_memory", "search_memory", "schedule_task", "get_desktop_state"}
         for exp in expected:
             self.assertIn(exp, names)
 
 
 if __name__ == "__main__":
     unittest.main()
+

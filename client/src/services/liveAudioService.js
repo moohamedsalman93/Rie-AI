@@ -410,6 +410,9 @@ export class LiveVoiceSession {
     this.volumes = { userVolume: 0, assistantVolume: 0 };
     this.lastVolumeTime = 0;
     this.pendingTransitionAudio = options.transitionAudio || null;
+    this.disconnectPending = false;
+    this.disconnectTimer = null;
+    this.disconnectMaxTimer = null;
 
     if (this.enableSmartVoiceGate) {
       const savedGateMode = typeof localStorage !== "undefined" ? localStorage.getItem("rie_gate_mode") : null;
@@ -477,6 +480,18 @@ export class LiveVoiceSession {
     }
   }
 
+  scheduleDisconnectAfterSpeech(delay = 400) {
+    if (this.disconnectTimer) clearTimeout(this.disconnectTimer);
+    this.disconnectTimer = setTimeout(() => {
+      if (this.stopped) return;
+      if (this.player.isPlaying(350)) {
+        this.scheduleDisconnectAfterSpeech(300);
+        return;
+      }
+      this.stop();
+    }, delay);
+  }
+
   updateStatus() {
     if (this.stopped || !this.ready) return;
     if (this.microphoneStarting && !this.isMuted) this.onStatus("starting");
@@ -526,7 +541,16 @@ export class LiveVoiceSession {
       this.setupTimer = setTimeout(() => this.fail("Voice connection timed out. Please try again."), 20000);
       try {
         this.player.init((volume) => this.emitVolume("assistantVolume", volume));
-        this.player.onIdle = () => this.updateStatus();
+        this.player.onIdle = () => {
+          if (this.disconnectPending && !this.stopped) {
+            setTimeout(() => {
+              if (this.disconnectPending && !this.stopped && !this.player.isPlaying(200)) {
+                this.stop();
+              }
+            }, 150);
+          }
+          this.updateStatus();
+        };
         const params = new URLSearchParams({ voice: this.voice });
         if (this.threadId) params.set("thread_id", this.threadId);
         const token = getAppToken();
@@ -743,7 +767,29 @@ export class LiveVoiceSession {
         }
         break;
       }
+      case "disconnect_session": {
+        this.disconnectPending = true;
+        try { this.recorder.setMuted(true); } catch {}
+        if (!this.disconnectMaxTimer) {
+          this.disconnectMaxTimer = setTimeout(() => {
+            if (!this.stopped) this.stop();
+          }, 5000);
+        }
+        this.scheduleDisconnectAfterSpeech(400);
+        break;
+      }
       case "tool_call":
+        if (["disconnect_session", "end_call", "disconnect_call", "go_to_sleep"].includes(msg.name)) {
+          this.disconnectPending = true;
+          try { this.recorder.setMuted(true); } catch {}
+          if (!this.disconnectMaxTimer) {
+            this.disconnectMaxTimer = setTimeout(() => {
+              if (!this.stopped) this.stop();
+            }, 5000);
+          }
+          this.scheduleDisconnectAfterSpeech(400);
+          break;
+        }
         // Security Firewall: Block tool calls triggered by unauthorized speakers
         if (this.smartVoiceGate && !this.smartVoiceGate.authorizationPolicy.canExecuteTools()) {
           console.warn(`[LiveVoice Security Firewall] Blocked tool_call '${msg.name}' (${msg.id}) from unauthorized speaker.`);
@@ -759,6 +805,10 @@ export class LiveVoiceSession {
         this.updateStatus();
         break;
       case "tool_result":
+        if (["disconnect_session", "end_call", "disconnect_call", "go_to_sleep"].includes(msg.name)) {
+          this.tools.delete(msg.id);
+          break;
+        }
         this.tools.delete(msg.id);
         // Local execution is finished, but the spoken answer is still pending.
         // This must not return to Listening just because an earlier preamble ended.
@@ -779,6 +829,9 @@ export class LiveVoiceSession {
         this.turnComplete = true;
         this.smartVoiceGate?.completeDialogueTurn();
         this.updateStatus();
+        if (this.disconnectPending) {
+          this.scheduleDisconnectAfterSpeech(350);
+        }
         break;
       case "error":
       case "closed":
@@ -815,6 +868,11 @@ export class LiveVoiceSession {
   stop(error = new DOMException("Voice session ended", "AbortError")) {
     if (this.stopped) return;
     this.stopped = true;
+    if (this.disconnectTimer) clearTimeout(this.disconnectTimer);
+    if (this.disconnectMaxTimer) clearTimeout(this.disconnectMaxTimer);
+    this.disconnectTimer = null;
+    this.disconnectMaxTimer = null;
+    this.disconnectPending = false;
     this.isConnected = this.ready = false;
     clearTimeout(this.setupTimer);
     this.rejectStart?.(error);

@@ -523,6 +523,7 @@ function MainApp() {
       },
       onToolCall: (tool) => {
         if (liveSessionRef.current !== session) return;
+        if (["disconnect_session", "end_call", "disconnect_call", "go_to_sleep"].includes(tool?.name)) return;
         setLiveVoiceActivity((items) => upsertVoiceActivity(items, { ...tool, type: "tool" }));
         setSessions((prev) => ({
           ...prev,
@@ -535,6 +536,7 @@ function MainApp() {
       },
       onToolResult: (tool) => {
         if (liveSessionRef.current !== session) return;
+        if (["disconnect_session", "end_call", "disconnect_call", "go_to_sleep"].includes(tool?.name)) return;
         setLiveVoiceActivity((items) => upsertVoiceActivity(items, { ...tool, type: "tool" }));
         setSessions((prev) => ({
           ...prev,
