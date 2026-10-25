@@ -72,6 +72,7 @@ import {
   ShieldCheck,
   Cpu,
   Clock,
+  X,
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen, emit } from '@tauri-apps/api/event';
@@ -1245,22 +1246,20 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       {/* Header */}
       <div
         data-tauri-drag-region
-        className="flex items-center justify-between px-6 py-1 border-b border-white/5 bg-neutral-900   shrink-0"
+        className="flex items-center justify-between px-6 py-3 border-b border-white/[0.06] bg-neutral-950/80 backdrop-blur-md shrink-0"
       >
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-emerald-500/10 rounded-xl">
-            <Settings className="w-3 h-3 text-emerald-400" />
-          </div>
-          <h2 className="text-lg font-semibold text-white tracking-tight">Settings</h2>
+          <h2 className="text-base font-semibold text-neutral-100 tracking-tight">Settings</h2>
         </div>
         <div className="flex items-center gap-3">
           <button
             onClick={handleClose}
             onMouseDown={(e) => e.stopPropagation()}
-            className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm font-semibold tracking-wide transition-all group"
-            title="Close settings"
+            className="flex items-center justify-center p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/[0.06] transition-colors"
+            title="Close settings (Esc)"
+            aria-label="Close settings"
           >
-            Close
+            <X size={18} />
           </button>
         </div>
       </div>
@@ -1278,7 +1277,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
                 value={settingsSearch}
                 onChange={(e) => handleSettingsSearch(e.target.value)}
                 placeholder="Search settings..."
-                className="w-full rounded-lg border border-white/10 bg-neutral-900/80 py-2 pl-8 pr-2 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-emerald-500/40"
+                className="w-full rounded-lg border border-white/10 bg-neutral-900/80 py-2 pl-8 pr-2 text-xs text-neutral-200 placeholder:text-neutral-600 focus:outline-none focus:border-white/20 transition-colors"
               />
             </div>
           </div>
@@ -1421,23 +1420,23 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
                                     {providerInfo.label === 'Rie' ? 'Rie' : providerInfo.label}
                                   </h4>
                                   {isPrimary && (
-                                    <span className="text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded tracking-wide">
+                                    <span className="text-[10px] font-medium bg-neutral-800 text-neutral-300 border border-white/10 px-1.5 py-0.5 rounded tracking-wide">
                                       Primary
                                     </span>
                                   )}
                                   {isFallback && (
-                                    <span className="text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded tracking-wide">
+                                    <span className="text-[10px] font-medium bg-neutral-800 text-neutral-400 border border-white/10 px-1.5 py-0.5 rounded tracking-wide">
                                       Fallback
                                     </span>
                                   )}
                                   {isConfigured ? (
-                                    <span className="text-[10px] font-medium bg-emerald-500/5 text-emerald-400/90 border border-emerald-500/20 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1">
-                                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                                    <span className="text-[10px] font-medium bg-neutral-800/80 text-neutral-300 border border-white/10 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1.5">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                                       Configured
                                     </span>
                                   ) : (
-                                    <span className="text-[10px] font-medium bg-neutral-800/40 text-neutral-500 border border-neutral-800/80 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1">
-                                      <span className="w-1 h-1 rounded-full bg-neutral-600"></span>
+                                    <span className="text-[10px] font-medium bg-neutral-900/60 text-neutral-500 border border-white/5 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1.5">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-neutral-600"></span>
                                       Not Configured
                                     </span>
                                   )}
@@ -1967,7 +1966,7 @@ key2,
                                     : 'bg-white/[0.01] border-white/5 text-neutral-500 hover:bg-white/[0.03] hover:border-white/10 hover:text-neutral-400'
                                   }`}
                               >
-                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isMissingKey ? 'bg-neutral-800' : isEnabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse' : 'bg-neutral-600'}`} />
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isMissingKey ? 'bg-neutral-800' : isEnabled ? 'bg-emerald-400' : 'bg-neutral-600'}`} />
                                 {tool.label}
                               </button>
                               {/* Hover tooltip */}
@@ -2142,48 +2141,37 @@ key2,
 
                   {advancedSubTab === 'remote' && (
                     <div className="relative overflow-x-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-                      <div className="pointer-events-none absolute -right-16 -top-12 h-56 w-56 rounded-full bg-white/[0.03] blur-3xl" />
-
                       <div className="relative flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="flex gap-3">
-                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
-                            <Link className="h-5 w-5 text-neutral-300" strokeWidth={2} aria-hidden />
-                          </div>
-                          <div className="space-y-0.5 min-w-0">
-                            <h3 className="text-base font-semibold tracking-tight text-white">Remote access & pairing</h3>
-                            <p className="max-w-xl text-sm leading-relaxed text-neutral-500">
-                              Expose your agent safely through ngrok, then pair trusted devices so friends can reach this instance
-                              at a stable URL.
-                            </p>
-                          </div>
+                        <div className="space-y-0.5 min-w-0">
+                          <h3 className="text-base font-semibold tracking-tight text-white">Remote access & pairing</h3>
+                          <p className="max-w-xl text-xs leading-relaxed text-neutral-400">
+                            Expose your agent safely through ngrok, then pair trusted devices so friends can reach this instance at a stable URL.
+                          </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 lg:justify-end shrink-0">
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-300">
                             <span
-                              className={`h-2 w-2 shrink-0 rounded-full ${connectivityChipState === 'running' ? 'bg-emerald-500/80' : connectivityChipState === 'not install' ? 'bg-red-400/80' : 'bg-amber-400/90'
+                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${connectivityChipState === 'running' ? 'bg-emerald-400' : connectivityChipState === 'not install' ? 'bg-red-400' : 'bg-amber-400'
                                 }`}
                             />
-                            Tunnel: <span className="font-semibold text-neutral-100">{connectivityChipState}</span>
+                            Tunnel: <span className="font-medium text-neutral-100">{connectivityChipState}</span>
                           </span>
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
-                            <Users size={12} className="text-neutral-500" aria-hidden />
-                            Pairs: <span className="font-semibold text-neutral-100">{friends.length}</span>
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-300">
+                            Pairs: <span className="font-medium text-neutral-100">{friends.length}</span>
                           </span>
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300">
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-300">
                             Ready:{' '}
-                            <span className="font-mono text-[10px] font-semibold uppercase text-neutral-100">{ngrokReadyState || 'â€”'}</span>
+                            <span className="font-mono text-[10px] font-medium uppercase text-neutral-100">{ngrokReadyState || '—'}</span>
                           </span>
                         </div>
                       </div>
 
-                      <div className="relative mt-3 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
-                        <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-400/30 bg-amber-500/10">
-                            <AlertTriangle className="h-4 w-4 text-amber-300" aria-hidden />
-                          </div>
+                      <div className="relative mt-3 rounded-lg border border-amber-500/20 bg-amber-950/20 p-3">
+                        <div className="flex items-start gap-2.5">
+                          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" aria-hidden />
                           <div className="min-w-0">
-                            <h4 className="text-sm font-semibold text-amber-200">Warning before using connectivity</h4>
-                            <p className="mt-1 text-xs leading-relaxed text-amber-100/85">
+                            <h4 className="text-xs font-semibold text-amber-200">Warning before using connectivity</h4>
+                            <p className="mt-0.5 text-xs leading-relaxed text-amber-200/80">
                               Opening remote connectivity can expose your local agent to the internet. This may lead to
                               unauthorized access or data leakage if you share endpoints with untrusted devices.
                             </p>
@@ -2197,31 +2185,23 @@ key2,
                             <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
                             <div className="rounded-[14px] bg-neutral-950/90 p-5 sm:p-6">
                               <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="flex gap-4 min-w-0">
-                                  <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
-                                    <Wifi className="h-5 w-5 text-neutral-400" aria-hidden />
-                                    {connectivityChipState === 'running' ? (
-                                      <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5 rounded-full bg-emerald-500/90 ring-2 ring-neutral-950" title="Tunnel running" />
-                                    ) : null}
+                                <div className="min-w-0 space-y-1.5">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <h4 className="text-base font-semibold text-white">ngrok public tunnel</h4>
+                                    <span
+                                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide ${connectivityChipState === 'running'
+                                          ? 'border-emerald-500/25 bg-emerald-950/40 text-emerald-300'
+                                          : connectivityChipState === 'not install'
+                                            ? 'border-red-500/25 bg-red-950/35 text-red-300'
+                                            : 'border-amber-500/25 bg-amber-950/35 text-amber-300'
+                                        }`}
+                                    >
+                                      {connectivityChipState}
+                                    </span>
                                   </div>
-                                  <div className="min-w-0 space-y-2">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <h4 className="text-base font-semibold text-white">ngrok public tunnel</h4>
-                                      <span
-                                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${connectivityChipState === 'running'
-                                            ? 'border-emerald-500/25 bg-emerald-950/40 text-emerald-200/90'
-                                            : connectivityChipState === 'not install'
-                                              ? 'border-red-500/25 bg-red-950/35 text-red-200/85'
-                                              : 'border-amber-500/25 bg-amber-950/35 text-amber-200/85'
-                                          }`}
-                                      >
-                                        {connectivityChipState}
-                                      </span>
-                                    </div>
-                                    <p className="text-xs leading-relaxed text-neutral-500">
-                                      When enabled, Rie can advertise an HTTPS URL peers use instead of a LAN address.
-                                    </p>
-                                  </div>
+                                  <p className="text-xs leading-relaxed text-neutral-400">
+                                    When enabled, Rie can advertise an HTTPS URL peers use instead of a LAN address.
+                                  </p>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-3 rounded-xl border border-white/5 bg-neutral-900/50 px-3 py-2">
                                   <span className="text-[11px] font-medium text-neutral-400">Expose tunnel</span>
@@ -2311,16 +2291,11 @@ key2,
 
                         <div className="xl:col-span-5">
                           <div className="h-full rounded-2xl border border-white/[0.08] bg-neutral-950/70 p-5 shadow-lg shadow-black/15">
-                            <div className="flex items-start gap-3">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-neutral-900/80">
-                                <Fingerprint className="h-5 w-5 text-neutral-400" aria-hidden />
-                              </div>
-                              <div className="min-w-0">
-                                <h5 className="text-sm font-semibold text-white">This device</h5>
-                                <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">
-                                  Shown to the other device when you start a pairing handoff.
-                                </p>
-                              </div>
+                            <div className="min-w-0">
+                              <h5 className="text-sm font-semibold text-white">This device</h5>
+                              <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-400">
+                                Shown to the other device when you start a pairing handoff.
+                              </p>
                             </div>
 
                             <div className="mt-5 space-y-4">
@@ -2806,39 +2781,39 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Toggle Bubble &amp; Chat</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+A</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+A</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Toggle Live Voice</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+S</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+S</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Cancel AI Response</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+C</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+C</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Start New Chat</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+N</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+N</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Screen Capture / Vision</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+V</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+V</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Toggle Mic / Mute</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+M</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+M</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Toggle Kiosk Overlay</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+K</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+K</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Focus Chat Input</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+F</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+F</kbd>
                       </div>
                       <div className="flex items-center justify-between p-2.5 rounded-lg bg-neutral-900/60 border border-white/5">
                         <span className="text-neutral-300 font-medium">Screen Privacy (Press On / Hold Off)</span>
-                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700 rounded text-emerald-400 font-mono text-[11px] shadow-sm">Alt+Shift+Q</kbd>
+                        <kbd className="px-2 py-0.5 bg-neutral-800 border border-neutral-700/80 rounded text-neutral-300 font-mono text-[11px] shadow-sm">Alt+Shift+Q</kbd>
                       </div>
                     </div>
                   </div>
@@ -2951,7 +2926,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <h4 className="text-sm font-medium text-neutral-200">Application Version</h4>
                         <p className="text-[10px] text-neutral-500">Current installed version of Rie-AI.</p>
                       </div>
-                      <span className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-sm font-semibold text-emerald-400 tracking-wide flex items-center gap-2">
+                      <span className="px-2.5 py-1 bg-white/[0.05] border border-white/10 rounded-lg text-xs font-mono font-medium text-neutral-300 tracking-wide flex items-center gap-2">
                         v{appVersion}
                         <BetaLabel />
                       </span>
@@ -2959,11 +2934,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                     {/* Check for Updates */}
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Download className="text-neutral-400" size={18} />
-                        <div>
-                          <h4 className="text-sm font-medium text-neutral-200">Software Updates</h4>
-                          <p className="text-[10px] text-neutral-500">
+                      <div>
+                        <h4 className="text-sm font-medium text-neutral-200">Software Updates</h4>
+                        <p className="text-[10px] text-neutral-500">
                             {updateCheckStatus === 'up-to-date' && 'You\'re on the latest version.'}
                             {updateCheckStatus === 'available' && `v${updateInfo?.version} is available to download.`}
                             {updateCheckStatus === 'downloading' && `Downloading v${updateInfo?.version}... ${updateDownloadProgress}%`}
@@ -2972,7 +2945,6 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             {(updateCheckStatus === 'idle' || updateCheckStatus === 'checking') && 'Check for new versions of Rie-AI.'}
                           </p>
                         </div>
-                      </div>
                       <div className="flex items-center gap-2">
                         {/* Downloading progress bar */}
                         {updateCheckStatus === 'downloading' && (
@@ -3053,7 +3025,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                                 setUpdateCheckStatus('error');
                               }
                             }}
-                            className="flex items-center gap-2 px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg text-sm font-semibold text-emerald-400 transition-all animate-pulse"
+                            className="flex items-center gap-2 px-4 py-2 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg text-sm font-semibold text-emerald-400 transition-all"
                           >
                             <Rocket size={14} />
                             Restart Now
@@ -3062,12 +3034,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </div>
                     </div>
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileText className="text-neutral-400" size={18} />
-                        <div>
-                          <h4 className="text-sm font-medium text-neutral-200">Documentation</h4>
-                          <p className="text-[10px] text-neutral-500">Learn how to configure and use Rie-AI.</p>
-                        </div>
+                      <div>
+                        <h4 className="text-sm font-medium text-neutral-200">Documentation</h4>
+                        <p className="text-[10px] text-neutral-500">Learn how to configure and use Rie-AI.</p>
                       </div>
                       <button
                         onClick={async () => {
@@ -3313,10 +3282,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="text-emerald-400" size={18} />
-                          <h4 className="text-sm font-medium text-neutral-200">Gemini Live Voice Persona</h4>
-                        </div>
+                        <h4 className="text-sm font-medium text-neutral-200">Gemini Live Voice Persona</h4>
                         <p className="text-[10px] text-neutral-500 mt-0.5">
                           Voice persona for zero-delay, bidirectional speech-to-speech conversations.
                         </p>
@@ -3360,10 +3326,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                        <div className="flex items-center gap-2">
-                          <Mic className="text-emerald-400" size={18} />
-                          <h4 className="text-sm font-medium text-neutral-200">Wake Word</h4>
-                        </div>
+                        <h4 className="text-sm font-medium text-neutral-200">Wake Word</h4>
                         <p className="text-[10px] text-neutral-500 mt-0.5">
                           Say “Hey Rie” to open Live Voice automatically. The listener runs locally on Windows.
                         </p>

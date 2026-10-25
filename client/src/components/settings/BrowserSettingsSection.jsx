@@ -483,10 +483,10 @@ export default function BrowserSettingsSection() {
                 }`}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <EyeOff className={`w-3.5 h-3.5 ${headlessMode === "headless" ? "text-amber-400" : "text-neutral-500"}`} />
+                  <EyeOff className={`w-3.5 h-3.5 ${headlessMode === "headless" ? "text-neutral-200" : "text-neutral-500"}`} />
                   <span className="font-medium text-xs text-neutral-200">Headless</span>
                   {headlessMode === "headless" && (
-                    <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-200 border border-neutral-600 font-mono">
+                    <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-white/[0.08] text-neutral-200 border border-white/10 font-mono">
                       Active
                     </span>
                   )}
@@ -506,10 +506,10 @@ export default function BrowserSettingsSection() {
                 }`}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <Eye className={`w-3.5 h-3.5 ${headlessMode === "normal" ? "text-emerald-400" : "text-neutral-500"}`} />
+                  <Eye className={`w-3.5 h-3.5 ${headlessMode === "normal" ? "text-neutral-200" : "text-neutral-500"}`} />
                   <span className="font-medium text-xs text-neutral-200">Normal</span>
                   {headlessMode === "normal" && (
-                    <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-200 border border-neutral-600 font-mono">
+                    <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-white/[0.08] text-neutral-200 border border-white/10 font-mono">
                       Active
                     </span>
                   )}
@@ -529,10 +529,10 @@ export default function BrowserSettingsSection() {
                 }`}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <Sparkles className={`w-3.5 h-3.5 ${headlessMode === "auto" ? "text-sky-400" : "text-neutral-500"}`} />
+                  <Sparkles className={`w-3.5 h-3.5 ${headlessMode === "auto" ? "text-neutral-200" : "text-neutral-500"}`} />
                   <span className="font-medium text-xs text-neutral-200">Auto</span>
                   {headlessMode === "auto" && (
-                    <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-neutral-700 text-neutral-200 border border-neutral-600 font-mono">
+                    <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-white/[0.08] text-neutral-200 border border-white/10 font-mono">
                       Active
                     </span>
                   )}

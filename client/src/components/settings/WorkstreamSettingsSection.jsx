@@ -233,10 +233,10 @@ export default function WorkstreamSettingsSection() {
   return (
     <div className="space-y-5 text-neutral-200 animate-in fade-in duration-200">
       {/* 1. Master Switch Card */}
-      <div className="p-4 rounded-xl bg-neutral-900/40 border border-white/5 flex items-center justify-between gap-4">
+      <div className="p-4 rounded-xl bg-neutral-900/40 border border-white/[0.06] flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-            <Activity className="w-5 h-5" />
+          <div className="w-8 h-8 rounded-lg bg-neutral-800/80 border border-white/5 flex items-center justify-center text-neutral-300 shrink-0">
+            <Activity className="w-4 h-4" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -246,14 +246,14 @@ export default function WorkstreamSettingsSection() {
                   ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                   : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
               }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${isMasterOn ? 'bg-emerald-400 animate-pulse' : 'bg-neutral-500'}`} />
-                {isMasterOn ? 'Active & Collecting' : 'Disabled'}
+                <span className={`w-1.5 h-1.5 rounded-full ${isMasterOn ? 'bg-emerald-400' : 'bg-neutral-500'}`} />
+                {isMasterOn ? 'Active' : 'Disabled'}
               </span>
               {isSaving && (
-                <span className="text-[10px] text-emerald-400 animate-pulse font-medium">Syncing...</span>
+                <span className="text-[10px] text-neutral-400 font-medium">Syncing...</span>
               )}
             </div>
-            <p className="text-xs text-neutral-400 mt-0.5 leading-normal">
+            <p className="text-xs text-neutral-500 mt-0.5 leading-normal">
               Allows Rie to passively understand your open apps, code changes, and research context to build continuous working memory.
             </p>
           </div>
@@ -277,10 +277,10 @@ export default function WorkstreamSettingsSection() {
         <motion.div
           initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-2.5 px-3 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center justify-between"
+          className="p-2.5 px-3 rounded-lg bg-neutral-800 border border-white/10 text-neutral-200 text-xs flex items-center justify-between"
         >
           <span>{pluginNotice}</span>
-          <button onClick={() => setPluginNotice(null)} className="text-emerald-400 hover:text-white">
+          <button onClick={() => setPluginNotice(null)} className="text-neutral-400 hover:text-white">
             <X className="w-3.5 h-3.5" />
           </button>
         </motion.div>
@@ -297,11 +297,11 @@ export default function WorkstreamSettingsSection() {
           </span>
         </div>
 
-        <div className="rounded-xl border border-white/5 bg-neutral-900/30 divide-y divide-white/5 overflow-hidden">
+        <div className="rounded-xl border border-white/[0.06] bg-neutral-900/30 divide-y divide-white/[0.06] overflow-hidden">
           {/* Windows Apps & Focus */}
           <SensorRow
-            icon={<AppWindow className="w-4 h-4 text-sky-400" />}
-            iconBg="bg-sky-500/10"
+            icon={<AppWindow className="w-4 h-4 text-neutral-400" />}
+            iconBg="bg-neutral-800/60"
             title="Windows Apps & Focus"
             description="Detects active application switches and time spent in each window."
             enabled={sensors.windows !== false}
@@ -317,8 +317,8 @@ export default function WorkstreamSettingsSection() {
 
           {/* Idle Detection */}
           <SensorRow
-            icon={<Clock className="w-4 h-4 text-amber-400" />}
-            iconBg="bg-amber-500/10"
+            icon={<Clock className="w-4 h-4 text-neutral-400" />}
+            iconBg="bg-neutral-800/60"
             title="Idle Detection"
             description="Detects user inactivity (>2 min) to split activity into coherent work sessions."
             enabled={sensors.idle !== false}
@@ -334,11 +334,11 @@ export default function WorkstreamSettingsSection() {
 
           {/* Clipboard Activity */}
           <SensorRow
-            icon={<Clipboard className="w-4 h-4 text-purple-400" />}
-            iconBg="bg-purple-500/10"
+            icon={<Clipboard className="w-4 h-4 text-neutral-400" />}
+            iconBg="bg-neutral-800/60"
             title="Clipboard Activity"
             badge="OFF by default"
-            badgeColor="bg-purple-500/10 text-purple-300 border-purple-500/20"
+            badgeColor="bg-white/[0.04] text-neutral-400 border-white/5"
             description="Captures copied text context. Sensitive apps & passwords are automatically masked."
             enabled={sensors.clipboard === true}
             masterEnabled={isMasterOn}
@@ -353,8 +353,8 @@ export default function WorkstreamSettingsSection() {
 
           {/* Browser Activity */}
           <SensorRow
-            icon={<Globe className="w-4 h-4 text-teal-400" />}
-            iconBg="bg-teal-500/10"
+            icon={<Globe className="w-4 h-4 text-neutral-400" />}
+            iconBg="bg-neutral-800/60"
             title="Browser Activity"
             description="Captures active tabs and research context across Brave, Chrome, and Edge."
             detectedText={sensorStatus?.sensors?.browser?.detected_browsers?.join(', ')}
@@ -363,7 +363,7 @@ export default function WorkstreamSettingsSection() {
             status={sensorStatus?.sensors?.browser}
             pluginAction={{
               label: 'Load Extension',
-              icon: <FolderOpen className="w-3 h-3 text-teal-400" />,
+              icon: <FolderOpen className="w-3 h-3 text-neutral-400" />,
               onClick: handleOpenBrowserFolder,
             }}
             onChange={(val) => {
@@ -376,8 +376,8 @@ export default function WorkstreamSettingsSection() {
 
           {/* IDE Activity */}
           <SensorRow
-            icon={<Code2 className="w-4 h-4 text-blue-400" />}
-            iconBg="bg-blue-500/10"
+            icon={<Code2 className="w-4 h-4 text-neutral-400" />}
+            iconBg="bg-neutral-800/60"
             title="IDE Activity"
             description="Streams active workspace files and code edits from VS Code and Antigravity."
             detectedText={sensorStatus?.sensors?.ide?.detected_ides?.join(', ')}
@@ -394,10 +394,10 @@ export default function WorkstreamSettingsSection() {
                     loading: installingPlugin === 'ide',
                   }
                 : {
-                    label: '⚡ Auto-Inject',
+                    label: 'Auto-Inject',
                     onClick: handleInstallIde,
                     loading: installingPlugin === 'ide',
-                    highlight: true,
+                    highlight: false,
                   }
             }
             onChange={(val) => {
@@ -410,8 +410,8 @@ export default function WorkstreamSettingsSection() {
 
           {/* Terminal Activity */}
           <SensorRow
-            icon={<Terminal className="w-4 h-4 text-rose-400" />}
-            iconBg="bg-rose-500/10"
+            icon={<Terminal className="w-4 h-4 text-neutral-400" />}
+            iconBg="bg-neutral-800/60"
             title="Terminal Activity"
             description="Captures executed commands, working directories, and execution exit codes."
             detectedText={sensorStatus?.sensors?.terminal?.detected_shells?.join(', ')}
@@ -428,10 +428,10 @@ export default function WorkstreamSettingsSection() {
                     loading: installingPlugin === 'terminal',
                   }
                 : {
-                    label: '⚡ Inject Hooks',
+                    label: 'Inject Hooks',
                     onClick: handleInstallTerminal,
                     loading: installingPlugin === 'terminal',
-                    highlight: true,
+                    highlight: false,
                   }
             }
             onChange={(val) => {
@@ -446,20 +446,19 @@ export default function WorkstreamSettingsSection() {
 
       {/* 3. Privacy Safeguards */}
       <div className="space-y-2">
-        <div className="flex items-center gap-1.5 px-1">
-          <Shield className="w-3.5 h-3.5 text-emerald-400" />
+        <div className="px-1">
           <h3 className="text-xs font-semibold tracking-wider text-neutral-400 uppercase">
             Privacy Safeguards
           </h3>
         </div>
 
-        <div className="rounded-xl border border-white/5 bg-neutral-900/30 divide-y divide-white/5 overflow-hidden">
+        <div className="rounded-xl border border-white/[0.06] bg-neutral-900/30 divide-y divide-white/[0.06] overflow-hidden">
           {/* Track Clipboard Content */}
           <div className="flex items-center justify-between p-3.5 px-4 hover:bg-white/[0.015] transition-colors gap-4">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-neutral-200">Track Clipboard Content</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] text-neutral-400 border border-white/5 font-medium">
                   OFF by default
                 </span>
               </div>
@@ -527,13 +526,13 @@ export default function WorkstreamSettingsSection() {
 
           {/* Sensitive Apps Always Blocked */}
           <div className="p-3.5 px-4 bg-neutral-950/40 flex items-start gap-3">
-            <div className="p-1 rounded bg-rose-500/10 text-rose-400 shrink-0 mt-0.5">
+            <div className="p-1 rounded bg-neutral-800 text-neutral-400 shrink-0 mt-0.5">
               <Lock className="w-3.5 h-3.5" />
             </div>
             <div className="min-w-0 space-y-1">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-neutral-200">Sensitive Apps Shield</span>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20 font-medium">
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] text-neutral-400 border border-white/5 font-medium">
                   Always Blocked
                 </span>
               </div>
@@ -544,7 +543,7 @@ export default function WorkstreamSettingsSection() {
                 {(privacy.exclude_apps || ['1password', 'bitwarden', 'keepass', 'lastpass', 'credential', 'banking', 'wallet', 'secret']).map((item) => (
                   <span
                     key={item}
-                    className="px-2 py-0.5 text-[10px] rounded bg-white/5 text-neutral-300 border border-white/5"
+                    className="px-2 py-0.5 text-[10px] rounded bg-white/5 text-neutral-400 border border-white/5 font-mono"
                   >
                     {item}
                   </span>
@@ -558,8 +557,7 @@ export default function WorkstreamSettingsSection() {
       {/* 4. Memory Pipelines */}
       <div className="space-y-2">
         <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-1.5">
-            <Brain className="w-3.5 h-3.5 text-indigo-400" />
+          <div>
             <h3 className="text-xs font-semibold tracking-wider text-neutral-400 uppercase">
               Memory Pipelines
             </h3>
@@ -571,14 +569,14 @@ export default function WorkstreamSettingsSection() {
           )}
         </div>
 
-        <div className="rounded-xl border border-white/5 bg-neutral-900/30 divide-y divide-white/5 overflow-hidden">
+        <div className="rounded-xl border border-white/[0.06] bg-neutral-900/30 divide-y divide-white/[0.06] overflow-hidden">
           {/* Session Aggregation */}
           <div className="flex items-center justify-between p-3.5 px-4 hover:bg-white/[0.015] transition-colors gap-4">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-neutral-200">Session Aggregation</span>
                 {sensorStatus?.memory?.sessions?.total_sessions > 0 && (
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-medium">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] text-neutral-400 border border-white/5 font-medium">
                     {sensorStatus.memory.sessions.total_sessions} sessions synthesized
                   </span>
                 )}
@@ -747,15 +745,15 @@ function SensorRow({
   } else if (rawStatus === 'connected' || rawStatus === 'active') {
     statusLabel = 'Connected';
     statusBadgeStyle = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-    dotColor = 'bg-emerald-400 animate-pulse';
+    dotColor = 'bg-emerald-400';
   } else if (rawStatus === 'idle') {
     statusLabel = 'Active (Idle)';
     statusBadgeStyle = 'bg-neutral-800 text-neutral-400 border-neutral-700/60';
     dotColor = 'bg-neutral-400';
   } else {
     statusLabel = 'Not Connected';
-    statusBadgeStyle = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-    dotColor = 'bg-amber-400';
+    statusBadgeStyle = 'bg-neutral-800/80 text-neutral-400 border-neutral-700/60';
+    dotColor = 'bg-neutral-500';
   }
 
   return (
@@ -778,15 +776,15 @@ function SensorRow({
 
             {/* Plugin Injected Badge if applicable */}
             {pluginAction?.isInstalled && pluginAction.installedBadge && (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <Check className="w-2.5 h-2.5" />
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-white/[0.04] text-neutral-300 border border-white/10">
+                <Check className="w-2.5 h-2.5 text-emerald-400" />
                 {pluginAction.installedBadge}
               </span>
             )}
 
             {/* Extra badge if present (e.g. OFF by default) */}
             {badge && (
-              <span className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.2 rounded border ${badgeColor}`}>
+              <span className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded border ${badgeColor}`}>
                 {badge}
               </span>
             )}
@@ -837,16 +835,12 @@ function SensorRow({
                 type="button"
                 onClick={pluginAction.onClick}
                 disabled={pluginAction.loading}
-                className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 ${
-                  pluginAction.highlight
-                    ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 shadow-sm shadow-emerald-950/20'
-                    : 'bg-white/5 hover:bg-white/10 text-neutral-300 border border-white/10'
-                }`}
+                className="text-xs font-medium px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 hover:border-neutral-600"
               >
                 {pluginAction.loading ? (
                   <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
                 ) : (
-                  pluginAction.icon || <Zap className="w-3 h-3 text-emerald-400" />
+                  pluginAction.icon || null
                 )}
                 <span>{pluginAction.loading ? 'Injecting...' : pluginAction.label}</span>
               </button>

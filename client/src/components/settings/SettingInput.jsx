@@ -37,7 +37,7 @@ export function SettingInput({ label, dbKey, value, onSave, isSaving, placeholde
       <div className="flex items-center gap-2.5 shrink-0">
         <label className="text-xs font-medium text-neutral-400 tracking-wider">{label}</label>
         {isConfigured && !isEditing && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-neutral-400 border border-white/10 font-mono">
             Set
           </span>
         )}

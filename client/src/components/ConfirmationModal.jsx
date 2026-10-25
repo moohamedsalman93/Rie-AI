@@ -54,22 +54,23 @@ export function ConfirmationModal({
     return (
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-                    {/* Backdrop */}
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={onClose}
-                        className="fixed inset-0 bg-black/70 backdrop-blur-sm transition-opacity"
-                    />
-
+                <motion.div
+                    key="confirmation-backdrop"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15, ease: "easeOut" }}
+                    onClick={onClose}
+                    className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+                >
                     {/* Modal Box */}
                     <motion.div
+                        key="confirmation-box"
                         initial={{ opacity: 0, scale: 0.96, y: 10 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.96, y: 10 }}
                         transition={{ duration: 0.15, ease: "easeOut" }}
+                        onClick={(e) => e.stopPropagation()}
                         className="relative w-full max-w-[340px] bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-5 overflow-hidden"
                     >
                         {/* Close button */}
@@ -117,7 +118,7 @@ export function ConfirmationModal({
                             </div>
                         </div>
                     </motion.div>
-                </div>
+                </motion.div>
             )}
         </AnimatePresence>
     );

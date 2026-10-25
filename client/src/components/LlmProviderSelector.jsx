@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Check, Sparkles } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { PROVIDERS } from './settings/constants';
 
 export function LlmProviderSelector({
@@ -14,7 +14,7 @@ export function LlmProviderSelector({
   const activeProviderKey = provider || settings?.llm_provider || 'rie';
   const currentProviderInfo = PROVIDERS[activeProviderKey] || {
     label: activeProviderKey,
-    icon: <Sparkles size={14} />,
+    icon: null,
   };
 
   useEffect(() => {
@@ -68,32 +68,37 @@ export function LlmProviderSelector({
     return isConfigured(key) || key === activeProviderKey;
   });
 
+  const numCols = Math.max(2, Math.ceil(configuredProviders.length / 2));
+
   return (
     <div className="relative inline-block select-none" ref={containerRef}>
-      {/* Collapsed Provider Chip Button */}
-      {!isOpen && (
-        <motion.button
-          layoutId="provider-chip-container"
-          type="button"
-          onClick={() => setIsOpen(true)}
-          className="flex items-center gap-1.5 rounded-lg border bg-neutral-800/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-neutral-700/60 px-2 py-1 text-xs transition-colors shadow-sm shrink-0"
-          title="Click to switch LLM Provider"
-        >
-          <span className="flex items-center justify-center shrink-0 w-3.5 h-3.5">
-            {currentProviderInfo.icon}
-          </span>
-          <span className="font-medium text-[11px] tracking-wide max-w-[70px] sm:max-w-[110px] truncate">
-            {currentProviderInfo.label || activeProviderKey}
-          </span>
-          <ChevronDown size={12} className="text-neutral-400 shrink-0" />
-        </motion.button>
-      )}
+      {/* Provider Icon-Only Trigger Button */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs transition-colors shadow-sm shrink-0 ${
+          isOpen
+            ? 'bg-neutral-800 text-white border-neutral-600'
+            : 'bg-neutral-800/80 hover:bg-neutral-800 text-neutral-300 hover:text-white border-neutral-700/60'
+        }`}
+        title={`LLM Provider: ${currentProviderInfo.label || activeProviderKey}`}
+        aria-label={`LLM Provider: ${currentProviderInfo.label || activeProviderKey}`}
+      >
+        <span className="flex items-center justify-center shrink-0 w-4 h-4">
+          {currentProviderInfo.icon}
+        </span>
+        <ChevronDown
+          size={11}
+          className={`text-neutral-400 shrink-0 transition-transform duration-200 ${
+            isOpen ? 'rotate-180 text-emerald-400' : ''
+          }`}
+        />
+      </button>
 
-      {/* Expanded Provider Chip Card with Morphing Transition */}
+      {/* 2-Row Icon-Only Popover Grid */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            layoutId="provider-chip-container"
             initial={{ opacity: 0, scale: 0.95, y: 4 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 4 }}
@@ -103,32 +108,13 @@ export function LlmProviderSelector({
               damping: 30,
               mass: 0.8,
             }}
-            className="absolute bottom-0 right-0 z-50 min-w-[150px] w-auto rounded-xl border border-neutral-700/80 bg-neutral-800/95 p-1 shadow-2xl backdrop-blur-xl overflow-hidden origin-bottom-right"
+            className="absolute bottom-full mb-2 right-0 z-50 w-max rounded-xl border border-neutral-700/80 bg-neutral-900/95 p-2 shadow-2xl backdrop-blur-xl origin-bottom-right"
           >
-            {/* Active Chip Header Bar */}
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              className="flex items-center justify-between w-full gap-2 px-2.5 py-1 text-xs text-white border-b border-white/10 mb-1"
-            >
-              <div className="flex items-center gap-1.5">
-                <span className="flex items-center justify-center shrink-0 w-3.5 h-3.5">
-                  {currentProviderInfo.icon}
-                </span>
-                <span className="font-semibold text-[11px] tracking-wide">
-                  {currentProviderInfo.label || activeProviderKey}
-                </span>
-              </div>
-              <ChevronDown size={12} className="text-emerald-400 rotate-180 shrink-0" />
-            </button>
-
-            {/* Expanding List of Configured Providers */}
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="space-y-0.5 max-h-48 overflow-y-auto custom-scrollbar"
+            <div
+              className="grid gap-2"
+              style={{
+                gridTemplateColumns: `repeat(${numCols}, minmax(40px, 40px))`,
+              }}
             >
               {configuredProviders.map(([key, providerObj]) => {
                 const isSelected = activeProviderKey === key;
@@ -136,27 +122,27 @@ export function LlmProviderSelector({
                 return (
                   <button
                     key={key}
+                    type="button"
                     onClick={() => handleProviderClick(key)}
-                    className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                    title={providerObj.label}
+                    aria-label={providerObj.label}
+                    className={`group relative flex items-center justify-center w-10 h-10 rounded-lg transition-all ${
                       isSelected
-                        ? 'bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30'
-                        : 'text-neutral-300 hover:bg-white/10 hover:text-white border border-transparent'
+                        ? 'bg-neutral-800 text-white border border-white/20 shadow-sm ring-1 ring-emerald-500/40'
+                        : 'bg-neutral-800/40 text-neutral-400 hover:text-white hover:bg-white/[0.08] hover:border-white/10 border border-transparent'
                     }`}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="flex items-center justify-center shrink-0 w-3.5 h-3.5">
-                        {providerObj.icon}
-                      </span>
-                      <span className="truncate text-xs">{providerObj.label}</span>
-                    </div>
+                    <span className="flex items-center justify-center shrink-0 w-5 h-5 transition-transform group-hover:scale-110">
+                      {providerObj.icon}
+                    </span>
 
                     {isSelected && (
-                      <Check size={13} className="text-emerald-400 shrink-0 ml-2" />
+                      <span className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400 ring-1 ring-neutral-900" />
                     )}
                   </button>
                 );
               })}
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

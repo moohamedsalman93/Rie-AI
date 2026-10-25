@@ -48,22 +48,17 @@ export function DiagnosticsTab({ settings, onUpdateSetting }) {
   return (
     <div className="space-y-6">
       {/* DB MAINTENANCE */}
-      <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/30 p-5 space-y-4">
+      <div className="rounded-xl border border-white/[0.06] bg-neutral-900/40 p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400">
-              <Database className="h-4 w-4" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-white">Database & Checkpoints Storage</h3>
-              <p className="text-xs text-neutral-400">Reclaim disk space by vacuuming the SQLite checkpoint database</p>
-            </div>
+          <div>
+            <h3 className="text-sm font-semibold text-white">Database & Checkpoints Storage</h3>
+            <p className="text-xs text-neutral-500">Reclaim disk space by vacuuming the SQLite checkpoint database</p>
           </div>
           <motion.button
             whileTap={{ scale: 0.96 }}
             onClick={handleVacuum}
             disabled={vacuuming}
-            className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-950/70 disabled:opacity-60 cursor-pointer"
+            className="flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-700 disabled:opacity-60 cursor-pointer"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${vacuuming ? 'animate-spin' : ''}`} />
             {vacuuming ? 'Vacuuming...' : 'Vacuum Checkpoints DB'}
@@ -86,16 +81,11 @@ export function DiagnosticsTab({ settings, onUpdateSetting }) {
       </div>
 
       {/* LOGS VIEWER */}
-      <div className="rounded-2xl border border-neutral-800/80 bg-neutral-900/30 p-5 space-y-4">
+      <div className="rounded-xl border border-white/[0.06] bg-neutral-900/40 p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-blue-500/20 bg-blue-500/10 text-blue-400">
-              <Activity className="h-4 w-4" />
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-white">Application Logs</h3>
-              <p className="text-xs text-neutral-400">Real-time backend diagnostics and runtime logs</p>
-            </div>
+          <div>
+            <h3 className="text-sm font-semibold text-white">Application Logs</h3>
+            <p className="text-xs text-neutral-500">Real-time backend diagnostics and runtime logs</p>
           </div>
 
           <div className="flex items-center gap-2">

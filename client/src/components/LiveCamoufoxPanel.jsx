@@ -18,7 +18,8 @@ import {
   AlertCircle,
   FileText,
   Sparkles,
-  Clipboard
+  Clipboard,
+  MoreVertical
 } from 'lucide-react';
 import {
   performBrowserAction,
@@ -67,6 +68,30 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
   const scrollAccRef = useRef({ deltaX: 0, deltaY: 0, scheduled: false });
   const currentUrlRef = useRef(currentUrl);
   currentUrlRef.current = currentUrl;
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+  const menuRef = useRef(null);
+
+  // Close menu on click outside or Escape key
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setIsMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isMenuOpen]);
 
   // Fetch registered browser profiles, sources, and check active session status
   useEffect(() => {
@@ -473,41 +498,16 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
         isFocused && interactionMode === 'interactive' ? 'ring-1 ring-emerald-500/20' : ''
       }`}
     >
-      {/* Sleek Minimal Dark Header Toolbar */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-neutral-900/90 border-b border-neutral-800/80">
-        <div className="flex items-center gap-1.5 text-xs text-neutral-300 font-medium bg-neutral-800/80 px-2 py-1 rounded-lg border border-neutral-700/60 shrink-0">
-          <ShieldCheck size={13} className="text-neutral-400 shrink-0" />
-          <span className="hidden md:inline text-neutral-300">Camoufox</span>
-          <span className="text-neutral-600 font-normal">|</span>
-          <User size={12} className="text-emerald-400 shrink-0" />
-          <select
-            value={selectedProfile}
-            onChange={(e) => {
-              const newProf = e.target.value;
-              setSelectedProfile(newProf);
-              if (isActive) {
-                handleOpenSession(!isNativeMode, newProf);
-              }
-            }}
-            className="bg-transparent text-neutral-200 text-xs font-mono outline-none cursor-pointer border-none py-0 pl-0 pr-1"
-            title="Active Persistent Browser Profile"
-          >
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id} className="bg-neutral-900 text-neutral-200">
-                {p.name || p.id}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* History Navigation Buttons */}
+      {/* Sleek Modern Dark Browser Header Toolbar */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-neutral-900/90 border-b border-neutral-800/80 shrink-0">
+        {/* Navigation Controls: Back, Forward, Reload */}
         <div className="flex items-center gap-0.5 shrink-0">
           <button
             type="button"
             onClick={handleGoBack}
             disabled={!isActive || isNavigating}
             title="Go Back (History)"
-            className="p-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-neutral-200 disabled:opacity-30 disabled:hover:bg-neutral-950 transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800/90 text-neutral-400 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-neutral-950 transition-all cursor-pointer disabled:cursor-not-allowed"
           >
             <ChevronLeft size={13} />
           </button>
@@ -516,102 +516,280 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
             onClick={handleGoForward}
             disabled={!isActive || isNavigating}
             title="Go Forward (History)"
-            className="p-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-neutral-200 disabled:opacity-30 disabled:hover:bg-neutral-950 transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800/90 text-neutral-400 hover:text-neutral-100 disabled:opacity-30 disabled:hover:bg-neutral-950 transition-all cursor-pointer disabled:cursor-not-allowed"
           >
             <ChevronRight size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNavigate()}
+            disabled={isNavigating}
+            title="Reload Page"
+            className="p-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800/90 text-neutral-400 hover:text-neutral-100 disabled:opacity-50 transition-all cursor-pointer"
+          >
+            {isNavigating ? (
+              <Loader2 size={13} className="animate-spin text-neutral-400" />
+            ) : (
+              <RefreshCw size={13} />
+            )}
           </button>
         </div>
 
         {/* Address Bar */}
-        <form onSubmit={handleNavigate} className="flex-1 flex items-center gap-2 bg-neutral-950 border border-neutral-800 rounded-xl px-2.5 py-1 text-xs text-neutral-200 focus-within:border-neutral-700 transition-colors">
-          <Globe size={13} className="text-neutral-500 shrink-0" />
+        <form
+          onSubmit={handleNavigate}
+          className="flex-1 flex items-center gap-2 bg-neutral-950 border border-neutral-800 rounded-xl px-2.5 py-1 text-xs text-neutral-200 focus-within:border-neutral-700 transition-colors shadow-inner"
+        >
+          <div
+            className="flex items-center gap-1 shrink-0 cursor-default"
+            title={`Camoufox Anti-Detect Browser • Active Profile: ${selectedProfile}`}
+          >
+            <ShieldCheck size={13} className="text-emerald-400/90" />
+          </div>
           <input
             type="text"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="Enter URL (e.g. https://google.com)..."
+            placeholder="Search or enter web address..."
             className="w-full bg-transparent outline-none text-xs text-neutral-200 placeholder-neutral-600"
           />
-          <button type="submit" disabled={isNavigating} className="p-1 hover:bg-neutral-800 rounded-md text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer">
+          {isNativeMode && (
+            <span className="shrink-0 px-2 py-0.5 text-[10px] font-medium bg-neutral-800 text-neutral-400 rounded-md border border-neutral-700/60 hidden sm:inline">
+              Native Window
+            </span>
+          )}
+          <button
+            type="submit"
+            disabled={isNavigating}
+            title="Go"
+            className="p-1 hover:bg-neutral-800 rounded-md text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer shrink-0"
+          >
             {isNavigating ? <Loader2 size={12} className="animate-spin text-neutral-400" /> : <ArrowRight size={12} />}
           </button>
         </form>
 
-        {/* Sleek Dark Mode Switch Pills */}
-        <div className="flex items-center bg-neutral-950 p-0.5 rounded-xl border border-neutral-800/90 text-[11px] font-medium shrink-0">
-          <button
-            type="button"
-            onClick={() => handleToggleMode(true)}
-            disabled={isNavigating}
-            title="Embedded In-App Panel"
-            className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              !isNativeMode
-                ? 'bg-neutral-800 text-neutral-100 font-medium border border-neutral-700/80 shadow-sm'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Monitor size={11} />
-            <span className="hidden sm:inline">In-App</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleToggleMode(false)}
-            disabled={isNavigating}
-            title="Pop Out into 60 FPS Native Desktop Window"
-            className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              isNativeMode
-                ? 'bg-neutral-800 text-neutral-100 font-medium border border-neutral-700/80 shadow-sm'
-                : 'text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <ExternalLink size={11} />
-            <span className="hidden sm:inline">Native Window</span>
-          </button>
-        </div>
+        {/* Header Right Actions: Menu & Close */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Browser Overflow Menu */}
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setIsMenuOpen((prev) => !prev)}
+              title="Browser Options & Settings"
+              aria-label="Browser Options & Settings"
+              className={`p-1.5 rounded-lg border text-xs transition-all cursor-pointer flex items-center justify-center ${
+                isMenuOpen
+                  ? 'bg-neutral-800 border-neutral-700 text-neutral-100 shadow-sm'
+                  : 'bg-neutral-950 hover:bg-neutral-800 border-neutral-800/90 text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <MoreVertical size={14} />
+            </button>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => setInteractionMode(m => m === 'interactive' ? 'view' : 'interactive')}
-            title={interactionMode === 'interactive' ? 'Live Interactive Mode ON (Click & Type)' : 'Read-Only View Mode'}
-            className={`p-1.5 rounded-lg border text-xs transition-colors flex items-center gap-1 ${
-              interactionMode === 'interactive'
-                ? 'bg-neutral-800 border-neutral-700 text-neutral-200'
-                : 'bg-neutral-900/60 border-neutral-800 text-neutral-500'
-            }`}
-          >
-            <MousePointer size={13} />
-          </button>
+            {/* Menu Popover Dropdown */}
+            {isMenuOpen && (
+              <div
+                className="absolute right-0 top-full mt-2 w-72 rounded-2xl border border-neutral-800 bg-neutral-900/95 shadow-2xl backdrop-blur-xl p-2 z-50 text-xs animate-in fade-in slide-in-from-top-2 duration-150 origin-top-right divide-y divide-neutral-800/80"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {/* 1. Display Mode Toggle */}
+                <div className="p-1.5 space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 px-1 py-0.5">
+                    Display Mode
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 bg-neutral-950/70 p-1 rounded-xl border border-neutral-800/70">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleToggleMode(true);
+                        setIsMenuOpen(false);
+                      }}
+                      disabled={isNavigating}
+                      className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg font-medium transition-all cursor-pointer text-[11px] ${
+                        !isNativeMode
+                          ? 'bg-neutral-800 text-neutral-100 shadow-sm border border-neutral-700/60'
+                          : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+                      }`}
+                    >
+                      <Monitor size={12} />
+                      <span>In-App</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleToggleMode(false);
+                        setIsMenuOpen(false);
+                      }}
+                      disabled={isNavigating}
+                      className={`flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg font-medium transition-all cursor-pointer text-[11px] ${
+                        isNativeMode
+                          ? 'bg-neutral-800 text-neutral-100 shadow-sm border border-neutral-700/60'
+                          : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+                      }`}
+                    >
+                      <ExternalLink size={12} />
+                      <span>Native 60 FPS</span>
+                    </button>
+                  </div>
+                </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setIsCookieModalOpen(true);
-              setCookieFeedback(null);
-            }}
-            title="Import Cookies & Logged-in Sessions from Other Browsers"
-            className="px-2 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 hover:text-amber-300 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-medium"
-          >
-            <Cookie size={12} />
-            <span className="hidden md:inline text-[11px]">Import Cookies</span>
-          </button>
+                {/* 2. Persistent Profile Selector */}
+                <div className="p-1.5 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-neutral-500 px-1 py-0.5">
+                    <span>Active Profile</span>
+                    <span className="text-[10px] text-emerald-400 font-normal flex items-center gap-1">
+                      <ShieldCheck size={10} /> Stealth Mode
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 px-2.5 py-1.5 bg-neutral-950/70 rounded-xl border border-neutral-800/70">
+                    <User size={13} className="text-emerald-400 shrink-0" />
+                    <select
+                      value={selectedProfile}
+                      onChange={(e) => {
+                        const newProf = e.target.value;
+                        setSelectedProfile(newProf);
+                        if (isActive) {
+                          handleOpenSession(!isNativeMode, newProf);
+                        }
+                      }}
+                      className="bg-transparent text-neutral-200 text-xs outline-none cursor-pointer border-none py-0 pl-0 pr-1 w-full font-medium"
+                      title="Active Persistent Browser Profile"
+                    >
+                      {profiles.map((p) => (
+                        <option key={p.id} value={p.id} className="bg-neutral-900 text-neutral-200">
+                          {p.name || p.id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
-          <button
-            type="button"
-            onClick={() => handleNavigate()}
-            title="Reload Page"
-            className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
-          >
-            <RefreshCw size={13} />
-          </button>
+                {/* 3. Browser Tools & Features */}
+                <div className="p-1.5 space-y-0.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500 px-1 py-0.5">
+                    Tools & Sessions
+                  </div>
 
+                  {/* Import Cookies */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCookieModalOpen(true);
+                      setCookieFeedback(null);
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-left text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/70 transition-colors cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 group-hover:bg-amber-500/20 transition-colors">
+                        <Cookie size={13} />
+                      </div>
+                      <div>
+                        <div className="font-medium text-xs text-neutral-200">Import Cookies & Sessions</div>
+                        <div className="text-[10px] text-neutral-500">Sync Chrome, Edge, Brave sessions</div>
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* Interactive Controls Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInteractionMode((m) => (m === 'interactive' ? 'view' : 'interactive'));
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-left text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/70 transition-colors cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className={`p-1.5 rounded-lg border transition-colors ${
+                        interactionMode === 'interactive'
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          : 'bg-neutral-800/80 text-neutral-400 border-neutral-700/60'
+                      }`}>
+                        <MousePointer size={13} />
+                      </div>
+                      <div>
+                        <div className="font-medium text-xs text-neutral-200">Interactive Controls</div>
+                        <div className="text-[10px] text-neutral-500">Click & type directly on webview</div>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md border ${
+                      interactionMode === 'interactive'
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : 'bg-neutral-800 text-neutral-500 border-neutral-700'
+                    }`}>
+                      {interactionMode === 'interactive' ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+
+                  {/* Copy URL */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = currentUrl || urlInput;
+                      if (target) {
+                        navigator.clipboard.writeText(target);
+                        setCopiedUrl(true);
+                        setTimeout(() => setCopiedUrl(false), 1500);
+                      }
+                    }}
+                    className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-left text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/70 transition-colors cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-lg bg-neutral-800/80 text-neutral-400 border border-neutral-700/60 group-hover:text-neutral-200 transition-colors">
+                        <Clipboard size={13} />
+                      </div>
+                      <div>
+                        <div className="font-medium text-xs text-neutral-200">Copy Current URL</div>
+                        <div className="text-[10px] text-neutral-500">Copy link to clipboard</div>
+                      </div>
+                    </div>
+                    {copiedUrl && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        Copied!
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {/* 4. Actions: Reload & Close */}
+                <div className="p-1.5 space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNavigate();
+                      setIsMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800/70 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw size={13} className="text-neutral-400" />
+                    <span className="font-medium text-xs">Reload Current Page</span>
+                  </button>
+
+                  {onClose && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        onClose();
+                      }}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                    >
+                      <X size={13} className="text-rose-400" />
+                      <span className="font-medium text-xs">Close Browser Panel</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Close Panel Button */}
           {onClose && (
             <button
               type="button"
               onClick={onClose}
               title="Close Panel"
-              className="p-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 text-neutral-500 hover:text-neutral-200 transition-colors cursor-pointer"
+              className="p-1.5 rounded-lg bg-neutral-950 hover:bg-neutral-800 border border-neutral-800/90 text-neutral-400 hover:text-neutral-200 transition-colors cursor-pointer"
             >
               <X size={13} />
             </button>

@@ -24,6 +24,7 @@ import {
     Compass,
     Hammer,
     FlaskConical,
+    Paperclip,
 } from 'lucide-react';
 import { getHistory, getBrowserStatus } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -36,6 +37,7 @@ import { LlmProviderSelector } from './LlmProviderSelector';
 import { ThinkingBlock } from './ThinkingBlock';
 import { QuestionBlock } from './QuestionBlock';
 import { CustomUiContainer } from './custom_ui/CustomUiContainer';
+import { AttachmentPopover } from './AttachmentPopover';
 import VoiceControls from './VoiceControls';
 import VoiceToolActivity from './VoiceToolActivity';
 import VoiceSubAgentActivity from './VoiceSubAgentActivity';
@@ -229,6 +231,7 @@ export function NormalModeLayout({
     const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
     const [browserEngine, setBrowserEngine] = useState(() => localStorage.getItem("rie_browser_engine") || "default");
     const [isBrowserBinaryAvailable, setIsBrowserBinaryAvailable] = useState(false);
+    const attachmentBtnRef = useRef(null);
 
     const botReplyCount = messages.filter(
         (msg) => msg.from === 'bot' && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
@@ -386,10 +389,41 @@ export function NormalModeLayout({
                 data-tauri-drag-region
                 className="h-11 flex items-center justify-between px-3 bg-neutral-900 border-b border-neutral-800 shrink-0  "
             >
-                {/* Left: Logo + Title */}
+                {/* Left: Logo + Title (+ Pipe, Add & History Buttons only when sidebar closed) */}
                 <div data-tauri-drag-region className="flex items-center gap-2 w-[33.3%]">
-                    <img src={logo} alt="Rie-AI" className="h-5 w-5 object-contain" />
-                    <span className="text-sm font-semibold text-neutral-200">Rie-AI</span>
+                    <div className="flex items-center gap-2 select-none shrink-0">
+                        <img src={logo} alt="Rie-AI" className="h-5 w-5 object-contain" />
+                        <span className="text-sm font-semibold text-neutral-200">Rie-AI</span>
+                    </div>
+
+                    {!isHistoryVisible && (
+                        <>
+                            <span className="text-neutral-600 font-light select-none mx-0.5">|</span>
+
+                            <button
+                                onClick={onNewChat}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors cursor-pointer"
+                                title="New Chat"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="12" y1="5" x2="12" y2="19" />
+                                    <line x1="5" y1="12" x2="19" y2="12" />
+                                </svg>
+                            </button>
+
+                            <button
+                                onClick={() => setIsHistoryVisible(true)}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors cursor-pointer"
+                                title="Toggle History"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+                                </svg>
+                            </button>
+                        </>
+                    )}
                 </div>
 
                 {/* Center: Action Icons */}
@@ -397,36 +431,10 @@ export function NormalModeLayout({
 
                 {/* Right: Window Controls */}
                 <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-end">
-
-                    {!isHistoryVisible && (
-                        <button
-                            onClick={onNewChat}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                            title="New Chat"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <line x1="12" y1="5" x2="12" y2="19" />
-                                <line x1="5" y1="12" x2="19" y2="12" />
-                            </svg>
-                        </button>
-                    )}
-
-                    <button
-                        onClick={() => setIsHistoryVisible(!isHistoryVisible)}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className={`p-2 rounded-lg transition-colors ${isHistoryVisible ? 'bg-neutral-800 text-emerald-400' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
-                        title="Toggle History"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-                        </svg>
-                    </button>
-
                     <button
                         onClick={onToggleTerminal}
                         onMouseDown={(e) => e.stopPropagation()}
-                        className={`p-2 rounded-lg transition-colors ${isTerminalOpen ? 'bg-neutral-700 text-emerald-400' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
+                        className={`p-2 rounded-lg transition-colors ${isTerminalOpen ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'}`}
                         title="Terminal"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -450,9 +458,9 @@ export function NormalModeLayout({
                                 onMouseDown={(e) => e.stopPropagation()}
                                 className={`p-2 rounded-lg transition-colors ${
                                     isBrowserDisabled
-                                        ? 'text-neutral-600 opacity-35 cursor-not-allowed border border-transparent'
+                                        ? 'text-neutral-600 opacity-35 cursor-not-allowed'
                                         : isBrowserPanelOpen
-                                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
+                                        ? 'bg-neutral-700 text-white'
                                         : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
                                 }`}
                                 title={browserTitle}
@@ -975,44 +983,38 @@ export function NormalModeLayout({
                                             <div className="flex items-center gap-1.5 min-w-0 shrink-0">
                                                 <div className="relative shrink-0">
                                                     <button
+                                                        ref={attachmentBtnRef}
                                                         type="button"
                                                         onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-                                                        className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
-                                                        title="Add attachment"
+                                                        disabled={isLoading || isCapturing}
+                                                        className={`p-1.5 rounded-lg transition-colors ${
+                                                            isAttachmentPopoverOpen
+                                                                ? "bg-neutral-700/80 text-white"
+                                                                : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                                                        } disabled:opacity-50`}
+                                                        title="Attach"
                                                     >
-                                                        <Plus size={16} />
+                                                        {isCapturing ? (
+                                                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
+                                                        ) : (
+                                                            <Paperclip size={16} />
+                                                        )}
                                                     </button>
                                                     <AnimatePresence>
                                                         {isAttachmentPopoverOpen && (
-                                                            <motion.div
-                                                                initial={{ opacity: 0, y: 10 }}
-                                                                animate={{ opacity: 1, y: 0 }}
-                                                                exit={{ opacity: 0, y: 10 }}
-                                                                className="absolute bottom-full left-0 mb-2 w-44 rounded-xl border border-neutral-700 bg-neutral-800 p-1 shadow-xl z-50"
-                                                            >
-                                                                <button onClick={onFileUpload} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                                    <Folder size={14} className="text-neutral-400" />
-                                                                    <span>Upload File</span>
-                                                                </button>
-                                                                <button onClick={onCaptureScreen} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                                    <Info size={14} className="text-neutral-400" />
-                                                                    <span>Current Screen</span>
-                                                                </button>
-                                                                <button onClick={onPickProjectPath} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white">
-                                                                    <Folder size={14} className="text-neutral-400" />
-                                                                    <span>Project Path</span>
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => {
-                                                                        setIsAttachmentPopoverOpen(false);
-                                                                        setIsKnowledgePickerOpen(true);
-                                                                    }}
-                                                                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-700 hover:text-white"
-                                                                >
-                                                                    <Folder size={14} className="text-violet-400" />
-                                                                    <span>Custom Knowledge</span>
-                                                                </button>
-                                                            </motion.div>
+                                                            <AttachmentPopover
+                                                                isOpen={isAttachmentPopoverOpen}
+                                                                onClose={() => setIsAttachmentPopoverOpen(false)}
+                                                                triggerRef={attachmentBtnRef}
+                                                                onFileUpload={onFileUpload}
+                                                                onCaptureScreen={onCaptureScreen}
+                                                                onPickProjectPath={onPickProjectPath}
+                                                                onAttachClipboard={onAttachClipboard}
+                                                                onOpenCustomKnowledge={() => {
+                                                                    setIsAttachmentPopoverOpen(false);
+                                                                    setIsKnowledgePickerOpen(true);
+                                                                }}
+                                                            />
                                                         )}
                                                     </AnimatePresence>
 

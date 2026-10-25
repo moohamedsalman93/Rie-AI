@@ -259,8 +259,7 @@ export function SpeakerVoiceSettings({ settings = {}, onSettingChange }) {
       <div className={`${SL.toggleRow} space-y-3`}>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <Fingerprint className="text-emerald-400" size={18} />
+            <div>
               <h4 className="text-sm font-medium text-neutral-200">Speaker Identification</h4>
             </div>
             <p className="text-[10px] text-neutral-500 mt-0.5">
@@ -454,8 +453,7 @@ export function SpeakerVoiceSettings({ settings = {}, onSettingChange }) {
       <div className={`${SL.toggleRow} space-y-3`}>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <Sliders className="text-emerald-400" size={18} />
+            <div>
               <h4 className="text-sm font-medium text-neutral-200">Voice Sensitivity</h4>
             </div>
             <p className="text-[10px] text-neutral-500 mt-0.5">
@@ -487,8 +485,7 @@ export function SpeakerVoiceSettings({ settings = {}, onSettingChange }) {
       <div className={`${SL.toggleRow} space-y-3`}>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="text-emerald-400" size={18} />
+            <div>
               <h4 className="text-sm font-medium text-neutral-200">Audio Privacy &amp; Streaming</h4>
             </div>
             <p className="text-[10px] text-neutral-500 mt-0.5">

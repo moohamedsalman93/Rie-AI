@@ -370,7 +370,7 @@ export function KnowledgeManager() {
                 <button
                   type="button"
                   onClick={() => handleOpenRawTextModal(pack.id, pack.name)}
-                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 rounded-lg transition-colors"
+                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 rounded-lg transition-colors"
                   title="Add Raw Text / Note"
                 >
                   <FileCode size={13} />
@@ -380,7 +380,7 @@ export function KnowledgeManager() {
                   type="button"
                   onClick={() => handleUploadClick(pack.id)}
                   disabled={uploadingAsset}
-                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors disabled:opacity-50"
+                  className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 rounded-lg transition-colors disabled:opacity-50"
                   title="Upload File"
                 >
                   {uploadingAsset && expandedId === pack.id ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
@@ -409,7 +409,7 @@ export function KnowledgeManager() {
                       <button
                         type="button"
                         onClick={() => handleOpenRawTextModal(pack.id, pack.name)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 rounded-lg transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 rounded-lg transition-colors"
                       >
                         <FileCode size={13} />
                         <span>Add Raw Text</span>
@@ -418,7 +418,7 @@ export function KnowledgeManager() {
                         type="button"
                         onClick={() => handleUploadClick(pack.id)}
                         disabled={uploadingAsset}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-neutral-200 rounded-lg transition-colors disabled:opacity-50"
                       >
                         <Upload size={13} />
                         <span>Upload File</span>
@@ -433,27 +433,19 @@ export function KnowledgeManager() {
                         <div
                           key={asset.id}
                           onClick={() => handleOpenAssetModal(pack.id, pack.name, asset, false)}
-                          className="group relative flex flex-col justify-between rounded-xl bg-neutral-900/80 hover:bg-neutral-900 border border-neutral-700/50 hover:border-emerald-500/40 p-3.5 transition-all duration-200 cursor-pointer shadow-sm hover:shadow-lg hover:shadow-emerald-500/5 hover:-translate-y-0.5"
+                          className="group relative flex flex-col justify-between rounded-xl bg-neutral-900/80 hover:bg-neutral-900 border border-neutral-700/50 hover:border-neutral-500 p-3.5 transition-all duration-200 cursor-pointer shadow-sm hover:shadow-lg hover:-translate-y-0.5"
                         >
                           <div>
                             <div className="flex items-start justify-between gap-2 mb-2.5">
                               <div className="flex items-center gap-2.5 min-w-0">
-                                <div className={`p-2 rounded-lg border transition-colors shrink-0 ${
-                                  isImg 
-                                    ? 'bg-purple-500/10 border-purple-500/20 text-purple-400 group-hover:border-purple-500/40' 
-                                    : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 group-hover:border-emerald-500/40'
-                                }`}>
+                                <div className="p-2 rounded-lg border border-neutral-700 bg-neutral-800/80 text-neutral-300 shrink-0">
                                   {isImg ? <ImageIcon size={16} /> : <FileText size={16} />}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="text-xs font-semibold text-neutral-200 truncate group-hover:text-emerald-400 transition-colors" title={asset.filename}>
+                                  <div className="text-xs font-semibold text-neutral-200 truncate group-hover:text-white transition-colors" title={asset.filename}>
                                     {asset.filename}
                                   </div>
-                                  <span className={`inline-block text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded mt-0.5 border ${
-                                    isImg
-                                      ? 'bg-purple-500/10 text-purple-300 border-purple-500/20'
-                                      : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                                  }`}>
+                                  <span className="inline-block text-[9px] font-medium tracking-wider px-1.5 py-0.5 rounded mt-0.5 border bg-white/[0.05] text-neutral-400 border-white/10 font-mono">
                                     {asset.asset_type || (isImg ? 'IMAGE' : 'TEXT')}
                                   </span>
                                 </div>
@@ -753,12 +745,12 @@ export function KnowledgeManager() {
             >
               <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-800 bg-neutral-900/90 shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-xl border bg-cyan-500/10 border-cyan-500/20 text-cyan-400">
+                  <div className="p-2.5 rounded-xl border bg-neutral-800 border-neutral-700 text-neutral-300">
                     <FileCode size={20} />
                   </div>
                   <div>
                     <h3 className="text-base font-semibold text-neutral-100">Add Raw Text Note</h3>
-                    <p className="text-xs text-neutral-400">Add raw text to <span className="text-cyan-400 font-medium">{rawTextModal.packName}</span> without LLM summarization</p>
+                    <p className="text-xs text-neutral-400">Add raw text to <span className="text-neutral-200 font-medium">{rawTextModal.packName}</span> without LLM summarization</p>
                   </div>
                 </div>
                 <button
@@ -783,7 +775,7 @@ export function KnowledgeManager() {
                     value={rawTextForm.filename}
                     onChange={(e) => setRawTextForm((p) => ({ ...p, filename: e.target.value }))}
                     placeholder="e.g. resume_raw.txt or job_notes.txt"
-                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
                   />
                 </div>
 
@@ -796,7 +788,7 @@ export function KnowledgeManager() {
                     value={rawTextForm.description}
                     onChange={(e) => setRawTextForm((p) => ({ ...p, description: e.target.value }))}
                     placeholder="Brief 1-sentence description for index overview..."
-                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-cyan-500/50"
+                    className="w-full bg-neutral-950 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500/50"
                   />
                 </div>
 
@@ -809,7 +801,7 @@ export function KnowledgeManager() {
                     onChange={(e) => setRawTextForm((p) => ({ ...p, text: e.target.value }))}
                     rows={8}
                     placeholder="Paste or type raw text content here..."
-                    className="w-full bg-neutral-950 border border-neutral-700 rounded-xl p-4 text-sm text-neutral-200 leading-relaxed font-mono focus:outline-none focus:border-cyan-500/50 resize-y custom-scrollbar"
+                    className="w-full bg-neutral-950 border border-neutral-700 rounded-xl p-4 text-sm text-neutral-200 leading-relaxed font-mono focus:outline-none focus:border-emerald-500/50 resize-y custom-scrollbar"
                   />
                 </div>
               </div>
@@ -826,7 +818,7 @@ export function KnowledgeManager() {
                   type="button"
                   onClick={handleSaveRawText}
                   disabled={isSavingRawText || !rawTextForm.filename.trim() || !rawTextForm.text.trim()}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors disabled:opacity-50"
                 >
                   {isSavingRawText ? (
                     <>
