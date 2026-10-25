@@ -3,6 +3,7 @@ Tools available for the Deep Agent
 """
 from app.web_search import search as web_search
 from app.question_tools import ask_question, normalize_question_payload
+from app.custom_ui_tools import render_ui, normalize_custom_ui_payload
 
 
 def internet_search(

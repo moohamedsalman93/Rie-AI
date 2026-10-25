@@ -19,8 +19,9 @@ export function parseMessageContentToBlocks(content) {
     normalizedContent = "<think>" + normalizedContent;
   }
 
-  // Match <think>...</think>, <thought>...</thought>, <ask_question>...</ask_question>, and <question>...</question>
-  const tagRegex = /<(?:(think(?:ing)?|thought)|(ask_question|question))[^>]*>([\s\S]*?)<\/(?:think(?:ing)?|thought|ask_question|question)>/gi;
+  // Match <think>...</think>, <thought>...</thought>, <ask_question>...</ask_question>,
+  // and custom UI tags: <ui>...</ui>, <chart>...</chart>, <card>...</card>, <buttons>...</buttons>, <flowchart>...</flowchart>, <mermaid>...</mermaid>
+  const tagRegex = /<(?:(think(?:ing)?|thought)|(ask_question|question)|(ui|custom_ui|chart|card|buttons|flowchart|mermaid|workflow))[^>]*>([\s\S]*?)<\/(?:think(?:ing)?|thought|ask_question|question|ui|custom_ui|chart|card|buttons|flowchart|mermaid|workflow)>/gi;
   const blocks = [];
   let lastIndex = 0;
   let match;
@@ -33,7 +34,8 @@ export function parseMessageContentToBlocks(content) {
 
     const isThink = Boolean(match[1]);
     const isQuestion = Boolean(match[2]);
-    const innerContent = (match[3] || "").trim();
+    const isCustomUi = Boolean(match[3]);
+    const innerContent = (match[4] || "").trim();
 
     if (isThink && innerContent) {
       blocks.push({ type: "thought", text: innerContent, isThinking: false });
@@ -49,6 +51,21 @@ export function parseMessageContentToBlocks(content) {
       } else {
         blocks.push({ type: "text", text: innerContent });
       }
+    } else if (isCustomUi && innerContent) {
+      const tagType = match[3].toLowerCase();
+      let parsedData = null;
+      try {
+        parsedData = JSON.parse(innerContent);
+      } catch (e) {
+        // Leave parsedData as null so CustomUiContainer can perform lenient parsing or streaming preview
+      }
+      blocks.push({
+        type: "custom_ui",
+        id: `ui_tag_${match.index}`,
+        uiType: tagType,
+        data: parsedData,
+        raw: innerContent,
+      });
     }
 
     lastIndex = tagRegex.lastIndex;

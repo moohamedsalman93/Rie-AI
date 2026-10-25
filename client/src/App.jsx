@@ -941,7 +941,45 @@ function MainApp() {
           }
         }
 
-        if (!firstToolMinimizedRef.current && toolName !== "run_terminal_command" && toolName !== "ask_question" && windowMode !== "normal") {
+        if (toolName === "render_ui") {
+          let uiPayload = null;
+          try {
+            uiPayload = typeof first.args === "string" ? JSON.parse(first.args) : first.args;
+          } catch (e) {
+            uiPayload = { data: first.args };
+          }
+          if (uiPayload) {
+            const blockId = `ui_call_${botMessageId}`;
+            setSessions((prev) => {
+              const newSessions = { ...prev };
+              if (newSessions[threadId]) {
+                newSessions[threadId] = newSessions[threadId].map((m) => {
+                  if (m.id === botMessageId) {
+                    const blocks = m.blocks || [];
+                    const existingIdx = blocks.findIndex((b) => b.type === "custom_ui");
+                    if (existingIdx !== -1) {
+                      const updatedBlocks = [...blocks];
+                      updatedBlocks[existingIdx] = {
+                        ...updatedBlocks[existingIdx],
+                        data: uiPayload,
+                        uiType: uiPayload.type || "ui",
+                      };
+                      return { ...m, blocks: updatedBlocks };
+                    }
+                    return {
+                      ...m,
+                      blocks: [...blocks, { type: "custom_ui", id: blockId, data: uiPayload, uiType: uiPayload.type || "ui" }],
+                    };
+                  }
+                  return m;
+                });
+              }
+              return newSessions;
+            });
+          }
+        }
+
+        if (!firstToolMinimizedRef.current && toolName !== "run_terminal_command" && toolName !== "ask_question" && toolName !== "render_ui" && windowMode !== "normal") {
           firstToolMinimizedRef.current = true;
           minimizeToBottomCenter();
         }
@@ -1119,6 +1157,44 @@ function MainApp() {
                       return {
                         ...m,
                         blocks: [...blocks, { type: "question", id: qPayload.id, data: qPayload, isAnswered: false }],
+                      };
+                    }
+                    return m;
+                  });
+                }
+                return newSessions;
+              });
+            }
+            return;
+          }
+
+          if (toolName === "render_ui") {
+            let uiPayload = null;
+            try {
+              uiPayload = typeof content === "string" ? JSON.parse(content) : content;
+            } catch (e) {
+              uiPayload = { data: content };
+            }
+            if (uiPayload) {
+              setSessions((prev) => {
+                const newSessions = { ...prev };
+                if (newSessions[threadId]) {
+                  newSessions[threadId] = newSessions[threadId].map((m) => {
+                    if (m.id === botMessageId) {
+                      const blocks = m.blocks || [];
+                      const existingIdx = blocks.findIndex((b) => b.type === "custom_ui");
+                      if (existingIdx !== -1) {
+                        const updatedBlocks = [...blocks];
+                        updatedBlocks[existingIdx] = {
+                          ...updatedBlocks[existingIdx],
+                          data: uiPayload,
+                          uiType: uiPayload.type || "ui",
+                        };
+                        return { ...m, blocks: updatedBlocks };
+                      }
+                      return {
+                        ...m,
+                        blocks: [...blocks, { type: "custom_ui", id: `ui_tool_${botMessageId}`, data: uiPayload, uiType: uiPayload.type || "ui" }],
                       };
                     }
                     return m;

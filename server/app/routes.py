@@ -164,6 +164,7 @@ def _get_runtime_tool_catalog_ids() -> set[str]:
         "internet_search",
         "remote_friend_ask",
         "ask_question",
+        "render_ui",
         "read_knowledge_asset",
         "load_skill",
         "execute_batched_plan",
@@ -578,6 +579,7 @@ async def get_planner_tools():
     # Built-in system tools
     _add("internet_search", "Internet Search", "Search the web for current facts, articles, and documentation.", "built-in")
     _add("ask_question", "Ask Question", "Ask the user an interactive clarifying question with multiple choices.", "built-in")
+    _add("render_ui", "Render Custom UI", "Render interactive custom UI cards, buttons, or charts in chat.", "built-in")
     _add("run_terminal_command", "System Terminal", "Execute a terminal command on the Windows system.", "built-in")
     _add("get_desktop_state", "Desktop State", "Capture current desktop state, active apps, and interactive elements.", "built-in")
     _add("app_control", "App Control", "Launch, switch, or resize Windows desktop applications.", "built-in")

@@ -5,6 +5,8 @@ import { useTypewriter } from '../hooks/useTypewriter';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Copy, Check } from 'lucide-react';
+import { CustomUiContainer } from './custom_ui/CustomUiContainer';
+import { MermaidDiagram } from './custom_ui/MermaidDiagram';
 
 /**
  * Component for rendering markdown content in chat messages
@@ -63,7 +65,7 @@ const CodeBlock = memo(({ language, codeString, isStreaming, ...props }) => {
 
 CodeBlock.displayName = 'CodeBlock';
 
-function MarkdownMessageImpl({ content, className = "", isStreaming = false }) {
+function MarkdownMessageImpl({ content, className = "", isStreaming = false, onSend, onAction }) {
   const displayedText = useTypewriter(content, isStreaming);
 
   const handleOpenExternalUrl = useCallback(async (event, href) => {
@@ -88,9 +90,50 @@ function MarkdownMessageImpl({ content, className = "", isStreaming = false }) {
     ol: ({ node, ...props }) => <ol className="list-decimal list-inside mb-2 space-y-1 ml-2" {...props} />,
     li: ({ node, ...props }) => <li className="leading-relaxed" {...props} />,
     code: ({ node, inline, className, children, ...props }) => {
-      const match = /language-(\w+)/.exec(className || '');
-      const language = match ? match[1] : '';
+      const match = /language-([\w:-]+)/.exec(className || '');
+      const rawLang = match ? match[1].toLowerCase() : '';
+      const language = rawLang.replace(/^(?:ui|json):/, '');
       const codeString = String(children).replace(/\n$/, '');
+
+      // Direct Mermaid diagram rendering
+      if (!inline && (language === 'mermaid' || (language === 'flowchart' && /^(?:graph|flowchart|sequenceDiagram|stateDiagram|classDiagram|erDiagram|journey|gantt)/m.test(codeString.trim())))) {
+        return (
+          <MermaidDiagram
+            code={codeString}
+            isStreaming={isStreaming}
+          />
+        );
+      }
+
+      // Check if this is a custom UI component code block
+      const isCustomUiLanguage = [
+        'chart',
+        'card',
+        'cards',
+        'button',
+        'buttons',
+        'actions',
+        'ui',
+        'metric',
+        'metrics',
+        'component',
+        'widget',
+        'flowchart',
+        'workflow',
+        'pipeline',
+      ].includes(language);
+
+      if (!inline && isCustomUiLanguage) {
+        return (
+          <CustomUiContainer
+            code={codeString}
+            type={language}
+            isStreaming={isStreaming}
+            onSend={onSend}
+            onAction={onAction}
+          />
+        );
+      }
 
       if (inline || language === "") {
         return (
@@ -171,7 +214,7 @@ function MarkdownMessageImpl({ content, className = "", isStreaming = false }) {
     em: ({ node, ...props }) => (
       <em className="italic" {...props} />
     ),
-  }), [isStreaming, handleOpenExternalUrl]);
+  }), [isStreaming, handleOpenExternalUrl, onSend, onAction]);
 
   return (
     <div className={`markdown-content min-w-0 max-w-full break-words ${className}`}>
@@ -189,7 +232,9 @@ export const MarkdownMessage = memo(MarkdownMessageImpl, (prevProps, nextProps) 
   return (
     prevProps.content === nextProps.content &&
     prevProps.isStreaming === nextProps.isStreaming &&
-    prevProps.className === nextProps.className
+    prevProps.className === nextProps.className &&
+    prevProps.onSend === nextProps.onSend &&
+    prevProps.onAction === nextProps.onAction
   );
 });
 

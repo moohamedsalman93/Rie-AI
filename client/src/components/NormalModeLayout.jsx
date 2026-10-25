@@ -35,11 +35,12 @@ import { ModeToggle } from './ModeToggle';
 import { LlmProviderSelector } from './LlmProviderSelector';
 import { ThinkingBlock } from './ThinkingBlock';
 import { QuestionBlock } from './QuestionBlock';
+import { CustomUiContainer } from './custom_ui/CustomUiContainer';
 import VoiceControls from './VoiceControls';
 import VoiceToolActivity from './VoiceToolActivity';
 import VoiceSubAgentActivity from './VoiceSubAgentActivity';
 
-function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion, onCancelSubAgent) {
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion, onCancelSubAgent, onSend) {
     if (!blocks || blocks.length === 0) return null;
 
     const elements = [];
@@ -98,6 +99,18 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
                     disabled={isStreaming}
                 />
             );
+        } else if (block.type === 'custom_ui') {
+            flushToolGroup();
+            elements.push(
+                <CustomUiContainer
+                    key={block.id || `custom-ui-${idx}`}
+                    data={block.data}
+                    code={block.raw}
+                    type={block.uiType || 'ui'}
+                    isStreaming={isStreaming}
+                    onSend={onSend}
+                />
+            );
         } else {
             flushToolGroup();
             elements.push(
@@ -105,6 +118,7 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
                     <MarkdownMessage
                         content={block.text}
                         isStreaming={isStreaming}
+                        onSend={onSend}
                     />
                 </div>
             );
@@ -668,7 +682,8 @@ export function NormalModeLayout({
                                                                     toolTooltipPlacement,
                                                                     Boolean(m.isPartial) || m.id === streamingBotMessageId,
                                                                     onAnswerQuestion || ((_id, text) => onSend(text)),
-                                                                    onCancelSubAgent
+                                                                    onCancelSubAgent,
+                                                                    onSend
                                                                 )}
                                                             </div>
                                                         ) : (

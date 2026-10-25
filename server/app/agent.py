@@ -78,6 +78,7 @@ from app.config import settings
 from app.tools import (
     internet_search,
     ask_question,
+    render_ui,
 )
 from app.windows_tools import WINDOWS_TOOLS
 from app.mcp_client import mcp_manager
@@ -210,6 +211,13 @@ DOMAIN_RULES: dict[str, str] = {
     ),
     "question": (
         "- Interactive Questions & Clarifications: Whenever you need user preferences, choices (e.g. tailoring options, configuration choices, technology stack preferences), or clarifying answers before proceeding, ALWAYS invoke the `ask_question` tool. Pass selectable options in `options` or a list of questions in `questions`. Do NOT ask multiple choice questions in raw plain text when you can use `ask_question`."
+    ),
+    "custom_ui": (
+        "- Custom UI, Cards, Buttons, Charts & Flowcharts: Whenever the user asks for a chart, graph, flowchart, diagram, workflow, visual comparison, summary card, dashboard, or action buttons/options (e.g. 'show a flowchart of...', 'diagram this workflow', 'show a chart of...', 'create a card for...', 'give me buttons to choose...'), or whenever presenting workflows, numerical statistics, metrics, or recommended next steps: ALWAYS render rich interactive custom UI directly in chat (like ChatGPT).\n"
+        "  * For flowcharts & diagrams: ALWAYS output a ```mermaid block with clean Mermaid syntax (e.g. `graph TD\n  A[Start] --> B{Check}\n  B -->|Yes| C[Success]`), OR output ```flowchart with {\"type\": \"flowchart\", \"title\": \"...\", \"steps\": [{\"label\": \"Step 1\", \"description\": \"...\", \"status\": \"completed\"|\"active\"|\"pending\"}, ...]}.\n"
+        "  * For charts: output ```chart with {\"type\": \"bar\"|\"horizontal_bar\"|\"line\"|\"area\"|\"pie\"|\"donut\"|\"progress\"|\"gauge\", \"title\": \"...\", \"data\": [{\"label\": \"Jan\", \"value\": 45}, ...]}.\n"
+        "  * For cards: output ```card with {\"title\": \"...\", \"subtitle\": \"...\", \"description\": \"...\", \"badge\": \"Healthy\", \"badgeVariant\": \"success\"|\"warning\"|\"error\"|\"info\", \"icon\": \"ShieldCheck\"|\"Activity\"|\"Sparkles\", \"metrics\": [{\"label\": \"Uptime\", \"value\": \"99.9%\", \"change\": \"+0.5%\"}], \"items\": [{\"label\": \"Key\", \"value\": \"Val\"}], \"buttons\": [...]}.\n"
+        "  * For action buttons / quick replies: output ```buttons with [{\"label\": \"Run Tests\", \"icon\": \"Play\", \"variant\": \"primary\", \"action\": \"message\", \"value\": \"Run the test suite\"}, ...]. Clicking buttons automatically sends that prompt to the chat."
     ),
     "skills": (
         "- Skills & Specialized Domain Knowledge: You have access to specialized procedural skills in your library. "
@@ -3497,6 +3505,7 @@ class AgentManager:
         all_tools_map = {
             "internet_search": internet_search,
             "ask_question": ask_question,
+            "render_ui": render_ui,
             "remote_friend_ask": remote_friend_ask_tool,
             "read_knowledge_asset": read_knowledge_asset,
             "load_skill": load_skill,
@@ -3680,6 +3689,8 @@ class AgentManager:
                 tools_to_use.append(all_tools_map["internet_search"])
             if "ask_question" in all_tools_map:
                 tools_to_use.append(all_tools_map["ask_question"])
+            if "render_ui" in all_tools_map:
+                tools_to_use.append(all_tools_map["render_ui"])
             for st in SCHEDULER_TOOLS:
                 if st.name in all_tools_map:
                     tools_to_use.append(all_tools_map[st.name])
@@ -3714,6 +3725,7 @@ class AgentManager:
                 default_team_tool_ids = [
                     "internet_search",
                     "ask_question",
+                    "render_ui",
                     "read_knowledge_asset",
                     "load_skill",
                     "schedule_chat_task",
@@ -3744,6 +3756,7 @@ class AgentManager:
         core_tool_names = [
             "internet_search",
             "ask_question",
+            "render_ui",
             "save_memory",
             "get_memory",
             "delete_memory",
