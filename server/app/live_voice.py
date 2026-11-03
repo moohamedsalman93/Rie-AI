@@ -149,72 +149,72 @@ async def build_dynamic_greeting_prompt(
     else:
         period = "tonight"
 
-    available_flavors = ["casual_direct"]
-    weights = [25]
+    available_flavors = ["casual_direct", "casual_boss", "ambient_time", "bilingual"]
+    weights = [25, 25, 20, 10]
 
     if last_work:
         available_flavors.append("work_continuity")
-        weights.append(45)
-
-    if is_late_night or period in ("morning", "afternoon", "evening"):
-        available_flavors.append("ambient_time")
-        weights.append(25)
-
-    available_flavors.append("bilingual")
-    weights.append(10)
+        weights.append(20)  # Balanced weight so it does not dominate every greeting
 
     chosen_flavor = random.choices(available_flavors, weights=weights, k=1)[0]
 
-    if chosen_flavor == "work_continuity" and last_work:
+    if chosen_flavor == "casual_boss":
         return (
-            f"The user {user_name} just connected via live voice. "
-            f"His most recent work was: '{last_work}'. "
-            f"Greet {user_name} warmly and naturally by name in 1 brief sentence (maximum 15 words), "
-            f"asking if he needs any help regarding {last_work} or what he wants to work on right now "
-            f"(e.g., 'Hey {user_name}! Need any help regarding {last_work}, or what are we working on?' "
-            f"or 'Hey {user_name}, ready to jump back into {last_work}, or what's up?'). "
-            "Speak spontaneously as a real AI companion. NEVER use repetitive canned scripts like 'What's on your mind today?'."
+            f"The user {user_name} just connected via live voice. Greet him casually as 'boss' in 1 brief snappy sentence (maximum 12 words). "
+            f"Vary your opening naturally (e.g., 'Hey boss! What\'s the plan today?', 'Hey boss, what are we diving into?', "
+            f"'Ready when you are, boss! What\'s up?', or 'How\'s it going, boss? What are we tackling?'). "
+            f"CRITICAL: Do NOT say 'Hey {user_name}'. Vary your opening words dynamically."
+        )
+
+    elif chosen_flavor == "work_continuity" and last_work:
+        return (
+            f"The user {user_name} just connected via live voice. His most recent work was: '{last_work}'. "
+            f"Greet him naturally in 1 brief sentence (maximum 15 words) asking if he wants to continue with {last_work} or switch gears. "
+            f"Use varied address styles—either 'boss' or '{user_name}' placed naturally (e.g., 'Ready to jump back into {last_work}, {user_name}?', "
+            f"'Need a hand with {last_work}, boss?', 'How are things going with {last_work}, {user_name}?', "
+            f"or 'Hey boss, continuing with {last_work} or what\'s up?'). "
+            f"CRITICAL: Do NOT open with 'Hey {user_name}'. Keep it fresh, spontaneous, and brief."
         )
 
     elif chosen_flavor == "ambient_time":
         if is_late_night:
             return (
                 f"The user {user_name} just connected via live voice late at night ({time_str}). "
-                f"Greet {user_name} warmly by name in 1 brief natural sentence, "
-                f"casually acknowledging he's working late or asking how you can help him tonight "
-                f"(e.g., 'Working late tonight, {user_name}? What can I help you with?' "
-                f"or 'Hey {user_name}, burning the midnight oil! What are we working on?'). "
-                "Keep it completely natural, friendly, and brief."
+                f"Greet him warmly in 1 brief natural sentence, casually acknowledging the late hour. "
+                f"Address him as 'boss' or place his name naturally (e.g., 'Burning the midnight oil, {user_name}? What can I help with?', "
+                f"'Working late tonight, boss? What are we working on?', or 'Still up, {user_name}? What\'s on your desk?'). "
+                f"CRITICAL: Do NOT start with 'Hey {user_name}'."
             )
         else:
             return (
                 f"The user {user_name} just connected via live voice during the {period}. "
-                f"Greet {user_name} warmly by name in 1 brief natural sentence suited to the {period} "
-                f"(e.g., 'Good {period} {user_name}! What are we building today?' "
-                f"or 'Hey {user_name}, hope your {period} is going well! What's on your desk?'). "
-                "Keep it spontaneous, friendly, and varied."
+                f"Greet him warmly in 1 brief natural sentence suited to the {period} "
+                f"(e.g., 'Good {period}, {user_name}! How are things going?', "
+                f"'Hey boss, hope your {period} is going well! What\'s up?', "
+                f"or 'Hi {user_name}! What are we building this {period}?'). "
+                f"CRITICAL: Do NOT start with 'Hey {user_name}'."
             )
 
     elif chosen_flavor == "bilingual":
         return (
             f"The user {user_name} just connected via live voice. He speaks English and Tamil. "
-            f"Greet {user_name} warmly by name in 1 brief sentence with a friendly bilingual touch "
-            f"(e.g., 'ஹே {user_name}! How can I help you today?' "
-            f"or 'Hey {user_name}! சொல்லுங்க, what are we working on today?'). "
-            "Keep it natural, spontaneous, and warm."
+            f"Greet him warmly in 1 brief sentence with a friendly bilingual touch, addressing him as 'boss' or '{user_name}' "
+            f"(e.g., 'ஹே பாஸ்! How are things going today?', "
+            f"'Hi {user_name}! சொல்லுங்க, what are we working on today?', "
+            f"'சொல்லுங்க பாஸ், what can I help you with?', "
+            f"or 'Hey boss, எப்படி போகுது?'). "
+            f"CRITICAL: Do NOT start with 'Hey {user_name}'."
         )
 
     else:
         # casual_direct
         return (
-            f"The user {user_name} just connected via live voice. "
-            f"Greet {user_name} warmly, casually, and directly by name in 1 brief snappy sentence "
-            f"(e.g., 'Hey {user_name}! Ready when you are, what's on the agenda?' "
-            f"or 'Hey {user_name}, good to hear from you! What are we diving into?' "
-            f"or 'Hey {user_name}! What can I help you with right now?'). "
-            "Vary your phrasing naturally. Never use repetitive robotic lines."
+            f"The user {user_name} just connected via live voice. Greet him naturally in 1 brief sentence (maximum 12 words). "
+            f"Mix up your phrasing and where you place his name (e.g., 'Hi {user_name}! How are things going?', "
+            f"'How\'s everything going, {user_name}?', 'Good to hear from you, {user_name}! What\'s up?', "
+            f"or 'Ready when you are, {user_name}. What are we working on?'). "
+            f"CRITICAL: DO NOT use the repetitive opener 'Hey {user_name}'. Vary your opening words dynamically."
         )
-
 
 def build_live_system_instruction(
     client_timezone: Optional[str] = None,
@@ -241,7 +241,7 @@ def build_live_system_instruction(
         f"You are interacting with your owner and friend, {user_name}, via real-time spoken voice conversation.\n\n"
         f"## USER IDENTITY & CONVERSATIONAL NATURALNESS:\n"
         f"- The user's name is {user_name}. Always know {user_name} as your primary user and owner.\n"
-        f"- Address him naturally by name (e.g. '{user_name}') when greeting him or when appropriate.\n"
+        f"- Address him naturally: you can address him by his name ('{user_name}') or casually as 'boss'. Vary how you greet him—do NOT repeatedly start with 'Hey {user_name}'. Mix up your greetings naturally (e.g., 'Hi {user_name}', 'Hey boss', 'How are things going, {user_name}?', 'What\'s up, boss?', 'Ready when you are, {user_name}').\n"
         "- ACT LIKE A REAL, LIVING COMPANION: Never speak like an interactive voice response (IVR) phone tree or canned recording. Avoid cliché, repetitive phrases like 'What's on your mind today?' or 'How can I assist you today?'. Speak with spontaneous human warmth, variation, and personality.\n\n"
         "## STRICT LANGUAGE POLICY (ENGLISH & TAMIL ONLY):\n"
         "- The ONLY supported languages are ENGLISH and TAMIL (தமிழ் / Tanglish).\n"

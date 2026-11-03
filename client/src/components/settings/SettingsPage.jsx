@@ -1410,44 +1410,44 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
                             className={`flex items-center justify-between p-4 cursor-pointer select-none transition-colors duration-150 ${isExpanded ? 'bg-neutral-800/10' : 'hover:bg-neutral-800/10'
                               }`}
                           >
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
                               <div className="p-2 bg-neutral-800/80 rounded-lg text-neutral-200 shrink-0">
                                 {providerInfo.icon}
                               </div>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <h4 className="text-sm font-semibold text-neutral-200">
-                                    {providerInfo.label === 'Rie' ? 'Rie' : providerInfo.label}
-                                  </h4>
-                                  {isPrimary && (
-                                    <span className="text-[10px] font-medium bg-neutral-800 text-neutral-300 border border-white/10 px-1.5 py-0.5 rounded tracking-wide">
-                                      Primary
-                                    </span>
-                                  )}
-                                  {isFallback && (
-                                    <span className="text-[10px] font-medium bg-neutral-800 text-neutral-400 border border-white/10 px-1.5 py-0.5 rounded tracking-wide">
-                                      Fallback
-                                    </span>
-                                  )}
-                                  {isConfigured ? (
-                                    <span className="text-[10px] font-medium bg-neutral-800/80 text-neutral-300 border border-white/10 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1.5">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                                      Configured
-                                    </span>
-                                  ) : (
-                                    <span className="text-[10px] font-medium bg-neutral-900/60 text-neutral-500 border border-white/5 px-1.5 py-0.5 rounded tracking-wide flex items-center gap-1.5">
-                                      <span className="w-1.5 h-1.5 rounded-full bg-neutral-600"></span>
-                                      Not Configured
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[10px] text-neutral-500 font-medium">
+                              <div className="min-w-0">
+                                <h4 className="text-sm font-semibold text-neutral-200 truncate">
+                                  {providerInfo.label === 'Rie' ? 'Rie' : providerInfo.label}
+                                </h4>
+                                <p className="text-[10px] text-neutral-500 font-medium truncate">
                                   {key === 'rie' ? 'Rie usage limit and status' : `${providerInfo.label} configuration and model settings`}
                                 </p>
                               </div>
                             </div>
-                            <div className="text-neutral-400 hover:text-neutral-200 p-1 transition-colors">
-                              {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                            <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                              {isPrimary && (
+                                <span
+                                  title="Primary Provider (1)"
+                                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-[10px] font-bold text-neutral-200 border border-white/15 shadow-xs select-none"
+                                >
+                                  1
+                                </span>
+                              )}
+                              {isFallback && (
+                                <span
+                                  title="Fallback Provider (2)"
+                                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-neutral-800/80 text-[10px] font-bold text-neutral-400 border border-white/10 shadow-xs select-none"
+                                >
+                                  2
+                                </span>
+                              )}
+                              {isConfigured && (
+                                <span title="Configured" className="text-emerald-400 flex items-center justify-center shrink-0">
+                                  <Check size={16} strokeWidth={2.5} />
+                                </span>
+                              )}
+                              <div className="text-neutral-400 hover:text-neutral-200 p-1 transition-colors">
+                                {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                              </div>
                             </div>
                           </div>
 

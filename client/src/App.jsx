@@ -184,6 +184,7 @@ function MainApp() {
     handleBubbleMouseDown,
     isSnapping,
     side,
+    setSide,
     pendingBubblePositionRef,
     shouldSnapOnMinimizeRef,
     positionCheckIntervalRef,
@@ -2408,7 +2409,11 @@ function MainApp() {
               const scale = monitor?.scaleFactor || 1;
               const curX = pos.x / scale;
               const curY = pos.y / scale;
-              await win.setPosition(new LogicalPosition(curX - delta, curY));
+              const screenWidth = window.screen.availWidth;
+              const screenLeft = window.screen.availLeft || 0;
+              const maxAllowedX = screenLeft + screenWidth - targetWidth;
+              const newX = Math.max(screenLeft, Math.min(curX - delta, maxAllowedX));
+              await win.setPosition(new LogicalPosition(newX, curY));
             } catch (e) { /* ignore */ }
           }
 
@@ -3575,38 +3580,62 @@ function MainApp() {
                   return;
                 }
                 const pos = await getWindowPosition();
-                if (side === "right") {
+                const pendingPos = pendingBubblePositionRef.current;
+
+                const screenWidth = window.screen.availWidth;
+                const screenHeight = window.screen.availHeight;
+                const screenLeft = window.screen.availLeft || 0;
+                const screenTop = window.screen.availTop || 0;
+
+                const showLabel = settings.bubble_show_label !== false && settings.bubble_show_label !== "false";
+                const sizeMode = settings.bubble_size || "medium";
+                let targetBubbleWidth = 180;
+                if (sizeMode === "small") targetBubbleWidth = showLabel ? 140 : 54;
+                else if (sizeMode === "large") targetBubbleWidth = showLabel ? 215 : 78;
+                else targetBubbleWidth = showLabel ? 180 : 66;
+
+                const isCurrentlyOnRight = pos.x > (screenLeft + screenWidth / 2);
+                if (setSide) {
+                  setSide(isCurrentlyOnRight ? "right" : "left");
+                }
+
+                if (pendingPos) {
+                  const maxBubbleX = screenLeft + screenWidth - targetBubbleWidth;
+                  const clampedX = Math.max(screenLeft, Math.min(pendingPos.x, maxBubbleX));
+                  const maxBubbleY = screenTop + screenHeight - WINDOW_SIZES.BUBBLE.height;
+                  const clampedY = Math.max(screenTop, Math.min(pendingPos.y, maxBubbleY));
+
+                  await win.setPosition(new LogicalPosition(clampedX, clampedY));
+                  await win.setSize(new LogicalSize(targetBubbleWidth, WINDOW_SIZES.BUBBLE.height));
+                  pendingBubblePositionRef.current = null;
+                } else if (isCurrentlyOnRight) {
                   const scale = await win.scaleFactor();
                   const outerSize = await win.outerSize();
                   const curW = Math.round(outerSize.width / scale);
 
-                  const showLabel = settings.bubble_show_label !== false && settings.bubble_show_label !== "false";
-                  const sizeMode = settings.bubble_size || "medium";
-                  let targetBubbleWidth = 180;
-                  if (sizeMode === "small") targetBubbleWidth = showLabel ? 140 : 54;
-                  else if (sizeMode === "large") targetBubbleWidth = showLabel ? 215 : 78;
-                  else targetBubbleWidth = showLabel ? 180 : 66;
-
                   const rightEdge = pos.x + curW;
                   let targetX = rightEdge - targetBubbleWidth;
 
-                  const screenWidth = window.screen.availWidth;
-                  const screenLeft = window.screen.availLeft || 0;
                   const maxAllowedX = screenLeft + screenWidth - targetBubbleWidth;
-                  if (targetX > maxAllowedX) targetX = maxAllowedX;
-                  if (targetX < screenLeft) targetX = screenLeft;
+                  targetX = Math.max(screenLeft, Math.min(targetX, maxAllowedX));
 
-                  await win.setPosition(new LogicalPosition(targetX, pos.y));
+                  const maxAllowedY = screenTop + screenHeight - WINDOW_SIZES.BUBBLE.height;
+                  const targetY = Math.max(screenTop, Math.min(pos.y, maxAllowedY));
+
+                  await win.setPosition(new LogicalPosition(targetX, targetY));
                   await win.setSize(new LogicalSize(targetBubbleWidth, WINDOW_SIZES.BUBBLE.height));
                 } else {
-                  await win.setSize(new LogicalSize(WINDOW_SIZES.BUBBLE.width, WINDOW_SIZES.BUBBLE.height));
+                  const maxAllowedX = screenLeft + screenWidth - targetBubbleWidth;
+                  const targetX = Math.max(screenLeft, Math.min(pos.x, maxAllowedX));
+
+                  const maxAllowedY = screenTop + screenHeight - WINDOW_SIZES.BUBBLE.height;
+                  const targetY = Math.max(screenTop, Math.min(pos.y, maxAllowedY));
+
+                  await win.setPosition(new LogicalPosition(targetX, targetY));
+                  await win.setSize(new LogicalSize(targetBubbleWidth, WINDOW_SIZES.BUBBLE.height));
                 }
 
-                if (pendingBubblePositionRef.current) {
-                  const { x, y } = pendingBubblePositionRef.current;
-                  await win.setPosition(new LogicalPosition(x, y));
-                  pendingBubblePositionRef.current = null;
-                } else if (shouldSnapOnMinimizeRef.current) {
+                if (shouldSnapOnMinimizeRef.current) {
                   setTimeout(() => snapToNearestEdge(), 50);
                 }
                 shouldSnapOnMinimizeRef.current = true;

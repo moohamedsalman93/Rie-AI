@@ -20,6 +20,8 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
   const stopAnimationRef = useRef(false);
   const pendingBubblePositionRef = useRef(null);
   const shouldSnapOnMinimizeRef = useRef(true);
+  const bubbleOriginPosRef = useRef(null);
+  const wasWindowDraggedRef = useRef(false);
 
   const getWindow = useCallback(() => {
     if (!windowRef.current) {
@@ -127,16 +129,22 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
       const relX = windowX - availLeft;
       const relY = windowY - availTop;
 
+      const clampedY = Math.max(availTop + SNAP_MARGIN, Math.min(windowY, availTop + availHeight - windowHeight - SNAP_MARGIN));
+      const clampedX = Math.max(availLeft + SNAP_MARGIN, Math.min(windowX, availLeft + availWidth - windowWidth - SNAP_MARGIN));
+
       const distances = [
-        { edge: "left", dist: relX, newX: availLeft + SNAP_MARGIN, newY: windowY },
-        { edge: "right", dist: availWidth - (relX + windowWidth), newX: availLeft + availWidth - windowWidth - SNAP_MARGIN, newY: windowY },
-        { edge: "top", dist: relY, newX: windowX, newY: availTop + SNAP_MARGIN },
-        { edge: "bottom", dist: availHeight - (relY + windowHeight), newX: windowX, newY: availTop + availHeight - windowHeight - SNAP_MARGIN },
+        { edge: "left", dist: Math.abs(relX), newX: availLeft + SNAP_MARGIN, newY: clampedY },
+        { edge: "right", dist: Math.abs(availWidth - (relX + windowWidth)), newX: availLeft + availWidth - windowWidth - SNAP_MARGIN, newY: clampedY },
+        { edge: "top", dist: Math.abs(relY), newX: clampedX, newY: availTop + SNAP_MARGIN },
+        { edge: "bottom", dist: Math.abs(availHeight - (relY + windowHeight)), newX: clampedX, newY: availTop + availHeight - windowHeight - SNAP_MARGIN },
       ];
 
       const nearest = distances.reduce((min, curr) =>
         curr.dist < min.dist ? curr : min
       );
+
+      if (nearest.edge === "right") setSide("right");
+      else if (nearest.edge === "left") setSide("left");
 
       const deltaX = Math.abs(nearest.newX - windowX);
       const deltaY = Math.abs(nearest.newY - windowY);
@@ -184,18 +192,38 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
         const isRightSide = pos.x > (screenLeft + screenWidth / 2);
         setSide(isRightSide ? "right" : "left");
 
+        const curSize = await getWindowSize();
+        const curW = curSize.width > 0 ? curSize.width : WINDOW_SIZES.BUBBLE.width;
+        const curH = curSize.height > 0 ? curSize.height : WINDOW_SIZES.BUBBLE.height;
+
+        // Remember the bubble's original position so we can restore it cleanly on minimize
+        bubbleOriginPosRef.current = { x: pos.x, y: pos.y };
+        wasWindowDraggedRef.current = false;
+
+        let targetX = pos.x;
         if (isRightSide) {
-          const curSize = await getWindowSize();
-          const curW = curSize.width > 0 ? curSize.width : WINDOW_SIZES.BUBBLE.width;
           const rightEdge = pos.x + curW;
-          let targetX = rightEdge - size.width;
-
-          const maxAllowedX = screenLeft + screenWidth - size.width;
-          if (targetX > maxAllowedX) targetX = maxAllowedX;
-          if (targetX < screenLeft) targetX = screenLeft;
-
-          await win.setPosition(new LogicalPosition(targetX, pos.y));
+          targetX = rightEdge - size.width;
         }
+
+        // Clamp targetX to stay within visible work area
+        const maxAllowedX = screenLeft + screenWidth - size.width;
+        if (targetX > maxAllowedX) targetX = maxAllowedX;
+        if (targetX < screenLeft) targetX = screenLeft;
+
+        let targetY = pos.y;
+        // If the window would extend below the screen/taskbar, expand upwards from the bubble's bottom edge
+        if (pos.y + size.height > screenTop + screenHeight) {
+          const bottomEdge = pos.y + curH;
+          targetY = bottomEdge - size.height;
+        }
+
+        // Clamp targetY to stay within visible work area
+        const maxAllowedY = screenTop + screenHeight - size.height;
+        if (targetY > maxAllowedY) targetY = maxAllowedY;
+        if (targetY < screenTop) targetY = screenTop;
+
+        await win.setPosition(new LogicalPosition(targetX, targetY));
       }
 
       await win.setSize(new LogicalSize(size.width, size.height));
@@ -233,8 +261,13 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
     } catch (e) {
       console.error("Failed to unlock foreground:", e);
     }
-    shouldSnapOnMinimizeRef.current = true;
-    pendingBubblePositionRef.current = null;
+    if (bubbleOriginPosRef.current && !wasWindowDraggedRef.current) {
+      pendingBubblePositionRef.current = bubbleOriginPosRef.current;
+      shouldSnapOnMinimizeRef.current = false;
+    } else {
+      shouldSnapOnMinimizeRef.current = true;
+      pendingBubblePositionRef.current = null;
+    }
     setIsOpen(false);
   }, [windowMode, getWindow, setIsOpen]);
 
@@ -259,11 +292,14 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
   const handleDragStart = useCallback(async () => {
     try {
       isDraggingRef.current = true;
+      if (isOpen) {
+        wasWindowDraggedRef.current = true;
+      }
       await getWindow().startDragging();
     } catch {
       // Not in Tauri environment
     }
-  }, [getWindow]);
+  }, [getWindow, isOpen]);
 
   const handleBubbleMouseDown = useCallback(
     (e) => {
@@ -356,6 +392,7 @@ export function useWindowManager({ isOpen, setIsOpen, windowMode, settings = {} 
   return {
     isSnapping,
     side,
+    setSide,
     getWindow,
     getWindowPosition,
     getWindowSize,

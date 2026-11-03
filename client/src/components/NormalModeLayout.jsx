@@ -447,8 +447,8 @@ export function NormalModeLayout({
                         const browserTitle = browserEngine !== "camoufox"
                             ? "Camoufox workspace disabled (Default Windows engine selected in Settings)"
                             : !isBrowserBinaryAvailable
-                            ? "Camoufox workspace disabled (Browser binary not downloaded yet)"
-                            : "Live Camoufox Stealth Browser Workspace";
+                                ? "Camoufox workspace disabled (Browser binary not downloaded yet)"
+                                : "Live Camoufox Stealth Browser Workspace";
                         return (
                             <button
                                 onClick={() => {
@@ -456,13 +456,12 @@ export function NormalModeLayout({
                                 }}
                                 disabled={isBrowserDisabled}
                                 onMouseDown={(e) => e.stopPropagation()}
-                                className={`p-2 rounded-lg transition-colors ${
-                                    isBrowserDisabled
+                                className={`p-2 rounded-lg transition-colors ${isBrowserDisabled
                                         ? 'text-neutral-600 opacity-35 cursor-not-allowed'
                                         : isBrowserPanelOpen
-                                        ? 'bg-neutral-700 text-white'
-                                        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
-                                }`}
+                                            ? 'bg-neutral-700 text-white'
+                                            : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
+                                    }`}
                                 title={browserTitle}
                             >
                                 <Globe size={16} />
@@ -751,13 +750,12 @@ export function NormalModeLayout({
                                     animate={{ opacity: 1, y: 0 }}
                                     className="flex flex-col items-center text-center mb-6 space-y-1.5 select-none"
                                 >
-                                    <h1 className={`font-bold text-white font-sans tracking-tight ${
-                                        chatPanelWidthPx < 480
+                                    <h1 className={`font-bold text-white font-sans tracking-tight ${chatPanelWidthPx < 480
                                             ? 'text-xl'
                                             : chatPanelWidthPx < 640
-                                            ? 'text-2xl'
-                                            : 'text-3xl'
-                                    }`}>
+                                                ? 'text-2xl'
+                                                : 'text-3xl'
+                                        }`}>
                                         How can I help you today?
                                     </h1>
 
@@ -771,13 +769,12 @@ export function NormalModeLayout({
                                     initial={{ opacity: 0, y: 10 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: 0.05 }}
-                                    className={`grid gap-2.5 w-full mb-6 ${
-                                        chatPanelWidthPx < 400
+                                    className={`grid gap-2.5 w-full mb-6 ${chatPanelWidthPx < 400
                                             ? 'grid-cols-2'
                                             : chatPanelWidthPx < 640
-                                            ? 'grid-cols-2'
-                                            : 'grid-cols-4'
-                                    }`}
+                                                ? 'grid-cols-2'
+                                                : 'grid-cols-4'
+                                        }`}
                                 >
                                     <button
                                         type="button"
@@ -785,11 +782,10 @@ export function NormalModeLayout({
                                             setInput("Search the web or research a topic");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-teal-500/30 transition-all duration-200 cursor-pointer text-left flex ${
-                                            chatPanelWidthPx < 400
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-teal-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
                                                 ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
                                                 : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
-                                        } shadow-md hover:shadow-teal-500/10 hover:-translate-y-0.5`}
+                                            } shadow-md hover:shadow-teal-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
                                             <Search size={16} />
@@ -805,11 +801,10 @@ export function NormalModeLayout({
                                             setInput("Schedule a task or set a reminder");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-purple-500/30 transition-all duration-200 cursor-pointer text-left flex ${
-                                            chatPanelWidthPx < 400
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-purple-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
                                                 ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
                                                 : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
-                                        } shadow-md hover:shadow-purple-500/10 hover:-translate-y-0.5`}
+                                            } shadow-md hover:shadow-purple-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
                                             <CalendarDays size={16} />
@@ -825,11 +820,10 @@ export function NormalModeLayout({
                                             setInput("Draft an article, email, or summary");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-emerald-500/30 transition-all duration-200 cursor-pointer text-left flex ${
-                                            chatPanelWidthPx < 400
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-emerald-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
                                                 ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
                                                 : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
-                                        } shadow-md hover:shadow-emerald-500/10 hover:-translate-y-0.5`}
+                                            } shadow-md hover:shadow-emerald-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
                                             <PenLine size={16} />
@@ -845,11 +839,10 @@ export function NormalModeLayout({
                                             setInput("Build a feature, tool, or script");
                                             textareaRef?.current?.focus();
                                         }}
-                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/30 transition-all duration-200 cursor-pointer text-left flex ${
-                                            chatPanelWidthPx < 400
+                                        className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
                                                 ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
                                                 : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
-                                        } shadow-md hover:shadow-amber-500/10 hover:-translate-y-0.5`}
+                                            } shadow-md hover:shadow-amber-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
                                             <Hammer size={16} />
@@ -865,8 +858,8 @@ export function NormalModeLayout({
 
                     {/* Input Area */}
                     {voiceControls ? (
-                        <footer className="w-full shrink-0 bg-neutral-950 px-4 py-3">
-                            <div className="mx-auto max-w-3xl"><VoiceControls {...voiceControls} /></div>
+                        <footer className="w-full shrink-0 bg-neutral-950 px-4 py-3 flex justify-center items-center">
+                            <VoiceControls {...voiceControls} />
                         </footer>
                     ) : <footer
                         onDragEnter={(e) => {
@@ -944,158 +937,157 @@ export function NormalModeLayout({
                                     </div>
                                 )}
 
-                                    <>
-                                        {/* Textarea */}
-                                        <div className="relative flex items-center">
-                                            <textarea
-                                                ref={textareaRef}
-                                                rows={1}
-                                                value={input}
-                                                onChange={(e) => setInput(e.target.value)}
-                                                onKeyDown={(e) => {
-                                                    if (e.key === 'Enter' && !e.shiftKey) {
-                                                        e.preventDefault();
-                                                        onSend();
-                                                    }
-                                                }}
-                                                onPaste={(e) => {
-                                                    if (isLoading) return;
-                                                    const items = e.clipboardData?.items || [];
-                                                    for (const item of items) {
-                                                        if (item.kind === "file" && item.type.startsWith("image/")) {
-                                                            const file = item.getAsFile();
-                                                            if (file) {
-                                                                e.preventDefault();
-                                                                attachImageFile(file);
-                                                            }
-                                                            break;
+                                <>
+                                    {/* Textarea */}
+                                    <div className="relative flex items-center">
+                                        <textarea
+                                            ref={textareaRef}
+                                            rows={1}
+                                            value={input}
+                                            onChange={(e) => setInput(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' && !e.shiftKey) {
+                                                    e.preventDefault();
+                                                    onSend();
+                                                }
+                                            }}
+                                            onPaste={(e) => {
+                                                if (isLoading) return;
+                                                const items = e.clipboardData?.items || [];
+                                                for (const item of items) {
+                                                    if (item.kind === "file" && item.type.startsWith("image/")) {
+                                                        const file = item.getAsFile();
+                                                        if (file) {
+                                                            e.preventDefault();
+                                                            attachImageFile(file);
                                                         }
+                                                        break;
                                                     }
-                                                }}
-                                                placeholder={isNewChat ? 'Do anything' : 'Type a message...'}
-                                                className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
-                                                disabled={isLoading}
-                                            />
-                                        </div>
+                                                }
+                                            }}
+                                            placeholder={isNewChat ? 'Do anything' : 'Type a message...'}
+                                            className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
+                                            disabled={isLoading}
+                                        />
+                                    </div>
 
-                                        {/* Bottom bar */}
-                                        <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60 gap-1.5 min-w-0">
-                                            <div className="flex items-center gap-1.5 min-w-0 shrink-0">
-                                                <div className="relative shrink-0">
-                                                    <button
-                                                        ref={attachmentBtnRef}
-                                                        type="button"
-                                                        onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
-                                                        disabled={isLoading || isCapturing}
-                                                        className={`p-1.5 rounded-lg transition-colors ${
-                                                            isAttachmentPopoverOpen
-                                                                ? "bg-neutral-700/80 text-white"
-                                                                : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                                    {/* Bottom bar */}
+                                    <div className="flex items-center justify-between pt-2 border-t border-neutral-800/60 gap-1.5 min-w-0">
+                                        <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                                            <div className="relative shrink-0">
+                                                <button
+                                                    ref={attachmentBtnRef}
+                                                    type="button"
+                                                    onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
+                                                    disabled={isLoading || isCapturing}
+                                                    className={`p-1.5 rounded-lg transition-colors ${isAttachmentPopoverOpen
+                                                            ? "bg-neutral-700/80 text-white"
+                                                            : "text-neutral-400 hover:text-white hover:bg-neutral-800"
                                                         } disabled:opacity-50`}
-                                                        title="Attach"
-                                                    >
-                                                        {isCapturing ? (
-                                                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
-                                                        ) : (
-                                                            <Paperclip size={16} />
-                                                        )}
-                                                    </button>
-                                                    <AnimatePresence>
-                                                        {isAttachmentPopoverOpen && (
-                                                            <AttachmentPopover
-                                                                isOpen={isAttachmentPopoverOpen}
-                                                                onClose={() => setIsAttachmentPopoverOpen(false)}
-                                                                triggerRef={attachmentBtnRef}
-                                                                onFileUpload={onFileUpload}
-                                                                onCaptureScreen={onCaptureScreen}
-                                                                onPickProjectPath={onPickProjectPath}
-                                                                onAttachClipboard={onAttachClipboard}
-                                                                onOpenCustomKnowledge={() => {
-                                                                    setIsAttachmentPopoverOpen(false);
-                                                                    setIsKnowledgePickerOpen(true);
-                                                                }}
-                                                            />
-                                                        )}
-                                                    </AnimatePresence>
-
-                                                    <KnowledgePickerModal
-                                                        isOpen={isKnowledgePickerOpen}
-                                                        onClose={() => setIsKnowledgePickerOpen(false)}
-                                                        onSelect={(pack) => onAttachKnowledge?.(pack)}
-                                                        attachedIds={attachedKnowledge.map((k) => k.id)}
-                                                        variant="popover"
-                                                    />
-                                                </div>
-
-                                                <div className="flex items-center gap-1 shrink-0">
-                                                    <ModeToggle
-                                                        chatMode={chatMode}
-                                                        setChatMode={setChatMode}
-                                                        speedMode={speedMode}
-                                                        setSpeedMode={setSpeedMode}
-                                                        provider={provider}
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <div className="flex items-center gap-1.5 min-w-0 shrink-0">
-                                                <LlmProviderSelector
-                                                    provider={provider}
-                                                    onSelectProvider={onSelectProvider}
-                                                    settings={settings}
-                                                    onOpenSettings={onOpenSettings}
-                                                    onUpdateSetting={onUpdateSetting}
-                                                />
-
-                                                {/* Unified Action Button */}
-                                                <AnimatePresence mode="wait" initial={false}>
-                                                    {isLoading ? (
-                                                        <motion.button
-                                                            key="btn-loading"
-                                                            initial={{ scale: 0.8, opacity: 0 }}
-                                                            animate={{ scale: 1, opacity: 1 }}
-                                                            exit={{ scale: 0.8, opacity: 0 }}
-                                                            transition={{ duration: 0.12 }}
-                                                            type="button"
-                                                            onClick={() => onCancel?.()}
-                                                            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 active:scale-95 transition-all"
-                                                            title="Stop generating"
-                                                        >
-                                                            <Square size={11} fill="currentColor" />
-                                                        </motion.button>
-                                                    ) : hasContent ? (
-                                                        <motion.button
-                                                            key="btn-send"
-                                                            initial={{ scale: 0.8, opacity: 0 }}
-                                                            animate={{ scale: 1, opacity: 1 }}
-                                                            exit={{ scale: 0.8, opacity: 0 }}
-                                                            transition={{ duration: 0.12 }}
-                                                            type="button"
-                                                            onClick={onSend}
-                                                            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-white text-neutral-900 hover:bg-neutral-200 active:scale-95 shadow-sm transition-all"
-                                                            title="Send message (Enter)"
-                                                        >
-                                                            <ArrowUp size={15} strokeWidth={2.5} />
-                                                        </motion.button>
+                                                    title="Attach"
+                                                >
+                                                    {isCapturing ? (
+                                                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
                                                     ) : (
-                                                        <motion.button
-                                                            key="btn-live-voice"
-                                                            initial={{ scale: 0.8, opacity: 0 }}
-                                                            animate={{ scale: 1, opacity: 1 }}
-                                                            exit={{ scale: 0.8, opacity: 0 }}
-                                                            transition={{ duration: 0.12 }}
-                                                            type="button"
-                                                            onClick={onToggleLiveVoice}
-                                                            className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-neutral-400 hover:text-white hover:bg-neutral-800 active:scale-95 transition-all"
-                                                            title="Voice conversation (Gemini Live)"
-                                                        >
-                                                            <Mic size={15} />
-                                                        </motion.button>
+                                                        <Paperclip size={16} />
+                                                    )}
+                                                </button>
+                                                <AnimatePresence>
+                                                    {isAttachmentPopoverOpen && (
+                                                        <AttachmentPopover
+                                                            isOpen={isAttachmentPopoverOpen}
+                                                            onClose={() => setIsAttachmentPopoverOpen(false)}
+                                                            triggerRef={attachmentBtnRef}
+                                                            onFileUpload={onFileUpload}
+                                                            onCaptureScreen={onCaptureScreen}
+                                                            onPickProjectPath={onPickProjectPath}
+                                                            onAttachClipboard={onAttachClipboard}
+                                                            onOpenCustomKnowledge={() => {
+                                                                setIsAttachmentPopoverOpen(false);
+                                                                setIsKnowledgePickerOpen(true);
+                                                            }}
+                                                        />
                                                     )}
                                                 </AnimatePresence>
+
+                                                <KnowledgePickerModal
+                                                    isOpen={isKnowledgePickerOpen}
+                                                    onClose={() => setIsKnowledgePickerOpen(false)}
+                                                    onSelect={(pack) => onAttachKnowledge?.(pack)}
+                                                    attachedIds={attachedKnowledge.map((k) => k.id)}
+                                                    variant="popover"
+                                                />
+                                            </div>
+
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <ModeToggle
+                                                    chatMode={chatMode}
+                                                    setChatMode={setChatMode}
+                                                    speedMode={speedMode}
+                                                    setSpeedMode={setSpeedMode}
+                                                    provider={provider}
+                                                />
                                             </div>
                                         </div>
-                                    </>
+
+                                        <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                                            <LlmProviderSelector
+                                                provider={provider}
+                                                onSelectProvider={onSelectProvider}
+                                                settings={settings}
+                                                onOpenSettings={onOpenSettings}
+                                                onUpdateSetting={onUpdateSetting}
+                                            />
+
+                                            {/* Unified Action Button */}
+                                            <AnimatePresence mode="wait" initial={false}>
+                                                {isLoading ? (
+                                                    <motion.button
+                                                        key="btn-loading"
+                                                        initial={{ scale: 0.8, opacity: 0 }}
+                                                        animate={{ scale: 1, opacity: 1 }}
+                                                        exit={{ scale: 0.8, opacity: 0 }}
+                                                        transition={{ duration: 0.12 }}
+                                                        type="button"
+                                                        onClick={() => onCancel?.()}
+                                                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 active:scale-95 transition-all"
+                                                        title="Stop generating"
+                                                    >
+                                                        <Square size={11} fill="currentColor" />
+                                                    </motion.button>
+                                                ) : hasContent ? (
+                                                    <motion.button
+                                                        key="btn-send"
+                                                        initial={{ scale: 0.8, opacity: 0 }}
+                                                        animate={{ scale: 1, opacity: 1 }}
+                                                        exit={{ scale: 0.8, opacity: 0 }}
+                                                        transition={{ duration: 0.12 }}
+                                                        type="button"
+                                                        onClick={onSend}
+                                                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-white text-neutral-900 hover:bg-neutral-200 active:scale-95 shadow-sm transition-all"
+                                                        title="Send message (Enter)"
+                                                    >
+                                                        <ArrowUp size={15} strokeWidth={2.5} />
+                                                    </motion.button>
+                                                ) : (
+                                                    <motion.button
+                                                        key="btn-live-voice"
+                                                        initial={{ scale: 0.8, opacity: 0 }}
+                                                        animate={{ scale: 1, opacity: 1 }}
+                                                        exit={{ scale: 0.8, opacity: 0 }}
+                                                        transition={{ duration: 0.12 }}
+                                                        type="button"
+                                                        onClick={onToggleLiveVoice}
+                                                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-neutral-400 hover:text-white hover:bg-neutral-800 active:scale-95 transition-all"
+                                                        title="Voice conversation (Gemini Live)"
+                                                    >
+                                                        <Mic size={15} />
+                                                    </motion.button>
+                                                )}
+                                            </AnimatePresence>
+                                        </div>
+                                    </div>
+                                </>
                             </div>
                         </div>
 

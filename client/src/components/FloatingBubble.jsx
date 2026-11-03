@@ -179,6 +179,11 @@ export function FloatingBubble({
         const curW = Math.round(outerSize.width / scale);
         const curH = Math.round(outerSize.height / scale);
 
+        // A bubble's width is at most ~250px (e.g. privacy toast).
+        // If curW > 260px or curH > 100px, the window is still the chat/normal window before resizing.
+        // We must NOT shift newX by (curW - targetWidth) because curW is NOT the bubble's width!
+        const isFromWindow = curW > 260 || curH > 100;
+
         if (Math.abs(curW - targetWidth) > 3 || Math.abs(curH - targetHeight) > 3) {
           const outerPos = await win.outerPosition();
           if (cancelled || suspendWindowResize?.()) return;
@@ -189,8 +194,10 @@ export function FloatingBubble({
           const screenLeft = window.screen.availLeft || 0;
           const isRightSide = curX > screenLeft + screenWidth / 2;
 
-          if (isRightSide) {
-            const newX = curX + (curW - targetWidth);
+          if (isRightSide && !isFromWindow) {
+            let newX = curX + (curW - targetWidth);
+            const maxAllowedX = screenLeft + screenWidth - targetWidth;
+            newX = Math.max(screenLeft, Math.min(newX, maxAllowedX));
             await win.setPosition(new LogicalPosition(newX, curY));
           }
           if (!cancelled && !suspendWindowResize?.()) await win.setSize(new LogicalSize(targetWidth, targetHeight));

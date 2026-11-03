@@ -68,7 +68,7 @@ export function ChatInputArea({
   };
 
   if (voiceControls) {
-    return <footer className="w-full shrink-0 bg-neutral-950/95 p-3">
+    return <footer className="w-full shrink-0 bg-neutral-950/95 p-3 flex justify-center items-center">
       <VoiceControls {...voiceControls} />
     </footer>;
   }
