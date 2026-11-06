@@ -362,6 +362,9 @@ export default function WorkstreamSettingsSection() {
             masterEnabled={isMasterOn}
             status={sensorStatus?.sensors?.browser}
             pluginAction={{
+              isInstalled: pluginStatus?.browser?.prepared,
+              installedBadge: 'Bundled Extension',
+              alwaysShowButton: true,
               label: 'Load Extension',
               icon: <FolderOpen className="w-3 h-3 text-neutral-400" />,
               onClick: handleOpenBrowserFolder,
@@ -808,7 +811,7 @@ function SensorRow({
         {/* On-Demand Auto-Inject or Load Button */}
         {pluginAction && (
           <>
-            {pluginAction.isInstalled ? (
+            {pluginAction.isInstalled && !pluginAction.alwaysShowButton ? (
               <div className="flex items-center gap-1">
                 <button
                   type="button"
@@ -820,15 +823,17 @@ function SensorRow({
                   <RefreshCw className={`w-3 h-3 ${pluginAction.loading ? 'animate-spin text-emerald-400' : ''}`} />
                   <span>Update</span>
                 </button>
-                <button
-                  type="button"
-                  title="Remove companion"
-                  onClick={pluginAction.onUninstall}
-                  disabled={pluginAction.loading}
-                  className="text-[10px] text-neutral-500 hover:text-rose-400 px-1 py-0.5 rounded hover:bg-rose-500/10 transition-colors"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
+                {pluginAction.onUninstall && (
+                  <button
+                    type="button"
+                    title="Remove companion"
+                    onClick={pluginAction.onUninstall}
+                    disabled={pluginAction.loading}
+                    className="text-[10px] text-neutral-500 hover:text-rose-400 px-1 py-0.5 rounded hover:bg-rose-500/10 transition-colors"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                )}
               </div>
             ) : (
               <button

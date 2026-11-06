@@ -149,6 +149,30 @@ async def _background_initialization():
             logger.info("Speaker verification ONNX model pre-warmed into RAM.")
         except Exception as spk_err:
             logger.warning("Could not pre-warm speaker verification model: %s", spk_err)
+
+        # 6. Pre-warm Camoufox browser runtime & dependencies into RAM (eliminates 1.5s import/runtime cold start)
+        try:
+            from app.browser.runtime_manager import runtime_manager
+            await runtime_manager.ensure_running()
+            logger.info("Camoufox browser runtime pre-warmed into RAM.")
+        except Exception as cam_err:
+            logger.debug("Could not pre-warm Camoufox runtime: %s", cam_err)
+
+        # 7. Ensure bundled ONNX embedding model is ready in background
+        try:
+            from app.embedding_download import ensure_bundled_model_ready
+            await asyncio.to_thread(ensure_bundled_model_ready)
+            logger.info("Bundled ONNX embedding model verified and ready.")
+        except Exception as emb_err:
+            logger.debug("Could not verify bundled embedding model: %s", emb_err)
+
+        # 8. Ensure bundled companion plugins are auto-injected (IDE & Terminal hooks)
+        try:
+            from app.workstream.plugin_manager import plugin_manager
+            await asyncio.to_thread(plugin_manager.auto_inject_all)
+            logger.info("Bundled companion plugins auto-injected and ready.")
+        except Exception as plug_err:
+            logger.debug("Could not auto-inject bundled companion plugins: %s", plug_err)
     except Exception as e:
         logger.exception("Error during background initialization: %s", e)
 

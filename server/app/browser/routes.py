@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/browser", tags=["browser"])
 class BrowserBinaryInfo(BaseModel):
     """Browser binary availability info."""
     available: bool = False
+    bundled: bool = False
     version: Optional[str] = None
     path: Optional[str] = None
     error: Optional[str] = None
@@ -56,6 +57,7 @@ async def get_browser_status() -> BrowserRuntimeStatus:
 
         binary_info = BrowserBinaryInfo(
             available=binary.get("available", False),
+            bundled=binary.get("bundled", False),
             version=binary.get("version"),
             path=binary.get("path"),
             error=binary.get("error"),
@@ -236,6 +238,7 @@ class BrowserActionPayload(BaseModel):
     headless: Optional[bool] = None
     width: Optional[int] = None
     height: Optional[int] = None
+    profile: Optional[str] = None
 
 
 @router.get("/active_session")
@@ -249,6 +252,8 @@ async def get_active_session_info():
         "url": ctx.current_url if ctx else None,
         "title": ctx.current_title if ctx else None,
         "interaction_mode": ctx.interaction_mode.value if ctx and hasattr(ctx.interaction_mode, 'value') else "desktop",
+        "profile": getattr(browser_service._session, "profile", None) if has_session and browser_service._session else None,
+        "headless": getattr(browser_service.provider, "_headless", True) if has_session and hasattr(browser_service.provider, "_headless") else True,
     }
 
 
@@ -261,7 +266,11 @@ async def perform_browser_action(payload: BrowserActionPayload):
             is_headless = getattr(payload, "headless", None)
             if is_headless is None:
                 is_headless = True
-            res = await browser_service.open_browser(url=payload.url or "https://google.com", headless=is_headless)
+            res = await browser_service.open_browser(
+                url=payload.url or "https://google.com",
+                profile=payload.profile or "default",
+                headless=is_headless,
+            )
             return {"success": res.success, "message": res.message, "url": res.url}
         elif act == "navigate":
             res = await browser_service.navigate(url=payload.url or "https://google.com")
@@ -338,15 +347,25 @@ async def browser_stream_websocket(websocket: WebSocket):
                         else:
                             if last_active is not False:
                                 last_active = False
-                                await websocket.send_json({"type": "status", "active": False})
-                    except Exception:
+                                try:
+                                    await websocket.send_json({"type": "status", "active": False})
+                                except Exception:
+                                    break
+                    except Exception as e:
+                        logger.debug(f"Frame capture/send failed: {e}")
                         if last_active is not False:
                             last_active = False
-                            await websocket.send_json({"type": "status", "active": False})
+                            try:
+                                await websocket.send_json({"type": "status", "active": False})
+                            except Exception:
+                                break
                 else:
                     if last_active is not False:
                         last_active = False
-                        await websocket.send_json({"type": "status", "active": False})
+                        try:
+                            await websocket.send_json({"type": "status", "active": False})
+                        except Exception:
+                            break
                 
                 # Adaptive frame delay: ~15 FPS (0.065s) when active, 0.4s when idle, instant wake on user interaction
                 frame_delay = 0.065 if browser_service.has_active_session() else 0.4
@@ -355,6 +374,8 @@ async def browser_stream_websocket(websocket: WebSocket):
                     immediate_frame_trigger.clear()
                 except asyncio.TimeoutError:
                     pass
+        except asyncio.CancelledError:
+            pass
         except Exception as e:
             logger.debug(f"WebSocket frame_sender exited: {e}")
 
@@ -364,34 +385,47 @@ async def browser_stream_websocket(websocket: WebSocket):
         while True:
             data = await websocket.receive_json()
             act = data.get("action")
-            if act == "click" and "x" in data and "y" in data:
-                await browser_service.click_at_coords(int(data["x"]), int(data["y"]))
-                immediate_frame_trigger.set()
-            elif act == "type" and "text" in data:
-                await browser_service.send_keyboard_input(str(data["text"]))
-                immediate_frame_trigger.set()
-            elif act == "scroll":
-                await browser_service.scroll_page(int(data.get("deltaX", 0)), int(data.get("deltaY", 0)))
-                immediate_frame_trigger.set()
-            elif act == "navigate" and "url" in data:
-                await browser_service.navigate(str(data["url"]))
-                immediate_frame_trigger.set()
-            elif act == "resize_viewport" and "width" in data and "height" in data:
-                await browser_service.resize_viewport(int(data["width"]), int(data["height"]))
-                immediate_frame_trigger.set()
-            elif act == "back":
-                await browser_service.go_back()
-                immediate_frame_trigger.set()
-            elif act == "forward":
-                await browser_service.go_forward()
-                immediate_frame_trigger.set()
-            elif act == "close":
-                await browser_service.close_browser()
-                immediate_frame_trigger.set()
+            try:
+                # If no session is active yet, safely ignore UI interaction/resize actions
+                if not browser_service.has_active_session():
+                    if act in ("resize_viewport", "click", "type", "scroll", "back", "forward"):
+                        logger.debug(f"Ignoring websocket action '{act}' because no browser session is active yet.")
+                        continue
+
+                if act == "click" and "x" in data and "y" in data:
+                    await browser_service.click_at_coords(int(data["x"]), int(data["y"]))
+                    immediate_frame_trigger.set()
+                elif act == "type" and "text" in data:
+                    await browser_service.send_keyboard_input(str(data["text"]))
+                    immediate_frame_trigger.set()
+                elif act == "scroll":
+                    await browser_service.scroll_page(int(data.get("deltaX", 0)), int(data.get("deltaY", 0)))
+                    immediate_frame_trigger.set()
+                elif act == "navigate" and "url" in data:
+                    await browser_service.navigate(str(data["url"]))
+                    immediate_frame_trigger.set()
+                elif act == "resize_viewport" and "width" in data and "height" in data:
+                    await browser_service.resize_viewport(int(data["width"]), int(data["height"]))
+                    immediate_frame_trigger.set()
+                elif act == "back":
+                    await browser_service.go_back()
+                    immediate_frame_trigger.set()
+                elif act == "forward":
+                    await browser_service.go_forward()
+                    immediate_frame_trigger.set()
+                elif act == "close":
+                    await browser_service.close_browser()
+                    immediate_frame_trigger.set()
+            except Exception as act_err:
+                logger.warning(f"Error executing browser websocket action '{act}': {act_err}")
     except WebSocketDisconnect:
         logger.info("WebSocket browser stream client disconnected.")
     except Exception as e:
         logger.warning(f"WebSocket browser stream error: {e}")
     finally:
         sender_task.cancel()
+        try:
+            await sender_task
+        except asyncio.CancelledError:
+            pass
 

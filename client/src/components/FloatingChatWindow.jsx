@@ -103,6 +103,7 @@ export function FloatingChatWindow({
   onAttachKnowledge = () => {},
   onDetachKnowledge = () => {},
   settings = {},
+  contextBreakdown = null,
   kioskOverlay = false,
   kioskSelection = null,
   onAddKioskSelection = null,
@@ -163,6 +164,9 @@ export function FloatingChatWindow({
         provider={provider}
         onSelectProvider={onSelectProvider}
         settings={settings}
+        contextBreakdown={contextBreakdown}
+        currentThreadId={activeThreadId}
+        messages={messages}
         scheduleNotifications={scheduleNotifications}
         scheduleUnreadCount={scheduleUnreadCount}
         onScheduleMarkRead={onScheduleMarkRead}
@@ -246,6 +250,8 @@ export function FloatingChatWindow({
                 attachedKnowledge={attachedKnowledge}
                 retryStatus={retryStatus}
                 onCancelSubAgent={onCancelSubAgent}
+                setInput={setInput}
+                textareaRef={textareaRef}
               />
             </div>
           </div>

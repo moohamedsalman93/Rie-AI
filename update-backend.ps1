@@ -35,6 +35,28 @@ try {
     Write-Host "Using Poetry venv: $venv"
     Write-Host "Syncing backend dependencies..."
     poetry install --no-root
+
+    # Ensure bundled Camoufox browser binary is present in $ServerDir/camoufox_browser
+    $CamoufoxDir = Join-Path $ServerDir "camoufox_browser"
+    $CamoufoxExe = Join-Path $CamoufoxDir "camoufox.exe"
+    if (-not (Test-Path $CamoufoxExe)) {
+        Write-Host "Ensuring Camoufox browser binary is available for bundling..."
+        $LocalCacheBrowser = Get-ChildItem -Path "$env:LOCALAPPDATA\camoufox\camoufox\Cache\browsers\*\*" -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "camoufox.exe") } | Select-Object -First 1
+        if ($LocalCacheBrowser) {
+            Write-Host "Copying installed Camoufox binary from cache: $($LocalCacheBrowser.FullName)"
+            if (-not (Test-Path $CamoufoxDir)) { New-Item -ItemType Directory -Path $CamoufoxDir -Force | Out-Null }
+            robocopy $LocalCacheBrowser.FullName $CamoufoxDir /E /NFL /NDL /NP /NJH /NJS | Out-Null
+        } else {
+            Write-Host "Fetching Camoufox binary via poetry..."
+            poetry run python -m camoufox fetch
+            $FreshCache = Get-ChildItem -Path "$env:LOCALAPPDATA\camoufox\camoufox\Cache\browsers\*\*" -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "camoufox.exe") } | Select-Object -First 1
+            if ($FreshCache) {
+                if (-not (Test-Path $CamoufoxDir)) { New-Item -ItemType Directory -Path $CamoufoxDir -Force | Out-Null }
+                robocopy $FreshCache.FullName $CamoufoxDir /E /NFL /NDL /NP /NJH /NJS | Out-Null
+            }
+        }
+    }
+
     poetry run pyinstaller --noconfirm rie-backend.spec
 } finally {
     Pop-Location

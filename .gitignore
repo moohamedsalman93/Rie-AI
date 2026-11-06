@@ -80,7 +80,9 @@ client/src-tauri/bin/
 server/chroma_ltm
 server/knowledge/
 server/scratch/
+server/models/
 server/speaker_id/data/*.wav
 server/speaker_id/data/*.json
 server/speaker_id/models/*.onnx
-.cursor
+.cursor
+server/camoufox_browser/

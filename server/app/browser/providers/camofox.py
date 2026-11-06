@@ -164,31 +164,51 @@ class CamoFoxProvider(BrowserProvider):
         profile_dir = str(profile_manager.get_profile_dir(prof_id))
         profile_manager.touch_profile(prof_id)
 
-        # Merge user launch kwargs with profile settings
+        # Resolve headless mode strictly respecting user's configured setting
+        from app.config import settings
+        settings.reload()
+        mode = settings.CAMOFOX_HEADLESS_MODE  # "headless", "normal", or "auto"
+
         kwargs = {**self._launch_kwargs}
-        if headless is not None:
-            kwargs["headless"] = headless
+        if mode == "headless":
+            effective_headless = True
+        elif mode == "normal":
+            effective_headless = False
         else:
-            from app.config import Settings
-            cfg = Settings()
-            mode = cfg.CAMOFOX_HEADLESS_MODE
-            if mode == "headless":
-                kwargs["headless"] = True
-            elif mode == "normal":
-                kwargs["headless"] = False
-            else:
-                # "auto" mode: default to visible GUI (False) for user sessions
-                kwargs.setdefault("headless", False)
+            # "auto" mode: allow caller/LLM to decide; default to False (visible GUI)
+            effective_headless = bool(headless) if headless is not None else False
 
-        # Ensure high resolution window size to fill desktop panel workspace
-        kwargs.setdefault("window", (1920, 1080))
-        self._headless = kwargs.get("headless", False)
+        kwargs["headless"] = effective_headless
+        self._headless = effective_headless
+        logger.info(f"Camoufox session headless mode: {effective_headless} (setting={mode}, requested={headless})")
 
-        # Configure Firefox user preferences to allow media autoplay with sound
+        # Configure Firefox user preferences to allow media autoplay with sound & optimize startup speed
         user_prefs = kwargs.setdefault("firefox_user_prefs", {})
         user_prefs.setdefault("media.autoplay.default", 0)
         user_prefs.setdefault("media.autoplay.blocking_policy", 0)
         user_prefs.setdefault("media.autoplay.allow-muted", False)
+        # Suppress telemetry, update checks, and first-run overhead for faster cold boot
+        user_prefs.setdefault("browser.startup.homepage_override.mstone", "ignore")
+        user_prefs.setdefault("startup.homepage_welcome_url", "")
+        user_prefs.setdefault("startup.homepage_welcome_url.additional", "")
+        user_prefs.setdefault("browser.shell.checkDefaultBrowser", False)
+        user_prefs.setdefault("app.update.auto", False)
+        user_prefs.setdefault("app.update.enabled", False)
+        user_prefs.setdefault("browser.newtabpage.activity-stream.feeds.telemetry", False)
+        user_prefs.setdefault("browser.newtabpage.activity-stream.telemetry", False)
+        user_prefs.setdefault("browser.ping-centre.telemetry", False)
+        user_prefs.setdefault("toolkit.telemetry.reportingpolicy.firstRun", False)
+        user_prefs.setdefault("toolkit.telemetry.unified", False)
+        user_prefs.setdefault("toolkit.telemetry.archive.enabled", False)
+        user_prefs.setdefault("datareporting.healthreport.uploadEnabled", False)
+        user_prefs.setdefault("browser.tabs.warnOnClose", False)
+        user_prefs.setdefault("browser.cache.disk.enable", True)
+        user_prefs.setdefault("browser.cache.memory.enable", True)
+
+        kwargs.setdefault("enable_cache", True)
+        if sys.platform == "win32":
+            kwargs.setdefault("os", "windows")
+        kwargs.setdefault("fingerprint_preset", True)
 
         if prof_id != "default":
             kwargs["persistent_context"] = True
@@ -196,6 +216,12 @@ class CamoFoxProvider(BrowserProvider):
             self._persistent = True
         else:
             self._persistent = False
+
+        # Resolve pre-bundled Camoufox browser binary executable if present
+        from app.browser.runtime_manager import get_bundled_camoufox_executable
+        bundled_exe = get_bundled_camoufox_executable()
+        if bundled_exe:
+            kwargs.setdefault("executable_path", str(bundled_exe))
 
         try:
             self._camoufox_cm = AsyncCamoufox(**kwargs)
@@ -284,10 +310,6 @@ class CamoFoxProvider(BrowserProvider):
         self._require_page()
         try:
             response = await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            try:
-                await self._page.wait_for_load_state("networkidle", timeout=3000)
-            except Exception:
-                pass
             self._ref_map = {}  # Invalidate refs on navigation
 
             return ActionResult(

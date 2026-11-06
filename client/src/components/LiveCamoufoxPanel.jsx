@@ -27,7 +27,8 @@ import {
   getBrowserProfiles,
   getBrowserCookieSources,
   importLocalBrowserCookies,
-  importJsonCookies
+  importJsonCookies,
+  API_BASE_URL
 } from '../services/chatApi';
 
 export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
@@ -121,6 +122,7 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
           }
           if (data.title) setCurrentTitle(data.title);
           if (data.profile) setSelectedProfile(data.profile);
+          if (data.headless === false) setIsNativeMode(true);
         }
       })
       .catch((err) => console.error('Failed to check active session status:', err));
@@ -139,7 +141,7 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
           
           if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
           resizeTimerRef.current = setTimeout(() => {
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            if (isActive && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
               wsRef.current.send(JSON.stringify({
                 action: 'resize_viewport',
                 width: targetW,
@@ -156,7 +158,7 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
       observer.disconnect();
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
     };
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
     let ws;
@@ -164,11 +166,8 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
     let reconnectTimer;
 
     const connectWebSocket = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host.includes('14200')
-        ? '127.0.0.1:14300'
-        : (window.location.host || '127.0.0.1:14300');
-      const wsUrl = `${protocol}//${host}/api/browser/stream`;
+      const wsBase = API_BASE_URL.replace(/^http/, 'ws');
+      const wsUrl = `${wsBase}/api/browser/stream`;
 
       try {
         ws = new WebSocket(wsUrl);
@@ -178,7 +177,7 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
         ws.onopen = () => {
           if (isMounted) setIsConnecting(false);
           // Send initial adaptive container dimensions if ready (HiDPI scaled)
-          if (containerRef.current) {
+          if (isActive && containerRef.current) {
             const rect = containerRef.current.getBoundingClientRect();
             if (rect.width > 200 && rect.height > 200) {
               const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -389,14 +388,31 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
     setIsNavigating(true);
     setIsNativeMode(!headless);
     setStatusMessage(headless ? `Launching Camoufox (${profToUse})...` : `Opening 60 FPS window (${profToUse})...`);
+
+    const stageTimer1 = setTimeout(() => {
+      setStatusMessage('Initializing anti-detect browser fingerprint...');
+    }, 2000);
+    const stageTimer2 = setTimeout(() => {
+      setStatusMessage('Spawning stealth Firefox process & loading webpage...');
+    }, 5500);
+
     try {
       const targetUrl = urlInput || 'https://google.com';
       await performBrowserAction('open', { url: targetUrl, profile: profToUse, headless });
       setIsActive(true);
+      if (headless) {
+        setStatusMessage('Connecting live display stream...');
+      } else {
+        setStatusMessage('');
+      }
     } catch (err) {
       console.error('Failed to open browser session:', err);
       setStatusMessage('Failed to launch Camoufox engine.');
+      setIsActive(false);
+      setHasFrame(false);
     } finally {
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
       setIsNavigating(false);
     }
   };
@@ -410,6 +426,11 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
       const targetUrl = urlInput || currentUrl || 'https://google.com';
       await performBrowserAction('open', { url: targetUrl, profile: profToUse, headless });
       setIsActive(true);
+      if (headless) {
+        setStatusMessage('Connecting live display stream...');
+      } else {
+        setStatusMessage('');
+      }
     } catch (err) {
       console.error('Failed to switch browser mode:', err);
       setStatusMessage('Failed to switch browser mode.');
@@ -765,6 +786,28 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
                     <span className="font-medium text-xs">Reload Current Page</span>
                   </button>
 
+                  {isActive && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setIsMenuOpen(false);
+                        try {
+                          await performBrowserAction('close');
+                        } catch (e) {
+                          console.error('Failed to close browser session:', e);
+                        }
+                        setIsActive(false);
+                        setHasFrame(false);
+                        setIsNativeMode(false);
+                        setStatusMessage('');
+                      }}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 transition-colors cursor-pointer"
+                    >
+                      <X size={13} className="text-amber-400" />
+                      <span className="font-medium text-xs">Stop Active Session</span>
+                    </button>
+                  )}
+
                   {onClose && (
                     <button
                       type="button"
@@ -1042,10 +1085,41 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
               />
             ))}
           </div>
+        ) : isActive || isNavigating ? (
+          <div className="flex flex-col items-center justify-center text-center p-6 space-y-4 max-w-sm">
+            <div className="w-12 h-12 rounded-2xl bg-neutral-900 border border-neutral-800 text-emerald-400 flex items-center justify-center shadow-inner">
+              <Loader2 size={24} className="animate-spin text-emerald-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-neutral-200">
+                {isActive ? 'Connecting Camoufox Stream...' : 'Launching Camoufox Engine...'}
+              </h3>
+              <p className="text-xs text-neutral-400 mt-1.5 leading-relaxed">
+                {statusMessage || (isActive ? 'Waiting for live video feed from stealth browser...' : 'Starting browser process with anti-detection profile...')}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await performBrowserAction('close');
+                } catch (e) {
+                  console.error('Failed to close session:', e);
+                }
+                setIsActive(false);
+                setHasFrame(false);
+                setIsNavigating(false);
+                setStatusMessage('');
+              }}
+              className="px-4 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-neutral-200 text-xs font-medium rounded-xl border border-neutral-800 transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center text-center p-6 space-y-4 max-w-sm">
             <div className="w-12 h-12 rounded-2xl bg-neutral-900 border border-neutral-800 text-neutral-300 flex items-center justify-center">
-              {isNavigating ? <Loader2 size={22} className="animate-spin text-neutral-400" /> : <Globe size={22} />}
+              <Globe size={22} />
             </div>
             <div>
               <h3 className="text-sm font-semibold text-neutral-200">Camoufox Live Browser Workspace</h3>
@@ -1053,7 +1127,7 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
                 Open a stealth Camoufox session to visually watch and interact live with AI browsing tasks.
               </p>
               {statusMessage && (
-                <p className="text-xs text-neutral-400 font-medium mt-2 animate-pulse">
+                <p className="text-xs text-amber-400/90 font-medium mt-2">
                   {statusMessage}
                 </p>
               )}
@@ -1086,7 +1160,7 @@ export function LiveCamoufoxPanel({ onClose, isEmbedded = true }) {
                 disabled={isNavigating}
                 className="flex-1 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white text-xs font-medium rounded-xl border border-neutral-800 hover:border-neutral-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
-                {isNavigating ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                <Play size={13} />
                 <span>In-App View</span>
               </button>
 

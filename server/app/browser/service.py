@@ -51,6 +51,7 @@ class BrowserService:
         self._last_snapshot_generation: int = 0
         self._valid_refs: set[str] = set()
         self._lock: asyncio.Lock = asyncio.Lock()
+        self._screenshot_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def state(self) -> BrowserSessionState:
@@ -108,10 +109,20 @@ class BrowserService:
     async def open_browser(self, url: Optional[str] = None, profile: Optional[str] = None, headless: Optional[bool] = None) -> ActionResult:
         """Open browser session and optionally navigate to URL."""
         async with self._lock:
-            if self.has_active_session() and headless is not None:
+            from app.config import settings
+            settings.reload()
+            configured_mode = settings.CAMOFOX_HEADLESS_MODE
+            if configured_mode == "headless":
+                effective_headless = True
+            elif configured_mode == "normal":
+                effective_headless = False
+            else:
+                effective_headless = headless if headless is not None else False
+
+            if self.has_active_session():
                 current_headless = getattr(self.provider, "_headless", None)
-                if current_headless is not None and current_headless != headless:
-                    logger.info(f"Switching browser session headless mode to {headless}...")
+                if current_headless is not None and current_headless != effective_headless:
+                    logger.info(f"Switching browser session headless mode to {effective_headless}...")
                     try:
                         await self.provider.close_session(self._session.session_id)
                     except Exception as e:
@@ -122,9 +133,9 @@ class BrowserService:
             if not self.has_active_session():
                 logger.info("Verifying browser runtime process readiness...")
                 await runtime_manager.ensure_running()
-                logger.info("Initializing new browser session via provider...")
+                logger.info(f"Initializing new browser session via provider (headless={effective_headless})...")
                 try:
-                    self._session = await self.provider.create_session(profile=profile, headless=headless)
+                    self._session = await self.provider.create_session(profile=profile, headless=effective_headless)
                 except (ProviderUnavailableError, ServerUnavailableError) as e:
                     self._handle_process_crash(e)
                 self._state = BrowserSessionState.ACTIVE
@@ -299,8 +310,11 @@ class BrowserService:
 
     async def screenshot(self, full_page: bool = False, format: str = "jpeg", quality: int = 75) -> bytes:
         """Capture screenshot of active tab with customizable format and quality."""
-        async with self._lock:
-            self._ensure_active_session("browser_screenshot")
+        if not self.has_active_session():
+            return b""
+        async with self._screenshot_lock:
+            if not self.has_active_session():
+                return b""
             self._interaction_mode = InteractionMode.BROWSER
             return await self.provider.capture_screenshot(
                 self._session.session_id,

@@ -1,6 +1,6 @@
 """
 On-Demand Plugin & Extension Manager for Rie-AI Workstream.
-Handles discovery, download (with local fallback), auto-injection for IDE & Terminal,
+Handles discovery, auto-bundling, auto-injection for IDE & Terminal,
 and assisted loading for Chromium browsers.
 """
 from dataclasses import dataclass, field
@@ -28,10 +28,27 @@ RIE_BROWSER_EXT_DIR = RIE_HOME / "extensions" / "browser"
 
 
 def _get_project_extensions_root() -> Optional[Path]:
-    """Finds the local project app/extensions directory if running in source/dev mode."""
-    # Try traversing upwards from this file
+    """Finds the bundled app/extensions directory in source or packaged modes."""
+    # 1. Direct server bundled path: app/server/extensions
+    server_bundled = Path(__file__).resolve().parent.parent.parent / "extensions"
+    if server_bundled.is_dir() and (server_bundled / "vscode").is_dir():
+        return server_bundled
+
+    # 2. PyInstaller / Frozen executable bundle
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            for cand in [Path(meipass) / "extensions", Path(meipass) / "app" / "extensions"]:
+                if cand.is_dir() and (cand / "vscode").is_dir():
+                    return cand
+        exe_parent = Path(sys.executable).parent
+        for cand in [exe_parent / "extensions", exe_parent / "app" / "extensions"]:
+            if cand.is_dir() and (cand / "vscode").is_dir():
+                return cand
+
+    # 3. Check traversing upwards from this file
     current = Path(__file__).resolve().parent
-    for _ in range(6):
+    for _ in range(7):
         cand = current / "app" / "extensions"
         if cand.is_dir() and (cand / "vscode").is_dir():
             return cand
@@ -42,11 +59,18 @@ def _get_project_extensions_root() -> Optional[Path]:
         if parent == current:
             break
         current = parent
+
+    # 4. Check current working directory
+    cwd = Path.cwd()
+    for cand in [cwd / "app" / "extensions", cwd / "extensions"]:
+        if cand.is_dir() and (cand / "vscode").is_dir():
+            return cand
+
     return None
 
 
 class PluginManager:
-    """Manages on-demand downloading and auto-injecting companion plugins."""
+    """Manages bundled companion plugins, auto-injection, and browser extensions."""
 
     def __init__(self):
         RIE_PLUGINS_CACHE.mkdir(parents=True, exist_ok=True)
@@ -62,6 +86,16 @@ class PluginManager:
         terminal_status = self.check_terminal_installed()
         browser_status = self.check_browser_prepared()
 
+        # If running on a new device or plugins not yet injected, auto-inject them automatically!
+        if not ide_status.get("installed") or not terminal_status.get("installed") or not browser_status.get("prepared"):
+            try:
+                self.auto_inject_all()
+                ide_status = self.check_ide_installed()
+                terminal_status = self.check_terminal_installed()
+                browser_status = self.check_browser_prepared()
+            except Exception as auto_err:
+                logger.debug("Auto-injection fallback error during get_status: %s", auto_err)
+
         return {
             "ide": ide_status,
             "terminal": terminal_status,
@@ -69,16 +103,36 @@ class PluginManager:
         }
 
     def check_ide_installed(self) -> Dict[str, Any]:
-        """Checks if the Rie companion extension is installed in VS Code, Antigravity, or Cursor."""
+        """Checks if the Rie companion extension is installed in VS Code, Antigravity, Cursor, etc."""
         target_dirs = self._get_ide_target_dirs()
         installed_editors = []
         installed_paths = []
 
-        for editor_name, target_dir in target_dirs.items():
-            package_json = target_dir / "package.json"
-            if package_json.is_file():
+        for editor_name, path_list in target_dirs.items():
+            editor_found = False
+            for target_dir in path_list:
+                cand_paths = [
+                    target_dir / "package.json",
+                    target_dir.parent / "rie-context" / "package.json",
+                ]
+                if target_dir.parent.is_dir():
+                    try:
+                        for sub in target_dir.parent.iterdir():
+                            if sub.is_dir() and "rie" in sub.name.lower():
+                                cand_paths.append(sub / "package.json")
+                    except Exception:
+                        pass
+
+                for pkg in cand_paths:
+                    if pkg.is_file():
+                        installed_paths.append(str(pkg.parent))
+                        editor_found = True
+                        break
+                if editor_found:
+                    break
+
+            if editor_found:
                 installed_editors.append(editor_name)
-                installed_paths.append(str(target_dir))
 
         return {
             "installed": len(installed_editors) > 0,
@@ -137,22 +191,26 @@ class PluginManager:
         target_dirs = self._get_ide_target_dirs()
         injected = []
 
-        for editor_name, target_dir in target_dirs.items():
-            try:
-                if target_dir.exists():
-                    shutil.rmtree(target_dir)
-                target_dir.mkdir(parents=True, exist_ok=True)
-                for item in source_dir.iterdir():
-                    if item.name.startswith("."):
-                        continue
-                    if item.is_file():
-                        shutil.copy2(item, target_dir / item.name)
-                    elif item.is_dir():
-                        shutil.copytree(item, target_dir / item.name, dirs_exist_ok=True)
+        for editor_name, path_list in target_dirs.items():
+            editor_succeeded = False
+            for target_dir in path_list:
+                for dest_dir in [target_dir, target_dir.parent / "rie-context"]:
+                    try:
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        for item in source_dir.iterdir():
+                            if item.name.startswith("."):
+                                continue
+                            if item.is_file():
+                                shutil.copy2(item, dest_dir / item.name)
+                            elif item.is_dir():
+                                shutil.copytree(item, dest_dir / item.name, dirs_exist_ok=True)
+                        editor_succeeded = True
+                        logger.info(f"Auto-injected IDE extension to {editor_name}: {dest_dir}")
+                    except Exception as e:
+                        logger.warning(f"Failed to inject to {editor_name} ({dest_dir}): {e}")
+
+            if editor_succeeded:
                 injected.append(editor_name)
-                logger.info(f"Auto-injected IDE extension to {editor_name}: {target_dir}")
-            except Exception as e:
-                logger.warning(f"Failed to inject to {editor_name} ({target_dir}): {e}")
 
         if not injected:
             # Fallback to standard .vscode/extensions
@@ -176,13 +234,18 @@ class PluginManager:
         """Removes the auto-injected IDE companion from all editor extension folders."""
         target_dirs = self._get_ide_target_dirs()
         removed = []
-        for editor_name, target_dir in target_dirs.items():
-            if target_dir.exists():
-                try:
-                    shutil.rmtree(target_dir)
-                    removed.append(editor_name)
-                except Exception as e:
-                    logger.warning(f"Failed to remove {target_dir}: {e}")
+        for editor_name, path_list in target_dirs.items():
+            editor_removed = False
+            for target_dir in path_list:
+                for dest_dir in [target_dir, target_dir.parent / "rie-context"]:
+                    if dest_dir.exists():
+                        try:
+                            shutil.rmtree(dest_dir)
+                            editor_removed = True
+                        except Exception as e:
+                            logger.warning(f"Failed to remove {dest_dir}: {e}")
+            if editor_removed:
+                removed.append(editor_name)
 
         return {
             "success": True,
@@ -327,16 +390,47 @@ class PluginManager:
             return {"success": True, "path": folder_str, "warning": str(e)}
 
     # -------------------------------------------------------------
-    # HELPER: ACQUIRE SOURCE (LOCAL FALLBACK OR DOWNLOAD)
+    # AUTO-INJECT ALL (CALLED ON STARTUP & ON-DEMAND)
+    # -------------------------------------------------------------
+    def auto_inject_all(self) -> Dict[str, Any]:
+        """
+        Silently ensures all bundled plugins are injected and prepared on startup:
+        1. Prepares browser extension at ~/.rie/extensions/browser.
+        2. Auto-injects IDE companion extension into all detected editors.
+        3. Auto-injects shell hooks into PowerShell profiles and ~/.bashrc.
+        """
+        results = {}
+        try:
+            results["browser"] = self.prepare_browser_extension()
+        except Exception as e:
+            logger.debug("Auto-prep browser extension: %s", e)
+            results["browser"] = {"error": str(e)}
+
+        try:
+            results["ide"] = self.install_ide()
+        except Exception as e:
+            logger.debug("Auto-inject IDE: %s", e)
+            results["ide"] = {"error": str(e)}
+
+        try:
+            results["terminal"] = self.install_terminal()
+        except Exception as e:
+            logger.debug("Auto-inject Terminal: %s", e)
+            results["terminal"] = {"error": str(e)}
+
+        return results
+
+    # -------------------------------------------------------------
+    # HELPER: ACQUIRE SOURCE (LOCAL BUNDLED OR FALLBACK)
     # -------------------------------------------------------------
     def _acquire_extension_source(self, ext_type: str) -> Optional[Path]:
         """
         Acquires extension source directory.
-        1. Checks local app/extensions/<ext_type> (development / bundled source).
-        2. Checks cached download at ~/.rie/plugins/cache/<ext_type>.
-        3. Downloads remote zip from GitHub Releases / CDN if missing.
+        1. Checks bundled app/extensions/<ext_type> or app/server/extensions/<ext_type>.
+        2. Checks cached directory at ~/.rie/plugins/cache/<ext_type>.
+        3. Remote download fallback if needed.
         """
-        # 1. Local project directory check
+        # 1. Bundled extensions check
         project_root = _get_project_extensions_root()
         if project_root:
             local_cand = project_root / ext_type
@@ -370,34 +464,33 @@ class PluginManager:
             return cached_dir
         except Exception as e:
             logger.warning(f"Remote download failed for {ext_type} plugin: {e}")
-            # If download fails, check if we can fall back to anywhere in current workspace
             fallback_workspace = Path(os.getcwd()) / "app" / "extensions" / ext_type
             if fallback_workspace.is_dir():
                 return fallback_workspace
             return None
 
-    def _get_ide_target_dirs(self) -> Dict[str, Path]:
+    def _get_ide_target_dirs(self) -> Dict[str, List[Path]]:
         """Detects available IDE extension target paths on the user's system."""
         ext_folder_name = f"rie-companion-{PLUGIN_VERSION}"
-        targets = {}
+        targets: Dict[str, List[Path]] = {}
 
-        # VS Code
-        vscode_dir = USER_HOME / ".vscode"
-        if vscode_dir.exists():
-            targets["VS Code"] = vscode_dir / "extensions" / ext_folder_name
+        candidate_roots = [
+            ("VS Code", USER_HOME / ".vscode"),
+            ("VS Code Insiders", USER_HOME / ".vscode-insiders"),
+            ("Antigravity", USER_HOME / ".antigravity"),
+            ("Antigravity", USER_HOME / ".antigravity-ide"),
+            ("Cursor", USER_HOME / ".cursor"),
+            ("Windsurf", USER_HOME / ".windsurf"),
+            ("VSCodium", USER_HOME / ".vscode-oss"),
+        ]
 
-        # Antigravity (Google / Theia / Cursor based)
-        antigravity_dir = USER_HOME / ".antigravity"
-        if antigravity_dir.exists():
-            targets["Antigravity"] = antigravity_dir / "extensions" / ext_folder_name
-
-        # Cursor
-        cursor_dir = USER_HOME / ".cursor"
-        if cursor_dir.exists():
-            targets["Cursor"] = cursor_dir / "extensions" / ext_folder_name
+        for editor_name, base_dir in candidate_roots:
+            if base_dir.exists():
+                ext_dir = base_dir / "extensions"
+                targets.setdefault(editor_name, []).append(ext_dir / ext_folder_name)
 
         if not targets:
-            targets["VS Code"] = USER_HOME / ".vscode" / "extensions" / ext_folder_name
+            targets["VS Code"] = [USER_HOME / ".vscode" / "extensions" / ext_folder_name]
 
         return targets
 

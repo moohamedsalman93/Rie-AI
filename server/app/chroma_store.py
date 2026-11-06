@@ -94,10 +94,35 @@ def _get_embedding_function():
 
             return _LocalONNXMiniLM()
 
+    # 2. Check bundled app models directory
+    bundled_app_root = Path(__file__).resolve().parent.parent / "models" / "all-MiniLM-L6-v2"
+    if (bundled_app_root / "onnx" / "model.onnx").is_file():
+        logger.info("Using bundled ONNX embeddings from app bundle: %s", bundled_app_root)
+
+        class _BundledONNXMiniLM(ONNXMiniLM_L6_V2):
+            DOWNLOAD_PATH = bundled_app_root
+
+        return _BundledONNXMiniLM()
+
+    # 3. Check default user cache
     default_cache = Path.home() / ".cache" / "chroma" / "onnx_models" / "all-MiniLM-L6-v2"
     if (default_cache / "onnx" / "model.onnx").is_file():
         logger.info("Using bundled ONNX embeddings from default cache")
         return ONNXMiniLM_L6_V2()
+
+    # 4. Auto-ensure bundled model on disk
+    try:
+        from app.embedding_download import ensure_bundled_model_ready
+        resolved = ensure_bundled_model_ready()
+        if resolved and (Path(resolved) / "onnx" / "model.onnx").is_file():
+            logger.info("Auto-ensured bundled ONNX embeddings at: %s", resolved)
+
+            class _AutoBundledONNXMiniLM(ONNXMiniLM_L6_V2):
+                DOWNLOAD_PATH = Path(resolved)
+
+            return _AutoBundledONNXMiniLM()
+    except Exception as auto_err:
+        logger.warning("Could not auto-ensure bundled ONNX model: %s", auto_err)
 
     logger.info("Bundled ONNX model files not found on disk yet. Using deterministic fallback embeddings.")
     return _DeterministicFallbackEmbeddingFunction()

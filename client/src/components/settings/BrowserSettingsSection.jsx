@@ -197,6 +197,7 @@ export default function BrowserSettingsSection() {
   };
 
   const isBinaryAvailable = status?.browser_binary?.available;
+  const isBinaryBundled = status?.browser_binary?.bundled;
   const isFetching = fetchingBinary || status?.is_fetching;
   const downloadPct = status?.download_percentage ?? 0;
   const downloadStage = status?.download_stage || (isFetching ? "downloading" : "idle");
@@ -299,7 +300,7 @@ export default function BrowserSettingsSection() {
                 )}
               </div>
               <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed">
-                Embedded stealth browser engine with C++ anti-fingerprinting. Requires binary download.
+                Embedded stealth browser engine with C++ anti-fingerprinting. Pre-bundled & ready to use.
               </p>
             </div>
           </div>
@@ -321,145 +322,13 @@ export default function BrowserSettingsSection() {
       {/* Camoufox View */}
       {engineChoice === "camoufox" && (
         <div className="space-y-4">
-          {/* Status Card */}
-          <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-xl p-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-neutral-800 text-neutral-300 rounded-lg border border-neutral-700/60">
-                  <Cpu className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="font-medium text-xs text-neutral-200">Camoufox Stealth Engine</div>
-                  <div className="text-[11px] text-neutral-400 font-mono mt-0.5">Embedded Firefox (Playwright)</div>
-                </div>
-              </div>
-
-              <div>
-                {isFetching ? (
-                  <span className="px-2.5 py-1 text-[11px] rounded bg-neutral-800 text-neutral-200 border border-neutral-700 flex items-center gap-1.5 font-mono">
-                    <Loader2 className="w-3 h-3 animate-spin text-sky-400" />
-                    {downloadPct > 0 ? `Downloading (${downloadPct.toFixed(1)}%)` : "Downloading..."}
-                  </span>
-                ) : isBinaryAvailable ? (
-                  <span className="px-2.5 py-1 text-[11px] rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    ● Ready
-                  </span>
-                ) : (
-                  <span className="px-2.5 py-1 text-[11px] rounded bg-neutral-800 text-neutral-400 border border-neutral-700">
-                    ● Download Required
-                  </span>
-                )}
-              </div>
+          {/* Fallback Banner if binary is missing */}
+          {!isBinaryAvailable && (
+            <div className="p-3.5 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2 text-xs text-amber-400 font-medium">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>Camoufox browser binary not detected in app bundle. Rebuild or restart the backend sidecar.</span>
             </div>
-
-            {/* Binary Download Banner */}
-            {!isBinaryAvailable && (
-              <div className="p-3.5 bg-neutral-950 border border-neutral-800 rounded-lg space-y-3 text-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <div className="font-medium text-neutral-200 flex items-center gap-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400" /> Camoufox Browser Binary Needed (~150MB)
-                    </div>
-                    <p className="text-neutral-400 text-[11px] mt-0.5">
-                      Download the stealth Firefox executable to enable the Camoufox engine.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleDownloadBinary}
-                    disabled={isFetching}
-                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors shrink-0 disabled:opacity-50"
-                  >
-                    {isFetching ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
-                        {downloadPct > 0 ? `Downloading (${downloadPct.toFixed(1)}%)` : "Downloading..."}
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-3.5 h-3.5" /> Download Binary
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                {/* Real-time Progress Bar during binary download */}
-                {isFetching && (
-                  <div className="pt-2.5 border-t border-neutral-800/80 space-y-2">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-neutral-300 font-medium capitalize flex items-center gap-1.5">
-                        <span className="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
-                        Stage: <span className="text-sky-400 font-mono">{downloadStage}</span>
-                      </span>
-                      <span className="text-neutral-200 font-mono">
-                        {downloadPct > 0 ? `${downloadPct.toFixed(1)}%` : "Starting..."}
-                        {totalBytes > 0 && (
-                          <span className="text-neutral-400 ml-1.5">
-                            ({(downloadBytes / (1024 * 1024)).toFixed(1)}MB / {(totalBytes / (1024 * 1024)).toFixed(1)}MB)
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    <div className="w-full bg-neutral-900 rounded-full h-2 border border-neutral-800 overflow-hidden">
-                      <div
-                        className="bg-sky-500 h-full rounded-full transition-all duration-300 ease-out"
-                        style={{ width: `${Math.min(100, Math.max(2, downloadPct))}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pt-3 border-t border-neutral-800/80 text-xs">
-              <div>
-                <span className="text-neutral-400 block text-[11px]">Package Version</span>
-                <span className="text-neutral-200 font-mono">{status?.camoufox_version || "—"}</span>
-              </div>
-              <div>
-                <span className="text-neutral-400 block text-[11px]">Mode</span>
-                <span className="text-neutral-200 font-mono capitalize">{status?.mode || "embedded"}</span>
-              </div>
-              <div>
-                <span className="text-neutral-400 block text-[11px]">Anti-Fingerprinting</span>
-                <span className="text-emerald-400 flex items-center gap-1 font-medium text-[11px]">
-                  <ShieldCheck className="w-3.5 h-3.5" /> Active
-                </span>
-              </div>
-            </div>
-
-            {/* Binary Info */}
-            {status?.browser_binary && (
-              <div className="pt-2 border-t border-neutral-800/80 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs">
-                  <Package className="w-3.5 h-3.5 text-neutral-400" />
-                  <span className="text-neutral-400 text-[11px]">Browser Binary:</span>
-                  {status.browser_binary.available ? (
-                    <span className="text-emerald-400 flex items-center gap-1 font-mono text-[11px]">
-                      <CheckCircle2 className="w-3 h-3" />
-                      {status.browser_binary.version || "Installed"}
-                    </span>
-                  ) : (
-                    <span className="text-neutral-400 font-mono text-[11px]">Not downloaded</span>
-                  )}
-                </div>
-                {status.browser_binary.available && (
-                  <button
-                    onClick={handleDeleteBinary}
-                    disabled={deletingBinary || isFetching}
-                    className="px-2.5 py-1 text-[11px] rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1.5 transition-colors disabled:opacity-50 font-medium"
-                    title="Delete downloaded browser binary (~150MB)"
-                  >
-                    {deletingBinary ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-rose-400" />
-                    ) : (
-                      <Trash2 className="w-3 h-3" />
-                    )}
-                    Delete Binary
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Browser Window Mode Selector (headless, normal, auto) */}
           <div className="bg-neutral-900/40 border border-neutral-800/80 rounded-xl p-4 space-y-3">

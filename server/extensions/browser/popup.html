@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rie-AI • Browser Companion</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Title Bar (matching Rie-AI desktop window header) -->
+    <header class="header">
+      <div class="brand">
+        <img src="icons/logo.png" alt="Rie-AI" class="brand-logo" />
+        <span class="brand-name">Rie-AI</span>
+        <span class="brand-tag">BROWSER</span>
+      </div>
+      <div class="status-pill" id="status-pill">
+        <span class="status-dot"></span>
+        <span class="status-label" id="status-label">Checking...</span>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="content">
+      <!-- Active Tab Card -->
+      <section class="card active-card">
+        <div class="card-header">
+          <span class="browser-badge" id="browser-badge">🌐 Browser</span>
+          <span class="queue-badge" id="queue-badge" style="display: none;">0 buffered</span>
+        </div>
+        <div class="tab-title" id="tab-title">Loading active tab...</div>
+        <div class="tab-url" id="tab-url">Fetching URL...</div>
+      </section>
+
+      <!-- Toggle Section -->
+      <section class="card toggle-card">
+        <div class="toggle-text">
+          <span class="toggle-title">Context Tracking</span>
+          <span class="toggle-desc" id="toggle-subtitle">Streaming active tabs to Rie</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="tracking-toggle" checked>
+          <span class="slider"></span>
+        </label>
+      </section>
+
+      <!-- Stats Card -->
+      <section class="card stats-card">
+        <div class="stat-row">
+          <span class="stat-label">Events Sent</span>
+          <span class="stat-value" id="events-count">0</span>
+        </div>
+        <div class="last-event-box">
+          <div class="last-event-header">
+            <span>Last Event Transmitted</span>
+            <span class="last-event-time" id="last-event-time">—</span>
+          </div>
+          <div class="last-event-preview" id="last-event-preview">None yet</div>
+        </div>
+      </section>
+
+      <!-- Test Connection Button -->
+      <div class="action-row">
+        <button class="btn btn-secondary" id="btn-test">
+          <svg class="btn-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+          <span id="test-btn-text">Test Connection</span>
+        </button>
+        <div class="test-feedback" id="test-feedback"></div>
+      </div>
+
+      <!-- Settings Accordion -->
+      <details class="settings-details" id="settings-details">
+        <summary class="settings-summary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Connection Settings</span>
+        </summary>
+        <div class="settings-body">
+          <div class="form-group">
+            <label for="endpoint-input">Endpoint URL</label>
+            <input type="text" id="endpoint-input" class="input-field" placeholder="http://localhost:14300/workstream/events">
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="incognito-toggle" checked>
+            <span>Ignore Incognito / Private tabs</span>
+          </label>
+          <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+          <div class="save-status" id="save-status"></div>
+        </div>
+      </details>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Rie-AI Desktop Workstream Pipeline</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

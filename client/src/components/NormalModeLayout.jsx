@@ -34,6 +34,7 @@ import { ToolChip, ToolCallGroup, SubAgentActivity } from './ToolChip';
 import { HITLApproval } from './HITLApproval';
 import { ModeToggle } from './ModeToggle';
 import { LlmProviderSelector } from './LlmProviderSelector';
+import { ContextCircleBar } from './ContextCircleBar';
 import { ThinkingBlock } from './ThinkingBlock';
 import { QuestionBlock } from './QuestionBlock';
 import { CustomUiContainer } from './custom_ui/CustomUiContainer';
@@ -219,6 +220,7 @@ export function NormalModeLayout({
     provider,
     onSelectProvider,
     settings = {},
+    contextBreakdown = null,
     onUpdateSetting,
     onToggleLiveVoice = () => { },
     voiceControls = null,
@@ -1031,6 +1033,14 @@ export function NormalModeLayout({
                                         </div>
 
                                         <div className="flex items-center gap-1.5 min-w-0 shrink-0">
+                                            <ContextCircleBar
+                                                threadId={currentThreadId}
+                                                contextData={contextBreakdown}
+                                                messages={messages}
+                                                provider={provider}
+                                                settings={settings}
+                                            />
+
                                             <LlmProviderSelector
                                                 provider={provider}
                                                 onSelectProvider={onSelectProvider}

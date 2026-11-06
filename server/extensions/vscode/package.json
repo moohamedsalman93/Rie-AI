@@ -1,0 +1,58 @@
+{
+  "name": "rie-context",
+  "displayName": "Rie Context — VS Code & Antigravity",
+  "description": "Streams active workspace, file path, language, git branch, and file change diffs to Rie AI.",
+  "version": "1.0.0",
+  "publisher": "rie-ai",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Rie Context",
+      "properties": {
+        "rie.endpoint": {
+          "type": "string",
+          "default": "http://localhost:14300/workstream/events",
+          "description": "HTTP endpoint URL for Rie workstream event ingestion."
+        },
+        "rie.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or pause streaming IDE context to Rie."
+        },
+        "rie.trackFileChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send file save and diff change events (+lines/-lines)."
+        },
+        "rie.debounceSeconds": {
+          "type": "number",
+          "default": 1,
+          "description": "Debounce duration in seconds between rapid file switches."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "rie.toggleTracking",
+        "title": "Rie: Toggle Context Tracking"
+      },
+      {
+        "command": "rie.testConnection",
+        "title": "Rie: Test Connection"
+      },
+      {
+        "command": "rie.showStatus",
+        "title": "Rie: Show Status"
+      }
+    ]
+  }
+}

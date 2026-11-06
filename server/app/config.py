@@ -84,6 +84,36 @@ class Settings:
     def OPENAI_BASE_URL(self) -> str:
         return self._get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+    # Azure AI Foundry configuration
+    @property
+    def AZURE_FOUNDRY_API_KEY_STRING(self) -> Optional[str]:
+        """Raw string of Azure Foundry API keys as stored in DB"""
+        return self._get("AZURE_FOUNDRY_API_KEY") or self._get("AZURE_API_KEY")
+
+    @property
+    def AZURE_FOUNDRY_API_KEYS(self) -> list[str]:
+        """List of Azure Foundry API keys for rotation"""
+        keys_str = self.AZURE_FOUNDRY_API_KEY_STRING
+        if not keys_str:
+            return []
+        return [k.strip() for k in keys_str.replace('\n', ',').split(',') if k.strip()]
+
+    @property
+    def AZURE_FOUNDRY_API_KEY(self) -> Optional[str]:
+        keys = self.AZURE_FOUNDRY_API_KEYS
+        return keys[0] if keys else None
+
+    @property
+    def AZURE_FOUNDRY_MODEL(self) -> str:
+        return self._get("AZURE_FOUNDRY_MODEL", "gpt-4o")
+
+    @property
+    def AZURE_FOUNDRY_BASE_URL(self) -> str:
+        url = (self._get("AZURE_FOUNDRY_BASE_URL") or self._get("AZURE_FOUNDRY_ENDPOINT") or "https://models.inference.ai.azure.com").strip().rstrip("/")
+        if url.endswith(".openai.azure.com"):
+            return f"{url}/openai/v1"
+        return url
+
     # DeepSeek configuration
     @property
     def DEEPSEEK_API_KEY_STRING(self) -> Optional[str]:
@@ -518,6 +548,8 @@ class Settings:
             return bool(self.GOOGLE_API_KEYS)
         elif provider == "openai":
             return bool(self.OPENAI_API_KEYS)
+        elif provider in ("azure_foundry", "azure"):
+            return bool(self.AZURE_FOUNDRY_API_KEYS)
         elif provider == "deepseek":
             return bool(self.DEEPSEEK_API_KEYS)
         elif provider == "glm":

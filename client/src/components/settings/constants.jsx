@@ -18,12 +18,21 @@ const OllamaIcon = (props) => (
   </svg>
 );
 
+const AzureFoundryIcon = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" className={props.className} xmlns="http://www.w3.org/2000/svg">
+    <title>Azure Foundry</title>
+    <path d="M13.484 2.215a1.218 1.218 0 0 0-1.042.597L4.17 16.59a1.22 1.22 0 0 0 .97 1.838h4.636l2.366-4.524 3.018 5.766a1.217 1.217 0 0 0 1.077.653H21.5a.65.65 0 0 0 .57-.962L14.526 2.812a1.216 1.216 0 0 0-1.042-.597z" fill="#0078D4"/>
+    <path d="M7.18 18.428l4.47-8.544 2.502 4.782-3.69 7.054a.65.65 0 0 1-.57.352H1.5a.65.65 0 0 1-.57-.963l5.05-8.88 1.2 2.2z" fill="#5EA0EF"/>
+  </svg>
+);
+
 export const PROVIDERS = {
   rie: { label: 'Rie', icon: <img src={logo} alt="Rie" className="w-5 h-5 object-contain" /> },
   gemini: { label: 'Google Gemini', icon: <img src={geminiIcon} alt="Google Gemini" className="w-5 h-5 object-contain" /> },
   vertex: { label: 'Vertex AI', icon: <Cloud className="w-5 h-5" /> },
   groq: { label: 'Groq', icon: <Zap className="w-5 h-5" /> },
   openai: { label: 'OpenAI', icon: <OpenaiIcon className="w-5 h-5" /> },
+  azure_foundry: { label: 'Azure Foundry', icon: <AzureFoundryIcon className="w-5 h-5" /> },
   deepseek: { label: 'DeepSeek', icon: <img src={deepseekIcon} alt="DeepSeek" className="w-5 h-5 object-contain" /> },
   glm: { label: 'GLM (Zhipu AI)', icon: <img src={glmIcon} alt="GLM" className="w-5 h-5 object-contain" /> },
   ollama: { label: 'Ollama', icon: <OllamaIcon className="w-5 h-5" /> },

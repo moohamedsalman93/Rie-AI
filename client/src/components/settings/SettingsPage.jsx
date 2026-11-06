@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, downloadEmbeddingModel, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory, exportBackup, importBackup } from '../../services/chatApi';
+import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory, exportBackup, importBackup } from '../../services/chatApi';
 import { checkForAppUpdate, downloadAppUpdate, installDownloadedUpdate } from '../../services/updater';
 import { isWakeWordEnabled } from '../../services/wakeWordService';
 import { setShareLocationEnabled, prefetchClientLocation } from '../../utils/locationUtils';
@@ -322,10 +322,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   const [rieToken, setRieToken] = useState(null);
   const [rieUsage, setRieUsage] = useState(null);
 
-  // Embedding model download
-  const [embeddingDownloadProgress, setEmbeddingDownloadProgress] = useState(null);
-  const [embeddingDownloading, setEmbeddingDownloading] = useState(false);
-  const [embeddingDownloadError, setEmbeddingDownloadError] = useState(null);
+
 
   // Unsaved changes states
   const [pendingChanges, setPendingChanges] = useState({});
@@ -351,6 +348,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       case 'vertex': return !!settings.vertex_project;
       case 'groq': return !!settings.groq_api_key;
       case 'openai': return !!settings.openai_api_key;
+      case 'azure_foundry': return !!settings.azure_foundry_api_key;
       case 'deepseek': return !!settings.deepseek_api_key;
       case 'glm': return !!settings.glm_api_key;
       case 'rie': return !!rieToken;
@@ -625,12 +623,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
         }
       }
       setSelectedProvider(prev => prev || data.llm_provider || 'rie'); // Preserve user choice if already changed
-      // Initialize embedding download state based on persisted path
-      if (data.embedding_model_path) {
-        setEmbeddingDownloadProgress(100);
-      } else {
-        setEmbeddingDownloadProgress(null);
-      }
+
 
       // Default to all tools enabled if not configured (null/undefined)
       // If configured but empty list, it stays empty.
@@ -758,6 +751,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       if (key === 'GOOGLE_API_KEY') autoProvider = 'gemini';
       else if (key === 'GROQ_API_KEY') autoProvider = 'groq';
       else if (key === 'OPENAI_API_KEY') autoProvider = 'openai';
+      else if (key === 'AZURE_FOUNDRY_API_KEY' || key === 'AZURE_API_KEY') autoProvider = 'azure_foundry';
       else if (key === 'DEEPSEEK_API_KEY') autoProvider = 'deepseek';
       else if (key === 'GLM_API_KEY') autoProvider = 'glm';
       else if (key === 'VERTEX_PROJECT' || key === 'VERTEX_CREDENTIALS_PATH') autoProvider = 'vertex';
@@ -1621,6 +1615,46 @@ sk-...,
                                         onSave={handleLocalSettingChange}
                                         isSaving={isSavingAll}
                                         placeholder="gpt-4o-mini"
+                                      />
+                                    </>
+                                  )}
+
+                                  {key === 'azure_foundry' && (
+                                    <>
+                                      <SettingInput
+                                        label="Azure AI Foundry API Key"
+                                        dbKey="AZURE_FOUNDRY_API_KEY"
+                                        value={settings.azure_foundry_api_key}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        isSecret
+                                        type="textarea"
+                                        placeholder="Enter keys separated by commas or lines:
+key1,
+key2,
+..."
+                                      />
+                                      <p className="text-[10px] text-neutral-500 mt-1">
+                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
+                                      </p>
+                                      <SettingInput
+                                        label="Base URL / Endpoint"
+                                        dbKey="AZURE_FOUNDRY_BASE_URL"
+                                        value={settings.azure_foundry_base_url}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="https://<resource>.services.ai.azure.com/models"
+                                      />
+                                      <p className="text-[10px] text-neutral-500 mt-1">
+                                        Foundry Model Inference endpoint (e.g. https://&lt;resource&gt;.services.ai.azure.com/models) or Azure OpenAI v1 endpoint.
+                                      </p>
+                                      <SettingInput
+                                        label="Deployment / Model Name"
+                                        dbKey="AZURE_FOUNDRY_MODEL"
+                                        value={settings.azure_foundry_model}
+                                        onSave={handleLocalSettingChange}
+                                        isSaving={isSavingAll}
+                                        placeholder="gpt-4o"
                                       />
                                     </>
                                   )}
@@ -3062,7 +3096,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                 <div className={SL.tabStack}>
                   <div className={SL.pageHeader}>
                     <h3 className={SL.pageTitle}>Memory</h3>
-                    <p className={SL.pageDesc}>Search providers, custom knowledge, embeddings, and activity sensors.</p>
+                    <p className={SL.pageDesc}>Search providers, custom knowledge, and activity sensors.</p>
                   </div>
 
                   <SubTabBar tabs={MEMORY_SUB_TABS} activeId={memorySubTab} onChange={setMemorySubTab} />
@@ -3147,124 +3181,6 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       Create named knowledge packs with custom instructions and files. Attach them in chat to inject context into the assistant.
                     </p>
                     <KnowledgeManager />
-                  </div>
-
-                  <div className="premium-card rounded-xl p-5 space-y-4">
-                    <div className={SL.cardHeader}>
-                      <div className={SL.cardHeaderIcon}>
-                        <Activity size={16} />
-                      </div>
-                      <h3 className={SL.sectionTitle}>Embeddings</h3>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <h4 className="text-sm font-medium text-neutral-200">Embedding Source</h4>
-                          <p className="text-[10px] text-neutral-500">
-                            Choose how long-term memory embeddings are computed (bundled model vs Ollama).
-                          </p>
-                        </div>
-                        <div className="relative">
-                          <select
-                            value={settings.embedding_source || 'bundled'}
-                            onChange={(e) => handleLocalSettingChange('EMBEDDING_SOURCE', e.target.value)}
-                            className="bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200 focus:outline-none focus:border-emerald-500 transition-colors appearance-none cursor-pointer pr-10 min-w-[160px]"
-                          >
-                            <option value="bundled">Bundled</option>
-                            <option value="ollama">Ollama</option>
-                          </select>
-                          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-neutral-400">
-                            <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                              <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                            </svg>
-                          </div>
-                        </div>
-                      </div>
-
-                      {(settings.embedding_source || 'bundled') === 'bundled' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-4">
-                            <div>
-                              <h4 className="text-xs font-medium text-neutral-300">Embedding Model</h4>
-                              <p className="text-[10px] text-neutral-500">
-                                Download ONNX <code className="text-neutral-400">all-MiniLM-L6-v2</code> for bundled LTM (~80MB one-time).
-                              </p>
-                            </div>
-                            <button
-                              onClick={async () => {
-                                if (embeddingDownloadProgress === 100) return;
-                                setEmbeddingDownloading(true);
-                                setEmbeddingDownloadError(null);
-                                setEmbeddingDownloadProgress(0);
-                                try {
-                                  const result = await downloadEmbeddingModel((data) => {
-                                    setEmbeddingDownloadProgress(data.progress >= 0 ? data.progress : null);
-                                    if (data.error) setEmbeddingDownloadError(data.error);
-                                  });
-                                  if (result.error) setEmbeddingDownloadError(result.error);
-                                  else setEmbeddingDownloadProgress(100);
-                                } catch (err) {
-                                  setEmbeddingDownloadError(err.message || 'Download failed');
-                                } finally {
-                                  setEmbeddingDownloading(false);
-                                }
-                              }}
-                              disabled={embeddingDownloading || embeddingDownloadProgress === 100}
-                              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
-                            >
-                              {embeddingDownloading ? (
-                                <span className="flex items-center gap-2">
-                                  <RefreshCw size={14} className="animate-spin" />
-                                  Downloading...
-                                </span>
-                              ) : embeddingDownloadProgress === 100 ? (
-                                'Downloaded'
-                              ) : (
-                                'Download Model'
-                              )}
-                            </button>
-                          </div>
-
-                          {embeddingDownloading && embeddingDownloadProgress != null && embeddingDownloadProgress >= 0 && (
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-[10px] text-neutral-400">
-                                <span>{embeddingDownloadProgress}%</span>
-                                <span>{embeddingDownloadProgress >= 100 ? 'Complete' : 'Downloading...'}</span>
-                              </div>
-                              <div className="h-2 w-full bg-neutral-900 rounded-full overflow-hidden border border-neutral-700/30">
-                                <motion.div
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${Math.min(100, embeddingDownloadProgress)}%` }}
-                                  transition={{ duration: 0.3 }}
-                                  className="h-full bg-emerald-500 rounded-full"
-                                />
-                              </div>
-                            </div>
-                          )}
-
-                          {embeddingDownloadError && (
-                            <p className="text-xs text-red-400">{embeddingDownloadError}</p>
-                          )}
-
-                          <SettingInput
-                            label="Bundled Model Path (optional)"
-                            dbKey="EMBEDDING_MODEL_PATH"
-                            value={settings.embedding_model_path}
-                            onSave={handleLocalSettingChange}
-                            isSaving={isSavingAll}
-                            placeholder="Leave empty to use downloaded model"
-                            allowEmpty
-                          />
-                        </div>
-                      )}
-
-                      {(settings.embedding_source || 'bundled') === 'ollama' && (
-                        <p className="text-[10px] text-neutral-500">
-                          Embeddings will be computed by Ollama using <code className="text-neutral-400">nomic-embed-text</code> at{' '}
-                          <code className="text-neutral-400">{settings.ollama_api_url?.trim() || 'http://localhost:11434'}</code>.
-                        </p>
-                      )}
-                    </div>
                   </div>
                     </>
                   )}

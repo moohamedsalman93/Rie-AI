@@ -830,6 +830,22 @@ export async function getThreadMessages(threadId) {
   return response.json();
 }
 
+export async function getThreadContext(threadId) {
+  if (!threadId) return null;
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat/threads/${threadId}/context`, {
+      method: "GET",
+      headers: getHeaders(),
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (e) {
+    console.debug("Failed to fetch thread context breakdown:", e);
+    return null;
+  }
+}
+
+
 /**
  * Delete a thread
  * @param {string} threadId

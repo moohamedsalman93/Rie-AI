@@ -1,6 +1,6 @@
 import React, { memo } from "react";
 import { motion } from "framer-motion";
-import { GitBranch, Info, RotateCw } from 'lucide-react';
+import { GitBranch, Info, RotateCw, Search, CalendarDays, PenLine, Hammer } from 'lucide-react';
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ToolChip, ToolCallGroup, SubAgentActivity } from "./ToolChip";
 import { HITLApproval } from "./HITLApproval";
@@ -117,7 +117,24 @@ function ChatMessagesImpl({
   retryStatus = null,
   isVoiceActive = false,
   onCancelSubAgent,
+  setInput,
+  textareaRef,
 }) {
+  const handleQuickAction = (text) => {
+    if (setInput) {
+      setInput(text);
+    }
+    if (textareaRef?.current) {
+      textareaRef.current.focus();
+      setTimeout(() => {
+        if (textareaRef?.current) {
+          textareaRef.current.focus();
+          const len = textareaRef.current.value?.length ?? text.length;
+          textareaRef.current.setSelectionRange?.(len, len);
+        }
+      }, 0);
+    }
+  };
   const botReplyCount = messages.filter(
     (msg) => msg.from === "bot" && ((msg.blocks && msg.blocks.length > 0) || (msg.text && msg.text.trim()))
   ).length;
@@ -137,7 +154,7 @@ function ChatMessagesImpl({
 
   return (
     <main
-      className={`custom-scrollbar pt-12 px-3.5 ${isVoiceActive ? "pb-4" : "pb-16"} flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden py-4 min-h-0`}
+      className={`custom-scrollbar pt-12 px-3.5 ${isVoiceActive ? "pb-4" : "pb-20"} flex flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden py-4 min-h-0`}
       style={{
         backgroundColor: `rgba(0, 0, 0, var(--floating-chat-opacity, 0.7))`
       }}
@@ -150,19 +167,96 @@ function ChatMessagesImpl({
       )}
       <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
       {(!messages || messages.length === 0) && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3 }}
-          className="flex-1 flex flex-col items-center justify-center text-center p-6 select-none pointer-events-none my-auto"
-        >
-          <h2 className="text-base font-bold text-white/90 mb-1.5 tracking-wide">
-            {isVoiceActive ? "Your voice, in this chat" : "How can I help you today?"}
-          </h2>
-          <p className="text-xs text-neutral-400 max-w-[240px] leading-relaxed">
-            {isVoiceActive ? "Your conversation and tool activity will appear here." : "Ask questions, run terminal commands, or attach project context to get started."}
-          </p>
-        </motion.div>
+        isVoiceActive ? (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.3 }}
+            className="flex-1 flex flex-col items-center justify-center text-center p-6 select-none pointer-events-none my-auto"
+          >
+            <h2 className="text-base font-bold text-white/90 mb-1.5 tracking-wide">
+              Your voice, in this chat
+            </h2>
+            <p className="text-xs text-neutral-400 max-w-[240px] leading-relaxed">
+              Your conversation and tool activity will appear here.
+            </p>
+          </motion.div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center my-auto py-2 w-full max-w-sm mx-auto">
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex flex-col items-center text-center mb-4 space-y-1.5 select-none"
+            >
+              <h2 className="text-lg font-bold text-white font-sans tracking-tight">
+                How can I help you today?
+              </h2>
+              <p className="text-xs text-neutral-400/90 max-w-[270px] leading-relaxed">
+                Select a quick action below or ask Rie-AI to schedule, search, write, or build.
+              </p>
+            </motion.div>
+
+            {/* 4 Scenario Cards */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 }}
+              className="grid grid-cols-2 gap-2 w-full px-1"
+            >
+              <button
+                type="button"
+                onClick={() => handleQuickAction("Search the web or research a topic")}
+                className="group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-teal-500/30 transition-all duration-200 cursor-pointer text-left flex items-center gap-2.5 p-2.5 shadow-md hover:shadow-teal-500/10 hover:-translate-y-0.5 active:scale-[0.98]"
+              >
+                <div className="w-7 h-7 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                  <Search size={15} />
+                </div>
+                <span className="text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-tight font-sans truncate">
+                  Search Web
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleQuickAction("Schedule a task or set a reminder")}
+                className="group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-purple-500/30 transition-all duration-200 cursor-pointer text-left flex items-center gap-2.5 p-2.5 shadow-md hover:shadow-purple-500/10 hover:-translate-y-0.5 active:scale-[0.98]"
+              >
+                <div className="w-7 h-7 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                  <CalendarDays size={15} />
+                </div>
+                <span className="text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-tight font-sans truncate">
+                  Schedule Tasks
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleQuickAction("Draft an article, email, or summary")}
+                className="group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-emerald-500/30 transition-all duration-200 cursor-pointer text-left flex items-center gap-2.5 p-2.5 shadow-md hover:shadow-emerald-500/10 hover:-translate-y-0.5 active:scale-[0.98]"
+              >
+                <div className="w-7 h-7 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                  <PenLine size={15} />
+                </div>
+                <span className="text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-tight font-sans truncate">
+                  Draft Content
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleQuickAction("Build a feature, tool, or script")}
+                className="group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/30 transition-all duration-200 cursor-pointer text-left flex items-center gap-2.5 p-2.5 shadow-md hover:shadow-amber-500/10 hover:-translate-y-0.5 active:scale-[0.98]"
+              >
+                <div className="w-7 h-7 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
+                  <Hammer size={15} />
+                </div>
+                <span className="text-xs font-medium text-neutral-300 group-hover:text-white transition-colors leading-tight font-sans truncate">
+                  Build Apps
+                </span>
+              </button>
+            </motion.div>
+          </div>
+        )
       )}
       {messages.map((m, messageIndex) => {
         // Skip empty bot messages that haven't started streaming blocks yet,

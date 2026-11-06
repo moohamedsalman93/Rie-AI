@@ -1,9 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
 datas = [
     ('app/plugins', 'app/plugins')
 ]
+if os.path.isdir('camoufox_browser'):
+    datas.append(('camoufox_browser', 'camoufox_browser'))
+
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('deepagents')

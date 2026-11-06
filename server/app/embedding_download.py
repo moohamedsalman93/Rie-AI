@@ -206,3 +206,32 @@ def run_download_async(progress_callback: Callable[[dict], None]) -> Optional[st
             break
         progress_callback(msg)
     return result[0]
+
+def bundled_onnx_model_root() -> Path:
+    """Directory where Rie-AI bundles the ONNX MiniLM files."""
+    return Path(__file__).resolve().parent.parent / "models" / MODEL_NAME
+
+
+def ensure_bundled_model_ready() -> Optional[Path]:
+    """
+    Ensure the bundled ONNX all-MiniLM-L6-v2 model is present and ready.
+    Checks bundled app directory, default user cache, and auto-downloads if missing.
+    """
+    # 1. Check bundled project models directory
+    app_root = bundled_onnx_model_root()
+    if _onnx_files_ready(app_root):
+        return app_root
+
+    # 2. Check default user cache
+    user_root = default_onnx_model_root()
+    if _onnx_files_ready(user_root):
+        return user_root
+
+    # 3. Silently auto-download/extract in background if completely missing
+    import queue
+    q: "queue.Queue[dict]" = queue.Queue()
+    res = _download_with_progress(q)
+    if res and _onnx_files_ready(Path(res)):
+        return Path(res)
+    return None
+

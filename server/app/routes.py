@@ -537,6 +537,17 @@ async def chat_cancel(data: CancelRequest):
         return {"status": "ignored", "message": f"No active run found for thread {data.thread_id}"}
 
 
+@router.get("/chat/threads/{thread_id}/context")
+async def get_thread_context_endpoint(thread_id: str):
+    """
+    Return context token breakdown (tool tokens, system instructions, message tokens) for the thread.
+    """
+    breakdown = agent_manager.get_context_breakdown(thread_id)
+    if not breakdown:
+        breakdown = agent_manager.compute_thread_context_breakdown(thread_id)
+    return breakdown or {}
+
+
 @router.post("/planner/generate-instruction", response_model=PlannerInstructionGenerateResponse)
 async def planner_generate_instruction(data: PlannerInstructionGenerateRequest):
     """Generate a member instruction prompt using configured backend LLM."""
@@ -782,6 +793,7 @@ async def get_settings():
         groq_api_key=mask_key(settings.GROQ_API_KEY_STRING),
         google_api_key=mask_key(settings.GOOGLE_API_KEY_STRING),
         openai_api_key=mask_key(settings.OPENAI_API_KEY_STRING),
+        azure_foundry_api_key=mask_key(settings.AZURE_FOUNDRY_API_KEY_STRING),
         deepseek_api_key=mask_key(settings.DEEPSEEK_API_KEY_STRING),
         glm_api_key=mask_key(settings.GLM_API_KEY_STRING),
         anthropic_api_key=mask_key(settings.ANTHROPIC_API_KEY),
@@ -801,6 +813,8 @@ async def get_settings():
         vertex_model=settings.VERTEX_MODEL,
         openai_model=settings.OPENAI_MODEL,
         openai_base_url=settings.OPENAI_BASE_URL,
+        azure_foundry_model=settings.AZURE_FOUNDRY_MODEL,
+        azure_foundry_base_url=settings.AZURE_FOUNDRY_BASE_URL,
         deepseek_model=settings.DEEPSEEK_MODEL,
         deepseek_base_url=settings.DEEPSEEK_BASE_URL,
         glm_model=settings.GLM_MODEL,
@@ -870,7 +884,7 @@ def _looks_like_masked_secret(value: str) -> bool:
 
 
 _SECRET_SETTING_KEYS = frozenset({
-    "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY",
+    "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "AZURE_FOUNDRY_API_KEY", "AZURE_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY",
     "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY", "LANGSMITH_API_KEY",
     "RIE_ACCESS_TOKEN", "OLLAMA_API_KEY", "CONNECTIVITY_NGROK_AUTH_TOKEN",
 })
@@ -883,12 +897,13 @@ async def update_settings(data: SettingsUpdate):
     """
     # Allowed keys to prevent arbitrary DB writes
     ALLOWED_KEYS = {
-        "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY",
+        "GROQ_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "AZURE_FOUNDRY_API_KEY", "AZURE_API_KEY", "DEEPSEEK_API_KEY", "GLM_API_KEY",
         "ANTHROPIC_API_KEY", "TAVILY_API_KEY", "BRAVE_SEARCH_API_KEY",
         "WEB_SEARCH_PROVIDER",
         "VERTEX_PROJECT", "VERTEX_LOCATION", "VERTEX_CREDENTIALS_PATH",
         "LLM_PROVIDER", "FALLBACK_LLM_PROVIDER", "ENABLED_TOOLS", "TERMINAL_RESTRICTIONS",
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
+        "AZURE_FOUNDRY_MODEL", "AZURE_FOUNDRY_BASE_URL", "AZURE_FOUNDRY_ENDPOINT",
         "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "GLM_MODEL", "GLM_BASE_URL",
         "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
@@ -905,11 +920,20 @@ async def update_settings(data: SettingsUpdate):
         "CONNECTIVITY_NGROK_INSTALL_PATH",
         "CONNECTIVITY_NGROK_AUTH_TOKEN",
         "CONNECTIVITY_NGROK_DOMAIN",
+        "CAMOFOX_HEADLESS_MODE",
+        "BROWSER_HEADLESS_MODE",
+        "CAMOUFOX_HEADLESS",
+        "CAMOUFOX_ENABLED",
     }
     
     if data.key not in ALLOWED_KEYS:
         raise HTTPException(status_code=400, detail=f"Invalid setting key: {data.key}")
-    if data.key == "AGENT_ORCHESTRATION_MODE":
+    if data.key in ("CAMOFOX_HEADLESS_MODE", "BROWSER_HEADLESS_MODE"):
+        mode = (data.value or "").strip().lower()
+        if mode not in {"headless", "normal", "auto"}:
+            raise HTTPException(status_code=400, detail="CAMOFOX_HEADLESS_MODE must be 'headless', 'normal', or 'auto'")
+        value_to_store = mode
+    elif data.key == "AGENT_ORCHESTRATION_MODE":
         mode = (data.value or "").strip().lower()
         if mode not in {"solo", "team"}:
             raise HTTPException(status_code=400, detail="AGENT_ORCHESTRATION_MODE must be 'solo' or 'team'")
@@ -962,6 +986,8 @@ async def update_settings(data: SettingsUpdate):
 
     # Update DB
     update_setting(data.key, value_to_store)
+    if data.key in ("CAMOFOX_HEADLESS_MODE", "BROWSER_HEADLESS_MODE"):
+        update_setting("CAMOUFOX_HEADLESS", "1" if value_to_store == "headless" else "0")
     if data.key == "CONNECTIVITY_NGROK_ENABLED":
         enabled = str(value_to_store).strip().lower() == "true"
         if not enabled:
@@ -2447,6 +2473,7 @@ async def debug():
         "gemini_model": settings.GEMINI_MODEL,
         "anthropic_api_key_present": bool(settings.ANTHROPIC_API_KEY),
         "openai_api_key_present": bool(settings.OPENAI_API_KEY),
+        "azure_foundry_api_key_present": bool(settings.AZURE_FOUNDRY_API_KEY),
         "tavily_api_key_present": bool(settings.TAVILY_API_KEY),
         "brave_search_api_key_present": bool(settings.BRAVE_SEARCH_API_KEY),
         "web_search_provider": settings.WEB_SEARCH_PROVIDER,
@@ -3252,6 +3279,12 @@ async def _agent_stream_generator(
 
                 # Signal completion so the client can close the SSE cleanly
                 logger.info("Stream generator finished normally")
+                try:
+                    b = agent_manager.get_context_breakdown(thread_id)
+                    if b:
+                        await sse_queue.put(f"data: {json.dumps({'step': 'context_breakdown', 'breakdown': b}, default=str)}\n\n")
+                except Exception as ctx_err:
+                    logger.debug(f"Could not emit context breakdown: {ctx_err}")
                 await sse_queue.put(f"data: {json.dumps({'step': 'end', 'done': True})}\n\n")
             
             except asyncio.CancelledError:

@@ -10,7 +10,7 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, List, Optional, Iterator, AsyncIterator, Annotated, Callable, Awaitable, Generator
+from typing import Any, List, Dict, Optional, Iterator, AsyncIterator, Annotated, Callable, Awaitable, Generator
 
 import httpx
 from openai import APIConnectionError
@@ -502,26 +502,53 @@ class RotatingChatOpenAI(BaseChatModel):
     api_keys: List[str]
     model_name: str
     base_url: str
-    temperature: float
+    temperature: Optional[float] = None
     reasoning_effort: Optional[str] = None
+    provider_name: str = "openai"
+    default_headers: Optional[Dict[str, str]] = None
     _rotator: Any = None
 
-    def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: float = 0.7, reasoning_effort: Optional[str] = None, provider_name: str = "openai", **kwargs: Any):
-        super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, reasoning_effort=reasoning_effort, **kwargs)
+    def __init__(self, api_keys: List[str], model: str, base_url: str, temperature: Optional[float] = 0.7, reasoning_effort: Optional[str] = None, provider_name: str = "openai", default_headers: Optional[Dict[str, str]] = None, **kwargs: Any):
+        is_az = (
+            provider_name in ("azure_foundry", "azure")
+            or "azure.com" in (base_url or "").lower()
+            or "services.ai.azure" in (base_url or "").lower()
+            or "azure" in (model or "").lower()
+        )
+        if is_az:
+            temperature = None
+        super().__init__(api_keys=api_keys, model_name=model, base_url=base_url, temperature=temperature, reasoning_effort=reasoning_effort, provider_name=provider_name, default_headers=default_headers, **kwargs)
         object.__setattr__(self, '_rotator', KeyRotator(api_keys, provider_name))
+
+    def _is_azure(self) -> bool:
+        return (
+            self.provider_name in ("azure_foundry", "azure")
+            or "azure.com" in (self.base_url or "").lower()
+            or "services.ai.azure" in (self.base_url or "").lower()
+            or "azure" in (self.model_name or "").lower()
+        )
 
     def _get_model_with_index(self) -> tuple[Any, int]:
         """Get a ChatOpenAI instance with the next API key in the rotation and return (model, key_index)"""
         from langchain_openai import ChatOpenAI
         key, idx = self._rotator.next_key()
+        headers = dict(self.default_headers) if self.default_headers else {}
+        if self._is_azure() or "api-key" in headers:
+            headers["api-key"] = key
         kwargs = {
             "openai_api_key": key,
             "model_name": self.model_name,
             "base_url": self.base_url,
-            "temperature": self.temperature,
             "stream_usage": True,
         }
-        if self.reasoning_effort:
+        if self.temperature is not None and not self._is_azure():
+            kwargs["temperature"] = self.temperature
+        if headers:
+            kwargs["default_headers"] = headers
+        if self._is_azure():
+            # Azure AI Foundry rejects temperature and requires reasoning_effort="none" when function tools are used
+            pass
+        elif self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
         try:
             return ChatOpenAI(**kwargs), idx
@@ -537,10 +564,19 @@ class RotatingChatOpenAI(BaseChatModel):
             "openai_api_key": self.api_keys[0],
             "model_name": self.model_name,
             "base_url": self.base_url,
-            "temperature": self.temperature,
             "stream_usage": True,
         }
-        if self.reasoning_effort:
+        if self.temperature is not None and not self._is_azure():
+            dummy_kwargs["temperature"] = self.temperature
+        headers = dict(self.default_headers) if self.default_headers else {}
+        if self._is_azure() or "api-key" in headers:
+            headers["api-key"] = self.api_keys[0]
+        if headers:
+            dummy_kwargs["default_headers"] = headers
+        if self._is_azure():
+            dummy_kwargs["reasoning_effort"] = "none"
+            kwargs["reasoning_effort"] = "none"
+        elif self.reasoning_effort:
             dummy_kwargs["reasoning_effort"] = self.reasoning_effort
         try:
             dummy = ChatOpenAI(**dummy_kwargs)
@@ -548,7 +584,10 @@ class RotatingChatOpenAI(BaseChatModel):
             dummy_kwargs.pop("reasoning_effort", None)
             dummy = ChatOpenAI(**dummy_kwargs)
         bound = dummy.bind_tools(tools, **kwargs)
-        new_kwargs = getattr(bound, "kwargs", {})
+        new_kwargs = dict(getattr(bound, "kwargs", {}))
+        if self._is_azure():
+            new_kwargs.pop("temperature", None)
+            new_kwargs["reasoning_effort"] = "none"
         return self.bind(**new_kwargs)
 
     def _generate(
@@ -558,6 +597,10 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
+        if self._is_azure():
+            kwargs.pop("temperature", None)
+            if "tools" in kwargs:
+                kwargs["reasoning_effort"] = "none"
         num_attempts = max(1, len(self.api_keys))
         last_exc: Optional[Exception] = None
         for attempt in range(num_attempts):
@@ -571,6 +614,8 @@ class RotatingChatOpenAI(BaseChatModel):
                     "[KeyRotator/openai] Key #%d failed (attempt %d/%d): %s",
                     idx + 1, attempt + 1, num_attempts, e
                 )
+                if self._is_azure() and "reasoning_effort" in str(e).lower():
+                    kwargs["reasoning_effort"] = "none"
                 if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
                     _emit_retry_event("openai", (idx + 1) % len(self.api_keys), num_attempts, e)
                     continue
@@ -586,6 +631,10 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> ChatResult:
+        if self._is_azure():
+            kwargs.pop("temperature", None)
+            if "tools" in kwargs:
+                kwargs["reasoning_effort"] = "none"
         num_attempts = max(1, len(self.api_keys))
         last_exc: Optional[Exception] = None
         for attempt in range(num_attempts):
@@ -599,6 +648,8 @@ class RotatingChatOpenAI(BaseChatModel):
                     "[KeyRotator/openai] Key #%d failed (attempt %d/%d): %s",
                     idx + 1, attempt + 1, num_attempts, e
                 )
+                if self._is_azure() and "reasoning_effort" in str(e).lower():
+                    kwargs["reasoning_effort"] = "none"
                 if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
                     _emit_retry_event("openai", (idx + 1) % len(self.api_keys), num_attempts, e)
                     continue
@@ -614,6 +665,10 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
+        if self._is_azure():
+            kwargs.pop("temperature", None)
+            if "tools" in kwargs:
+                kwargs["reasoning_effort"] = "none"
         num_attempts = max(1, len(self.api_keys))
         for attempt in range(num_attempts):
             model, idx = self._get_model_with_index()
@@ -628,6 +683,8 @@ class RotatingChatOpenAI(BaseChatModel):
                     "[KeyRotator/openai] Key #%d stream start failed (attempt %d/%d): %s",
                     idx + 1, attempt + 1, num_attempts, e
                 )
+                if self._is_azure() and "reasoning_effort" in str(e).lower():
+                    kwargs["reasoning_effort"] = "none"
                 if attempt < num_attempts - 1 and _is_rate_limit_or_recoverable_error(e):
                     _emit_retry_event("openai", (idx + 1) % len(self.api_keys), num_attempts, e)
                     continue
@@ -649,6 +706,10 @@ class RotatingChatOpenAI(BaseChatModel):
         run_manager: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
+        if self._is_azure():
+            kwargs.pop("temperature", None)
+            if "tools" in kwargs:
+                kwargs["reasoning_effort"] = "none"
         num_attempts = max(1, len(self.api_keys))
         for attempt in range(num_attempts):
             model, idx = self._get_model_with_index()
@@ -1767,8 +1828,47 @@ class PromptCompositionDiagnosticMiddleware(AgentMiddleware):
                     step_count += 1
         turn_number = step_count + 1
 
+        system_tok = base_system_tok + tech_rules_tok + skills_tok + ltm_tok + runtime_ctx_tok
+        tool_tok = tool_schema_tok + tool_res_tok
+        msg_tok = user_msg_tok + ai_msg_tok
+        max_context = 128_000
+        if "agent_manager" in globals() and hasattr(agent_manager, "get_model_context_window"):
+            try:
+                max_context = agent_manager.get_model_context_window()
+            except Exception:
+                pass
+
         return {
             "turn_number": turn_number,
+            "tool_tokens": tool_tok,
+            "system_tokens": system_tok,
+            "message_tokens": msg_tok,
+            "total_tokens": total_tok,
+            "max_context_tokens": max_context,
+            "percent_used": round((total_tok / max(1, max_context)) * 100, 1),
+            "details": {
+                "system": {
+                    "base": base_system_tok,
+                    "rules": tech_rules_tok,
+                    "skills": skills_tok,
+                    "ltm": ltm_tok,
+                    "runtime": runtime_ctx_tok,
+                },
+                "tools": {
+                    "schemas": tool_schema_tok,
+                    "results": tool_res_tok,
+                    "count": len(tools),
+                    "names": tool_names,
+                    "schemas_list": tool_schemas_list,
+                    "results_list": tool_results_list,
+                },
+                "messages": {
+                    "user": user_msg_tok,
+                    "assistant": ai_msg_tok,
+                    "count": len(messages),
+                },
+            },
+            # Compatibility fields
             "base_system": base_system_tok,
             "technical_rules": tech_rules_tok,
             "skills": skills_tok,
@@ -1786,19 +1886,16 @@ class PromptCompositionDiagnosticMiddleware(AgentMiddleware):
             "total": total_tok,
         }
 
-    @classmethod
-    def _log_breakdown(cls, request: ModelRequest) -> None:
-        b = cls._calculate_breakdown(request)
-        messages = getattr(request, "messages", []) or []
-        query, _ = ToolNeedMiddleware._extract_query_and_history(messages)
-        needs_tools = ToolNeedMiddleware._needs_tools(query, messages)
-        mode_label = f"AGENT ({b['tool_count']} tools bound)" if needs_tools else "CHAT (0 tools bound)"
-
     def _log_breakdown(self, request: ModelRequest) -> None:
         try:
-            b = self._compute_breakdown(request)
-            mode_label = "CHAT (tools stripped)" if b["mode"] == "chat" else f"AGENT ({b['tool_count']} tools bound)"
+            b = self._calculate_breakdown(request)
+            from app.runtime_context import get_current_thread_id
+            thread_id = get_current_thread_id()
+            if thread_id and "agent_manager" in globals():
+                b["thread_id"] = thread_id
+                agent_manager._thread_context_breakdowns[thread_id] = b
 
+            mode_label = f"AGENT ({b['tool_count']} tools bound)" if b["tool_count"] > 0 else "CHAT (0 tools bound)"
             provider = settings.LLM_PROVIDER or "rie"
             model_name = getattr(request.model, "model_name", getattr(request.model, "model", str(type(request.model).__name__)))
             model_cls = type(request.model).__name__
@@ -1807,22 +1904,11 @@ class PromptCompositionDiagnosticMiddleware(AgentMiddleware):
             print("\n" + "=" * 60)
             print(f"MODEL TURN {b['turn_number']} | Mode: {mode_label}")
             print("-" * 60)
-            print(f"system tokens:        {b['base_system']:5d}")
-            print(f"technical rules:      {b['technical_rules']:5d}")
-            print(f"skills:               {b['skills']:5d}")
-            print(f"LTM:                  {b['ltm_context']:5d}")
-            print(f"runtime:              {b['runtime_context']:5d}")
-            print(f"messages:             {b['messages']:5d}  (user: {b['user_messages']}, ai: {b['ai_messages']}, tool results: {b['tool_results']})")
-            if b.get("tool_results_list"):
-                for tr_name, tr_tok in b["tool_results_list"]:
-                    print(f"   -> [tool result] {tr_name}: {tr_tok:4d} tokens")
-            print(f"tool schemas:         {b['tool_schema']:5d}  ({b['tool_count']} tools)")
-            if b.get("tool_schemas_list"):
-                top_schemas = sorted(b["tool_schemas_list"], key=lambda x: x[1], reverse=True)
-                for ts_name, ts_tok in top_schemas[:5]:
-                    print(f"   -> [schema] {ts_name}: {ts_tok:4d} tokens")
+            print(f"system tokens:        {b['system_tokens']:5d} (base: {b['base_system']}, skills: {b['skills']}, rules: {b['technical_rules']})")
+            print(f"tool tokens:          {b['tool_tokens']:5d} ({b['tool_count']} tools, schemas: {b['tool_schema']}, results: {b['tool_results']})")
+            print(f"message tokens:       {b['message_tokens']:5d} (user: {b['user_messages']}, ai: {b['ai_messages']})")
             print("-" * 60)
-            print(f"TOTAL:                {b['total']:5d} tokens")
+            print(f"TOTAL:                {b['total_tokens']:5d} / {b['max_context_tokens']} tokens ({b['percent_used']}%)")
             print("=" * 60)
             print(f"Model: {model_cls} ({model_name}) | Provider: {provider}")
             if plugin_tools:
@@ -2591,6 +2677,7 @@ class AgentManager:
         self._current_speed_mode: Optional[str] = None
         self._peer_inbound_cache: "OrderedDict[tuple[Any, ...], Any]" = OrderedDict()
         self._peer_cache_max: int = 16
+        self._thread_context_breakdowns: dict[str, dict[str, Any]] = {}
 
     async def _ensure_checkpoint_and_store(self) -> None:
         if not self._checkpointer:
@@ -2725,6 +2812,8 @@ class AgentManager:
                 provider = "gemini"
             elif settings.OPENAI_API_KEY:
                 provider = "openai"
+            elif settings.AZURE_FOUNDRY_API_KEY:
+                provider = "azure_foundry"
             elif settings.DEEPSEEK_API_KEY:
                 provider = "deepseek"
             elif settings.GLM_API_KEY:
@@ -3007,6 +3096,8 @@ class AgentManager:
             return self._create_groq_llm(speed_mode=speed_mode)
         elif provider == "openai":
             return self._create_openai_llm(speed_mode=speed_mode)
+        elif provider in ("azure_foundry", "azure"):
+            return self._create_azure_foundry_llm(speed_mode=speed_mode)
         elif provider == "deepseek":
             return self._create_deepseek_llm(speed_mode=speed_mode)
         elif provider == "glm":
@@ -3155,26 +3246,35 @@ class AgentManager:
             return None
 
         reasoning_effort = self._get_reasoning_effort(speed_mode)
+        base_url = settings.OPENAI_BASE_URL
+        is_azure = (
+            "azure.com" in (base_url or "").lower()
+            or "services.ai.azure" in (base_url or "").lower()
+        )
+        temp = None if is_azure else 0.7
 
         try:
-            if len(keys) > 1:
+            if len(keys) > 1 or is_azure:
                 print(f"DEBUG: Creating RotatingChatOpenAI with {len(keys)} keys (reasoning_effort={reasoning_effort})")
                 llm = RotatingChatOpenAI(
                     api_keys=keys,
                     model=settings.OPENAI_MODEL,
-                    base_url=settings.OPENAI_BASE_URL,
-                    temperature=0.7,
+                    base_url=base_url,
+                    temperature=temp,
                     reasoning_effort=reasoning_effort,
+                    provider_name="azure_foundry" if is_azure else "openai",
+                    default_headers={"api-key": keys[0]} if is_azure else None,
                 )
             else:
                 from langchain_openai import ChatOpenAI
                 kwargs = {
                     "model_name": settings.OPENAI_MODEL,
                     "openai_api_key": keys[0],
-                    "base_url": settings.OPENAI_BASE_URL,
-                    "temperature": 0.7,
+                    "base_url": base_url,
                     "stream_usage": True,
                 }
+                if temp is not None:
+                    kwargs["temperature"] = temp
                 if reasoning_effort:
                     kwargs["reasoning_effort"] = reasoning_effort
                 try:
@@ -3183,10 +3283,37 @@ class AgentManager:
                     print(f"DEBUG: Fallback without reasoning_effort for ChatOpenAI: {e}")
                     kwargs.pop("reasoning_effort", None)
                     llm = ChatOpenAI(**kwargs)
-            print(f"DEBUG: OpenAI LLM created successfully with model: {settings.OPENAI_MODEL} and base_url: {settings.OPENAI_BASE_URL} (reasoning_effort={reasoning_effort})")
+            print(f"DEBUG: OpenAI LLM created successfully with model: {settings.OPENAI_MODEL} and base_url: {base_url} (reasoning_effort={reasoning_effort})")
             return llm
         except Exception as e:
             print(f"ERROR: Failed to create OpenAI LLM: {e}")
+            return None
+
+    def _create_azure_foundry_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
+        """Create and return an Azure AI Foundry LLM instance (OpenAI-compatible, potentially rotating)"""
+        keys = settings.AZURE_FOUNDRY_API_KEYS
+        if not keys:
+            print("ERROR: No Azure Foundry API keys configured")
+            return None
+
+        reasoning_effort = self._get_reasoning_effort(speed_mode)
+        base_url = settings.AZURE_FOUNDRY_BASE_URL
+
+        try:
+            print(f"DEBUG: Creating RotatingChatOpenAI for Azure Foundry with {len(keys)} keys (reasoning_effort={reasoning_effort})")
+            llm = RotatingChatOpenAI(
+                api_keys=keys,
+                model=settings.AZURE_FOUNDRY_MODEL,
+                base_url=base_url,
+                temperature=None,
+                reasoning_effort=reasoning_effort,
+                provider_name="azure_foundry",
+                default_headers={"api-key": keys[0]},
+            )
+            print(f"DEBUG: Azure Foundry LLM created successfully with model: {settings.AZURE_FOUNDRY_MODEL} and base_url: {base_url} (reasoning_effort={reasoning_effort})")
+            return llm
+        except Exception as e:
+            print(f"ERROR: Failed to create Azure Foundry LLM: {e}")
             return None
 
     def _create_deepseek_llm(self, speed_mode: str = "thinking") -> Optional[BaseChatModel]:
@@ -4460,6 +4587,111 @@ class AgentManager:
             logging.getLogger(__name__).info(f"Requested cancellation for thread_id={thread_id}")
             return True
         return False
+
+    def get_model_context_window(self) -> int:
+        """Returns the maximum context window for the currently configured provider/model."""
+        provider = (self._resolve_provider() if hasattr(self, "_resolve_provider") else settings.LLM_PROVIDER) or "rie"
+        model = ""
+        if provider == "openai":
+            model = (settings.OPENAI_MODEL or "").lower()
+        elif provider in ("azure_foundry", "azure"):
+            model = (settings.AZURE_FOUNDRY_MODEL or "").lower()
+        elif provider == "gemini":
+            model = (settings.GEMINI_MODEL or "").lower()
+        elif provider == "vertex":
+            model = (settings.VERTEX_MODEL or "").lower()
+        elif provider == "groq":
+            model = (settings.GROQ_MODEL or "").lower()
+        elif provider == "deepseek":
+            model = (settings.DEEPSEEK_MODEL or "").lower()
+        elif provider == "glm":
+            model = (settings.GLM_MODEL or "").lower()
+        elif provider == "ollama":
+            model = (settings.OLLAMA_MODEL or "").lower()
+
+        if "gemini" in model:
+            return 1_000_000
+        if any(k in model for k in ("gpt-4", "gpt-4o", "gpt-5", "gpt-6", "o1", "o3", "luna")):
+            return 128_000
+        if "deepseek" in model:
+            return 64_000
+        if "glm" in model:
+            return 128_000
+        if "llama-3" in model:
+            return 128_000
+        return 128_000
+
+    def get_context_breakdown(self, thread_id: Optional[str]) -> Optional[dict[str, Any]]:
+        """Retrieve the cached or computed context token breakdown for a thread."""
+        if not thread_id:
+            return None
+        if thread_id in self._thread_context_breakdowns:
+            return self._thread_context_breakdowns[thread_id]
+        return self.compute_thread_context_breakdown(thread_id)
+
+    def compute_thread_context_breakdown(self, thread_id: str) -> dict[str, Any]:
+        """Compute estimated context token breakdown from database messages and active agent prompt."""
+        from app.database import get_thread_messages
+        messages = get_thread_messages(thread_id)
+        user_msg_tok = 0
+        ai_msg_tok = 0
+        for m in messages:
+            role = m.get("role", "")
+            content = m.get("content", "") or ""
+            tok = max(1, len(content.encode("utf-8")) // 4) if content else 0
+            if role == "user":
+                user_msg_tok += tok
+            elif role in ("assistant", "ai"):
+                ai_msg_tok += tok
+
+        # Calculate system tokens from baseline prompt
+        sys_prompt = getattr(self, "_current_system_prompt", None) or BASE_SYSTEM_PROMPT
+        base_system_tok = max(1, len(sys_prompt.encode("utf-8")) // 4)
+
+        # Baseline tools estimate (~38 tools, ~1200 tokens)
+        tool_schema_tok = 1200
+        tool_count = 38
+
+        tool_tok = tool_schema_tok
+        system_tok = base_system_tok
+        msg_tok = user_msg_tok + ai_msg_tok
+        total_tok = tool_tok + system_tok + msg_tok
+        max_context = self.get_model_context_window()
+
+        breakdown = {
+            "turn_number": max(1, len(messages) // 2),
+            "tool_tokens": tool_tok,
+            "system_tokens": system_tok,
+            "message_tokens": msg_tok,
+            "total_tokens": total_tok,
+            "max_context_tokens": max_context,
+            "percent_used": round((total_tok / max(1, max_context)) * 100, 1),
+            "details": {
+                "system": {
+                    "base": base_system_tok,
+                    "rules": 0,
+                    "skills": 0,
+                    "ltm": 0,
+                    "runtime": 0,
+                },
+                "tools": {
+                    "schemas": tool_schema_tok,
+                    "results": 0,
+                    "count": tool_count,
+                    "names": [],
+                    "schemas_list": [],
+                    "results_list": [],
+                },
+                "messages": {
+                    "user": user_msg_tok,
+                    "assistant": ai_msg_tok,
+                    "count": len(messages),
+                },
+            },
+            "thread_id": thread_id,
+        }
+        self._thread_context_breakdowns[thread_id] = breakdown
+        return breakdown
 
     async def cancel_all_runs(self) -> None:
         """Cancel all active agent runs"""

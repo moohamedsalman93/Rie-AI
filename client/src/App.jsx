@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread, clearAllHistory } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread, clearAllHistory, getThreadContext } from "./services/chatApi";
 import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
 import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
 import { isTauri } from "./utils/tauriNative";
@@ -122,6 +122,7 @@ function MainApp() {
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [sessions, setSessions] = useState({});
   const [streamingThreads, setStreamingThreads] = useState(new Set());
+  const [contextBreakdownByThread, setContextBreakdownByThread] = useState({});
   const [error, setError] = useState(null);
   const [apiStatus, setApiStatus] = useState("checking");
 
@@ -637,6 +638,26 @@ function MainApp() {
     if (session && activeThreadId && session.threadId !== activeThreadId) handleStopLiveVoice();
   }, [activeThreadId, handleStopLiveVoice]);
 
+  useEffect(() => {
+    if (!activeThreadId) return;
+    let cancelled = false;
+    getThreadContext(activeThreadId)
+      .then((res) => {
+        if (!cancelled && res && !res.error) {
+          setContextBreakdownByThread((prev) => ({
+            ...prev,
+            [activeThreadId]: res,
+          }));
+        }
+      })
+      .catch((e) => {
+        console.debug("Failed to fetch context breakdown:", e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeThreadId]);
+
   const processStreamChunk = useCallback((data, botMessageId, threadId, userMessageId) => {
     try {
       if (data.done || data.step === "end") {
@@ -722,6 +743,14 @@ function MainApp() {
           firstToolMinimizedRef.current = false;
           handleOpen(true);
         }
+        return;
+      }
+
+      if (data.step === "context_breakdown" && data.breakdown) {
+        setContextBreakdownByThread((prev) => ({
+          ...prev,
+          [threadId]: data.breakdown,
+        }));
         return;
       }
 
@@ -2702,6 +2731,7 @@ function MainApp() {
           settings.groq_api_key ||
           settings.vertex_project ||
           settings.openai_api_key ||
+          settings.azure_foundry_api_key ||
           settings.deepseek_api_key ||
           settings.glm_api_key ||
           settings.anthropic_api_key;
@@ -2829,6 +2859,8 @@ function MainApp() {
     const fieldMap = {
       GEMINI_MODEL: "gemini_model",
       OPENAI_MODEL: "openai_model",
+      AZURE_FOUNDRY_MODEL: "azure_foundry_model",
+      AZURE_FOUNDRY_BASE_URL: "azure_foundry_base_url",
       DEEPSEEK_MODEL: "deepseek_model",
       GLM_MODEL: "glm_model",
       GROQ_MODEL: "groq_model",
@@ -3723,6 +3755,7 @@ function MainApp() {
                     speedMode={speedMode}
                     setSpeedMode={setSpeedMode}
                     provider={settings?.llm_provider || 'rie'}
+                    contextBreakdown={contextBreakdownByThread[activeThreadId]}
                     onSelectProvider={handleSelectProvider}
                     settings={settings}
                     onUpdateSetting={handleUpdateSetting}
@@ -3847,6 +3880,7 @@ function MainApp() {
               speedMode={speedMode}
               setSpeedMode={setSpeedMode}
               provider={settings?.llm_provider || 'rie'}
+              contextBreakdown={contextBreakdownByThread[activeThreadId]}
               onSelectProvider={handleSelectProvider}
               onUpdateSetting={handleUpdateSetting}
               onDeleteMessage={handleDeleteMessage}

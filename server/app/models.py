@@ -216,6 +216,7 @@ class SettingsResponse(BaseModel):
     groq_api_key: Optional[str] = None
     google_api_key: Optional[str] = None
     openai_api_key: Optional[str] = None
+    azure_foundry_api_key: Optional[str] = None
     deepseek_api_key: Optional[str] = None
     glm_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
@@ -236,6 +237,8 @@ class SettingsResponse(BaseModel):
     vertex_model: str = "gemini-1.5-pro"
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str = "https://api.openai.com/v1"
+    azure_foundry_model: str = "gpt-4o"
+    azure_foundry_base_url: str = "https://models.inference.ai.azure.com"
     deepseek_model: str = "deepseek-chat"
     deepseek_base_url: str = "https://api.deepseek.com"
     glm_model: str = "glm-4.7-flash"

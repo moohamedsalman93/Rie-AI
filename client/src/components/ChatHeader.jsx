@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { CalendarClock, Users } from "lucide-react";
 import { ModeToggle } from "./ModeToggle";
 import { LlmProviderSelector } from "./LlmProviderSelector";
+import { ContextCircleBar } from "./ContextCircleBar";
 import { ScheduleNotificationsBell } from "./ScheduleNotificationsBell";
 import logo from "../assets/logo.png";
 
@@ -43,6 +44,9 @@ export function ChatHeader({
   provider,
   onSelectProvider,
   settings = {},
+  contextBreakdown = null,
+  currentThreadId = null,
+  messages = [],
 }) {
   return (
     <header
@@ -102,7 +106,7 @@ export function ChatHeader({
                 transition={{ duration: 0.2 }}
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="absolute right-0 top-full mt-2 w-40 origin-top-right rounded-xl border border-neutral-700 bg-neutral-800/95 p-1.5 shadow-2xl backdrop-blur-xl z-50 overflow-hidden"
+                className="absolute right-0 top-full mt-2 w-48 origin-top-right rounded-xl border border-neutral-700 bg-neutral-800/95 p-1.5 shadow-2xl backdrop-blur-xl z-50 overflow-visible"
               >
                 <button
                   onClick={(e) => {
@@ -223,11 +227,20 @@ export function ChatHeader({
                 {onSelectProvider && (
                   <div className="py-1 flex items-center justify-between gap-2 px-1">
                     <span className="text-[11px] text-neutral-400 font-medium select-none">Provider:</span>
-                    <LlmProviderSelector
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <ContextCircleBar
+                        threadId={currentThreadId}
+                        contextData={contextBreakdown}
+                        messages={messages}
+                        provider={provider}
+                        settings={settings}
+                      />
+                      <LlmProviderSelector
                       provider={provider}
                       onSelectProvider={onSelectProvider}
                       settings={settings}
                     />
+                    </div>
                   </div>
                 )}
 

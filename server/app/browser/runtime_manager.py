@@ -2,13 +2,59 @@
 Browser Runtime Manager for Rie.
 Manages embedded Camoufox runtime dependencies, initialization status, and lifecycle state.
 No external server process — Camoufox runs in-process via Playwright.
+Supports pre-bundled browser binaries directly without on-demand downloading.
 """
 import logging
+import os
+import sys
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 from app.browser.models import RuntimeState
 
 logger = logging.getLogger(__name__)
+
+
+def get_bundled_camoufox_executable() -> Optional[Path]:
+    """
+    Find the pre-bundled Camoufox browser binary executable if present.
+    Checks:
+    1. CAMOUFOX_EXECUTABLE_PATH environment variable override
+    2. Frozen sidecar directory (_internal/camoufox_browser)
+    3. Server directory (camoufox_browser/) in development mode
+    """
+    env_path = os.environ.get("CAMOUFOX_EXECUTABLE_PATH")
+    if env_path and os.path.isfile(env_path):
+        return Path(env_path)
+
+    # 1. PyInstaller / Frozen mode (Tauri Sidecar)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        candidates = [
+            exe_dir / "_internal" / "camoufox_browser" / "camoufox.exe",
+            exe_dir / "camoufox_browser" / "camoufox.exe",
+            exe_dir.parent / "_internal" / "camoufox_browser" / "camoufox.exe",
+            exe_dir.parent / "camoufox_browser" / "camoufox.exe",
+        ]
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.append(Path(meipass) / "camoufox_browser" / "camoufox.exe")
+        for c in candidates:
+            if c.is_file():
+                return c
+
+    # 2. Development mode (in app/server/camoufox_browser)
+    server_dir = Path(__file__).resolve().parent.parent.parent
+    candidates = [
+        server_dir / "camoufox_browser" / "camoufox.exe",
+        server_dir / "_internal" / "camoufox_browser" / "camoufox.exe",
+        server_dir.parent / "camoufox_browser" / "camoufox.exe",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+
+    return None
 
 
 class BrowserRuntimeManager:
@@ -42,7 +88,6 @@ class BrowserRuntimeManager:
             import camoufox  # noqa: F401
             from camoufox import AsyncCamoufox  # noqa: F401
 
-            import sys
             import asyncio
             if sys.platform == "win32":
                 try:
@@ -83,32 +128,51 @@ class BrowserRuntimeManager:
             self._state = RuntimeState.ERROR
             self._last_error = (
                 "Camoufox Python package not found. "
-                "Install with: pip install camoufox && camoufox fetch"
+                "Install with: pip install camoufox"
             )
             logger.error(self._last_error)
             return False
 
     async def check_browser_binary(self) -> Dict[str, Any]:
-        """Check if the Camoufox browser binary (Firefox) is downloaded."""
+        """Check if the Camoufox browser binary is bundled or downloaded."""
         try:
+            # 1. Check for pre-bundled browser binary first
+            bundled_exe = get_bundled_camoufox_executable()
+            if bundled_exe:
+                ver = "bundled"
+                ver_file = bundled_exe.parent / "version.json"
+                if ver_file.is_file():
+                    try:
+                        import json
+                        vdata = json.loads(ver_file.read_text(encoding="utf-8"))
+                        ver = f"{vdata.get('version', '')}-{vdata.get('build', '')}".strip("-") or "bundled"
+                    except Exception:
+                        pass
+                return {
+                    "available": True,
+                    "bundled": True,
+                    "version": ver,
+                    "path": str(bundled_exe),
+                }
+
+            # 2. Check user-cache installation
             from camoufox.multiversion import list_installed
             installed = list_installed()
             if installed:
                 active = installed[0]
                 return {
                     "available": True,
+                    "bundled": False,
                     "version": active.version.full_string if hasattr(active, 'version') else str(active),
                     "path": str(active.path) if hasattr(active, 'path') else None,
                 }
-            return {"available": False, "version": None, "path": None}
+            return {"available": False, "bundled": False, "version": None, "path": None}
         except Exception as e:
             logger.debug(f"Browser binary check failed: {e}")
-            return {"available": False, "version": None, "error": str(e)}
+            return {"available": False, "bundled": False, "version": None, "error": str(e)}
 
     def _in_process_fetch_sync(self):
         """Perform browser binary download in-process with real-time percentage progress callback."""
-        import os
-        import sys
         import subprocess
 
         # Ensure camoufox package is importable before attempting binary fetch
@@ -188,6 +252,10 @@ class BrowserRuntimeManager:
 
     async def fetch_binary(self) -> Dict[str, Any]:
         """Download/fetch the Camoufox stealth browser executable on demand with real-time progress."""
+        bundled_exe = get_bundled_camoufox_executable()
+        if bundled_exe:
+            return {"status": "info", "message": "Camoufox browser binary is already bundled with the application."}
+
         if self._is_fetching:
             return {"status": "fetching", "message": "Browser binary download is already in progress."}
 
@@ -216,7 +284,11 @@ class BrowserRuntimeManager:
         return {"status": "started", "message": "Browser binary download started."}
 
     async def delete_browser_binary(self) -> Dict[str, Any]:
-        """Delete/uninstall all downloaded Camoufox stealth browser binaries."""
+        """Delete/uninstall downloaded Camoufox stealth browser binaries."""
+        bundled_exe = get_bundled_camoufox_executable()
+        if bundled_exe:
+            return {"status": "info", "message": "Camoufox browser binary is bundled into the application build and cannot be deleted."}
+
         if self._is_fetching:
             return {"status": "error", "message": "Cannot delete binary while download is in progress."}
 
@@ -258,7 +330,7 @@ class BrowserRuntimeManager:
         is_healthy = await self.check_health()
         browser_info = await self.check_browser_binary()
 
-        if is_healthy:
+        if is_healthy and browser_info.get("available"):
             self._state = RuntimeState.READY
         elif self._state not in (RuntimeState.STARTING, RuntimeState.ERROR):
             self._state = RuntimeState.STOPPED
@@ -289,4 +361,3 @@ class BrowserRuntimeManager:
 
 # Global singleton
 runtime_manager = BrowserRuntimeManager()
-

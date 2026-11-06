@@ -44,6 +44,8 @@ export function LlmProviderSelector({
         return Boolean(settings?.google_api_key);
       case 'openai':
         return Boolean(settings?.openai_api_key);
+      case 'azure_foundry':
+        return Boolean(settings?.azure_foundry_api_key);
       case 'deepseek':
         return Boolean(settings?.deepseek_api_key);
       case 'glm':
