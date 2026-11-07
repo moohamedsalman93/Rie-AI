@@ -36,28 +36,39 @@ try {
     Write-Host "Syncing backend dependencies..."
     poetry install --no-root
 
-    # Ensure bundled Camoufox browser binary is present in $ServerDir/camoufox_browser
+    # Ensure bundled Camoufox browser archive is present in $ServerDir/camoufox.zip
+    # Option 2: bundle as a single compressed zip file (~470MB) to stay well under NSIS 2GB mmap limit
+    $CamoufoxZip = Join-Path $ServerDir "camoufox.zip"
     $CamoufoxDir = Join-Path $ServerDir "camoufox_browser"
     $CamoufoxExe = Join-Path $CamoufoxDir "camoufox.exe"
-    if (-not (Test-Path $CamoufoxExe)) {
-        Write-Host "Ensuring Camoufox browser binary is available for bundling..."
-        $LocalCacheBrowser = Get-ChildItem -Path "$env:LOCALAPPDATA\camoufox\camoufox\Cache\browsers\*\*" -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "camoufox.exe") } | Select-Object -First 1
-        if ($LocalCacheBrowser) {
-            Write-Host "Copying installed Camoufox binary from cache: $($LocalCacheBrowser.FullName)"
-            if (-not (Test-Path $CamoufoxDir)) { New-Item -ItemType Directory -Path $CamoufoxDir -Force | Out-Null }
-            robocopy $LocalCacheBrowser.FullName $CamoufoxDir /E /NFL /NDL /NP /NJH /NJS | Out-Null
+    if (-not (Test-Path $CamoufoxZip)) {
+        Write-Host "Ensuring Camoufox browser zip archive is available for bundling..."
+        if (Test-Path $CamoufoxExe) {
+            Write-Host "Compressing local Camoufox directory into $CamoufoxZip..."
+            poetry run python -c "
+import zipfile, os
+src = r'$CamoufoxDir'
+dst = r'$CamoufoxZip'
+with zipfile.ZipFile(dst, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    for root, dirs, files in os.walk(src):
+        for f in files:
+            full = os.path.join(root, f)
+            rel = os.path.relpath(full, src)
+            zf.write(full, rel)
+"
         } else {
-            Write-Host "Fetching Camoufox binary via poetry..."
-            poetry run python -m camoufox fetch
-            $FreshCache = Get-ChildItem -Path "$env:LOCALAPPDATA\camoufox\camoufox\Cache\browsers\*\*" -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName "camoufox.exe") } | Select-Object -First 1
-            if ($FreshCache) {
-                if (-not (Test-Path $CamoufoxDir)) { New-Item -ItemType Directory -Path $CamoufoxDir -Force | Out-Null }
-                robocopy $FreshCache.FullName $CamoufoxDir /E /NFL /NDL /NP /NJH /NJS | Out-Null
-            }
+            Write-Host "Downloading Camoufox release zip for bundling..."
+            curl.exe -L --retry 3 --fail -o $CamoufoxZip "https://github.com/daijro/camoufox/releases/download/v152.0.4-beta.28/camoufox-152.0.4-beta.28-win.x86_64.zip"
         }
     }
 
     poetry run pyinstaller --noconfirm rie-backend.spec
+
+    # Clean up legacy uncompressed camoufox_browser folder in dist/_internal if present
+    $LegacyDistCamoufox = Join-Path $DistInternal "camoufox_browser"
+    if (Test-Path $LegacyDistCamoufox) {
+        Remove-Item -Recurse -Force $LegacyDistCamoufox
+    }
 } finally {
     Pop-Location
 }
@@ -73,6 +84,10 @@ if (Test-Path $DistInternal) {
         Remove-Item -Recurse -Force $SidecarInternal
     }
     Copy-Item -Recurse -Force $DistInternal $SidecarInternal
+    $LegacySidecarCamoufox = Join-Path $SidecarInternal "camoufox_browser"
+    if (Test-Path $LegacySidecarCamoufox) {
+        Remove-Item -Recurse -Force $LegacySidecarCamoufox
+    }
 }
 
 Write-Host "`n--- Done! Sidecar: $SidecarExe"

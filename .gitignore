@@ -86,3 +86,5 @@ server/speaker_id/data/*.json
 server/speaker_id/models/*.onnx
 .cursor
 server/camoufox_browser/
+server/camoufox.zip
+*.zip

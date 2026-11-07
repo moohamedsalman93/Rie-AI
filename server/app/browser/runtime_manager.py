@@ -6,7 +6,10 @@ Supports pre-bundled browser binaries directly without on-demand downloading.
 """
 import logging
 import os
+import shutil
 import sys
+import threading
+import zipfile
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -14,45 +17,119 @@ from app.browser.models import RuntimeState
 
 logger = logging.getLogger(__name__)
 
+_extract_lock = threading.Lock()
+
+
+def get_camoufox_extract_dir() -> Path:
+    """Return the user local appdata directory where bundled Camoufox is unpacked."""
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        base = Path(local_app_data)
+    else:
+        base = Path.home() / "AppData" / "Local"
+    return base / "Rie-AI" / "camoufox" / "152.0.4-beta.28"
+
 
 def get_bundled_camoufox_executable() -> Optional[Path]:
     """
     Find the pre-bundled Camoufox browser binary executable if present.
-    Checks:
-    1. CAMOUFOX_EXECUTABLE_PATH environment variable override
-    2. Frozen sidecar directory (_internal/camoufox_browser)
-    3. Server directory (camoufox_browser/) in development mode
+    Option 2 implementation:
+    1. Checks CAMOUFOX_EXECUTABLE_PATH environment variable override.
+    2. Checks if already extracted in %LOCALAPPDATA%/Rie-AI/camoufox/152.0.4-beta.28/camoufox.exe.
+    3. Checks development directory server/camoufox_browser/camoufox.exe.
+    4. Checks standard Camoufox cache in %LOCALAPPDATA%/camoufox/camoufox/Cache/browsers/.
+    5. Checks for bundled camoufox.zip archive (in _internal/ or server/); if found, unpacks it
+       silently to %LOCALAPPDATA%/Rie-AI/camoufox/152.0.4-beta.28 and returns the unpacked camoufox.exe.
     """
     env_path = os.environ.get("CAMOUFOX_EXECUTABLE_PATH")
     if env_path and os.path.isfile(env_path):
         return Path(env_path)
 
-    # 1. PyInstaller / Frozen mode (Tauri Sidecar)
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).parent
-        candidates = [
-            exe_dir / "_internal" / "camoufox_browser" / "camoufox.exe",
-            exe_dir / "camoufox_browser" / "camoufox.exe",
-            exe_dir.parent / "_internal" / "camoufox_browser" / "camoufox.exe",
-            exe_dir.parent / "camoufox_browser" / "camoufox.exe",
+    # 1. Check if already extracted in user local appdata
+    extract_dir = get_camoufox_extract_dir()
+    extracted_exe = extract_dir / "camoufox.exe"
+    if extracted_exe.is_file():
+        return extracted_exe
+
+    server_dir = Path(__file__).resolve().parent.parent.parent
+
+    # 2. In development mode (not frozen), check local uncompressed directory
+    if not getattr(sys, "frozen", False):
+        dev_candidates = [
+            server_dir / "camoufox_browser" / "camoufox.exe",
+            server_dir / "_internal" / "camoufox_browser" / "camoufox.exe",
+            server_dir.parent / "camoufox_browser" / "camoufox.exe",
         ]
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            candidates.append(Path(meipass) / "camoufox_browser" / "camoufox.exe")
-        for c in candidates:
+        for c in dev_candidates:
             if c.is_file():
                 return c
 
-    # 2. Development mode (in app/server/camoufox_browser)
-    server_dir = Path(__file__).resolve().parent.parent.parent
-    candidates = [
-        server_dir / "camoufox_browser" / "camoufox.exe",
-        server_dir / "_internal" / "camoufox_browser" / "camoufox.exe",
-        server_dir.parent / "camoufox_browser" / "camoufox.exe",
-    ]
-    for c in candidates:
-        if c.is_file():
-            return c
+    # 3. Check standard Camoufox cache directory
+    try:
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            cache_browsers = Path(local_app_data) / "camoufox" / "camoufox" / "Cache" / "browsers"
+            if cache_browsers.is_dir():
+                for exe in cache_browsers.glob("*/*/camoufox.exe"):
+                    if exe.is_file():
+                        return exe
+    except Exception as e:
+        logger.debug(f"Error checking camoufox cache browsers: {e}")
+
+    # 4. Check for pre-bundled camoufox.zip
+    zip_candidates = []
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        zip_candidates.extend([
+            exe_dir / "_internal" / "camoufox.zip",
+            exe_dir / "camoufox.zip",
+            exe_dir.parent / "_internal" / "camoufox.zip",
+            exe_dir.parent / "camoufox.zip",
+        ])
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            zip_candidates.append(Path(meipass) / "camoufox.zip")
+
+    zip_candidates.extend([
+        server_dir / "camoufox.zip",
+        server_dir / "_internal" / "camoufox.zip",
+        server_dir.parent / "camoufox.zip",
+    ])
+
+    found_zip: Optional[Path] = None
+    for z in zip_candidates:
+        if z.is_file():
+            found_zip = z
+            break
+
+    if found_zip:
+        with _extract_lock:
+            # Recheck if another thread completed extraction
+            if extracted_exe.is_file():
+                return extracted_exe
+
+            logger.info(f"Unpacking bundled Camoufox browser from {found_zip} to {extract_dir}...")
+            temp_extract = extract_dir.parent / f"_extracting_{extract_dir.name}"
+            try:
+                extract_dir.parent.mkdir(parents=True, exist_ok=True)
+                if temp_extract.exists():
+                    shutil.rmtree(temp_extract, ignore_errors=True)
+                temp_extract.mkdir(parents=True, exist_ok=True)
+
+                with zipfile.ZipFile(found_zip, "r") as zf:
+                    zf.extractall(temp_extract)
+
+                if extract_dir.exists():
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+                temp_extract.rename(extract_dir)
+                logger.info(f"Successfully unpacked bundled Camoufox browser to {extract_dir}.")
+
+                if extracted_exe.is_file():
+                    return extracted_exe
+            except Exception as exc:
+                logger.error(f"Failed to unpack bundled Camoufox browser: {exc}")
+                if temp_extract.exists():
+                    shutil.rmtree(temp_extract, ignore_errors=True)
 
     return None
 

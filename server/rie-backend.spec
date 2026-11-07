@@ -5,8 +5,9 @@ from PyInstaller.utils.hooks import collect_all
 datas = [
     ('app/plugins', 'app/plugins')
 ]
-if os.path.isdir('camoufox_browser'):
-    datas.append(('camoufox_browser', 'camoufox_browser'))
+# Pre-bundled Camoufox browser archive (Option 2: single compressed zip to stay well below NSIS 2GB datablock limit)
+if os.path.isfile('camoufox.zip'):
+    datas.append(('camoufox.zip', '.'))
 
 binaries = []
 hiddenimports = []
