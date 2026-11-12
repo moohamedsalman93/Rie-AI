@@ -1510,7 +1510,9 @@ function MainApp() {
             markAllLocked();
             loadThreadKnowledge(threadId);
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
+          window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
             window.dispatchEvent(new CustomEvent("rie-history-refresh"));
+            window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
             // Title generation runs asynchronously on the server after the first save.
             window.setTimeout(() => window.dispatchEvent(new CustomEvent("rie-history-refresh")), 3000);
           },
@@ -1524,6 +1526,7 @@ function MainApp() {
             setCurrentTool(null);
             delete abortControllersRef.current[threadId];
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
+          window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
           },
           signal,
           isVoice,
@@ -1767,6 +1770,7 @@ function MainApp() {
           setCurrentTool(null);
           delete abortControllersRef.current[threadId];
           window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
+          window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
         },
         (err) => {
           setError(err.message || "Failed to resume chat");
@@ -1778,6 +1782,7 @@ function MainApp() {
           setCurrentTool(null);
           delete abortControllersRef.current[threadId];
           window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
+          window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
         },
         signal,
         isVoice,

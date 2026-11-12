@@ -3607,7 +3607,7 @@ dependencies = [
 
 [[package]]
 name = "rie-ai"
-version = "0.7.2"
+version = "0.7.4"
 dependencies = [
  "chrono",
  "cpal",

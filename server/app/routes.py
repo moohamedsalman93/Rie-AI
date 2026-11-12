@@ -168,6 +168,13 @@ def _get_runtime_tool_catalog_ids() -> set[str]:
         "read_knowledge_asset",
         "load_skill",
         "execute_batched_plan",
+        "get_system_status",
+        "modify_system_setting",
+        "rollback_system_setting",
+        "toggle_tool",
+        "read_system_logs",
+        "diagnose_system_errors",
+        "get_recent_task_events",
         *[t.name for t in SCHEDULER_TOOLS],
         *WINDOWS_TOOLS.keys(),
         *[t.name for t in LANGGRAPH_BROWSER_TOOLS],
@@ -588,6 +595,13 @@ async def get_planner_tools():
         tools.append(PlannerToolItem(id=tid, label=label, description=desc, source=src, enabled=enabled))
 
     # Built-in system tools
+    _add("get_system_status", "System Status", "Inspect operational modes, health states of all capabilities, and diagnostics.", "system")
+    _add("modify_system_setting", "Modify Setting", "Autonomously updates operational settings with validation and rollback.", "system")
+    _add("rollback_system_setting", "Rollback Setting", "Reverts a setting to its previous value from the transaction journal.", "system")
+    _add("toggle_tool", "Toggle Tool", "Enables or disables a specific tool dynamically.", "system")
+    _add("read_system_logs", "Read Logs", "Bounded reader for backend logs with severity and regex filtering.", "diagnostics")
+    _add("diagnose_system_errors", "Diagnose Errors", "Timestamp-aware error aggregation and root-cause analysis.", "diagnostics")
+    _add("get_recent_task_events", "Task Events", "Inspects recent task executions and tool calls from trajectory database.", "diagnostics")
     _add("internet_search", "Internet Search", "Search the web for current facts, articles, and documentation.", "built-in")
     _add("ask_question", "Ask Question", "Ask the user an interactive clarifying question with multiple choices.", "built-in")
     _add("render_ui", "Render Custom UI", "Render interactive custom UI cards, buttons, or charts in chat.", "built-in")

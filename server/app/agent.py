@@ -90,6 +90,7 @@ from app.mcp_registry_tools import MCP_REGISTRY_TOOLS
 from app.scheduler_tools import SCHEDULER_TOOLS, schedule_chat_task_tool
 from app.remote_friend_tools import remote_friend_ask_tool
 from app.workstream import WORKSTREAM_TOOLS
+from app.system_intelligence import SYSTEM_INTELLIGENCE_TOOLS
 
 from app.browser import LANGGRAPH_BROWSER_TOOLS, browser_service, InteractionMode
 from app.runtime_context import set_agent_context, reset_agent_context
@@ -233,6 +234,13 @@ DOMAIN_RULES: dict[str, str] = {
         "always query these workstream tools first. "
         "When the user asks to recall a past article, visited page, or copied code snippet ('what was that code I copied?', 'find the website about X'), "
         "invoke `search_activity`."
+    ),
+    "system_intelligence": (
+        "- System Intelligence, Self-Configuration & Log Diagnostics:\n"
+        "  * Capability Awareness: When asked what you can do, what features or tools are enabled or disabled, or why an integration/tool is unavailable, invoke `get_system_status`.\n"
+        "  * Autonomous Self-Configuration: You can modify your operational settings directly (e.g. switching between thinking and flash speed modes, switching chat and agent modes, toggling tools on/off, changing search providers, or toggling browser headless mode) using `modify_system_setting` or `toggle_tool`.\n"
+        "  * Configuration Rollback: If a configuration update causes an issue, use `rollback_system_setting` to revert to the previous safe configuration.\n"
+        "  * Log Diagnostics & Self-Healing: When an unexpected error occurs during tool execution or external API calls, inspect backend logs using `read_system_logs` or `diagnose_system_errors`, or inspect recent execution events using `get_recent_task_events`. Diagnose the root cause and propose or apply a remediation if possible."
     ),
 }
 
@@ -2771,6 +2779,7 @@ class AgentManager:
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
+            **{t.name: t for t in SYSTEM_INTELLIGENCE_TOOLS},
             **WORKSTREAM_TOOLS,
         }
 
@@ -3571,11 +3580,15 @@ class AgentManager:
                     continue
                 resolved_tools.append(tool)
 
-            # Ensure core system tools like read_knowledge_asset and load_skill are available to subagents
+            # Ensure core system tools like read_knowledge_asset, load_skill, and system diagnostics are available to subagents
             if "read_knowledge_asset" in all_tools_map and all_tools_map["read_knowledge_asset"] not in resolved_tools:
                 resolved_tools.append(all_tools_map["read_knowledge_asset"])
             if "load_skill" in all_tools_map and all_tools_map["load_skill"] not in resolved_tools:
                 resolved_tools.append(all_tools_map["load_skill"])
+            if "read_system_logs" in all_tools_map and all_tools_map["read_system_logs"] not in resolved_tools:
+                resolved_tools.append(all_tools_map["read_system_logs"])
+            if "get_system_status" in all_tools_map and all_tools_map["get_system_status"] not in resolved_tools:
+                resolved_tools.append(all_tools_map["get_system_status"])
 
             subagent_middleware = []
             if name == "coding_specialist":
@@ -3641,6 +3654,7 @@ class AgentManager:
             **WINDOWS_TOOLS,
             **{t.name: t for t in LTM_TOOLS},
             **{t.name: t for t in MCP_REGISTRY_TOOLS},
+            **{t.name: t for t in SYSTEM_INTELLIGENCE_TOOLS},
             **WORKSTREAM_TOOLS,
         }
 
@@ -3711,11 +3725,22 @@ class AgentManager:
                     "- **Parallel Execution**: Launch independent subagent tasks concurrently in a single turn using the `task` tool, then synthesize their reports for the user.\n"
                 )
 
+        # Compact Ambient System Intelligence Snapshot
+        ambient_system_snapshot = (
+            f"\n\n[System Status Snapshot]\n"
+            f"- Modes: Mode={effective_chat_mode.title()} | Speed={effective_speed_mode.title()} | "
+            f"Orchestration={orchestration_mode.title()} | HITL={settings.HITL_MODE}\n"
+            f"- Search Provider: {settings.WEB_SEARCH_PROVIDER} | Browser Engine: {settings.CAMOFOX_HEADLESS_MODE}\n"
+            f"- System Intelligence: Tools active (`get_system_status`, `modify_system_setting`, `rollback_system_setting`, `toggle_tool`, `read_system_logs`, `diagnose_system_errors`)\n"
+            f"[End System Status Snapshot]"
+        )
+
         final_system_prompt = (
             BASE_SYSTEM_PROMPT.strip()
             + mode_instructions
             + (planner_main_section if effective_chat_mode != "chat" else "")
             + team_members_section
+            + ambient_system_snapshot
         )
 
         system_prompt = final_system_prompt
@@ -3899,6 +3924,13 @@ class AgentManager:
             "get_activity_timeline",
             "search_activity",
             "get_terminal_history",
+            "get_system_status",
+            "modify_system_setting",
+            "rollback_system_setting",
+            "toggle_tool",
+            "read_system_logs",
+            "diagnose_system_errors",
+            "get_recent_task_events",
         ]
 
         existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}

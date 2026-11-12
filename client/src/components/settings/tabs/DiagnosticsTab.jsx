@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Activity, RefreshCw, Copy, Check, Trash2, Database, AlertCircle } from 'lucide-react';
 import { getLogs, vacuumCheckpointDb } from '../../../services/chatApi';
+import InfoTooltip from '../InfoTooltip';
 
 export function DiagnosticsTab({ settings, onUpdateSetting }) {
   const [logs, setLogs] = useState('');
@@ -50,9 +51,9 @@ export function DiagnosticsTab({ settings, onUpdateSetting }) {
       {/* DB MAINTENANCE */}
       <div className="rounded-xl border border-white/[0.06] bg-neutral-900/40 p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-white">Database & Checkpoints Storage</h3>
-            <p className="text-xs text-neutral-500">Reclaim disk space by vacuuming the SQLite checkpoint database</p>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-white">Database &amp; Checkpoints Storage</h3>
+            <InfoTooltip text="Reclaim disk space by vacuuming the SQLite checkpoint database." />
           </div>
           <motion.button
             whileTap={{ scale: 0.96 }}
@@ -83,9 +84,9 @@ export function DiagnosticsTab({ settings, onUpdateSetting }) {
       {/* LOGS VIEWER */}
       <div className="rounded-xl border border-white/[0.06] bg-neutral-900/40 p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <div>
+          <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold text-white">Application Logs</h3>
-            <p className="text-xs text-neutral-500">Real-time backend diagnostics and runtime logs</p>
+            <InfoTooltip text="Real-time backend diagnostics and runtime logs." />
           </div>
 
           <div className="flex items-center gap-2">

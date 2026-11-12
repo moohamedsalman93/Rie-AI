@@ -5,6 +5,8 @@ including interactive cards, buttons, and responsive charts (like ChatGPT).
 """
 from typing import Any, Dict, List, Optional, Union
 import json
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
 
 
 def normalize_custom_ui_payload(
@@ -90,11 +92,35 @@ def normalize_custom_ui_payload(
     return payload
 
 
+class RenderUiInput(BaseModel):
+    type: str = Field(
+        default="card",
+        description="UI component type: 'chart', 'flowchart', 'card', 'buttons', or 'ui'."
+    )
+    data: Union[Dict[str, Any], List[Any], str] = Field(
+        default_factory=dict,
+        description="Component data as a dictionary, list, or JSON string."
+    )
+    title: str = Field(
+        default="",
+        description="Optional title of the UI component."
+    )
+    subtitle: str = Field(
+        default="",
+        description="Optional subtitle or category label."
+    )
+    buttons: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Optional action buttons attached to the component."
+    )
+
+
+@tool("render_ui", args_schema=RenderUiInput)
 def render_ui(
     type: str = "card",
-    data: Optional[Union[Dict[str, Any], List[Any], str]] = None,
-    title: Optional[str] = None,
-    subtitle: Optional[str] = None,
+    data: Union[Dict[str, Any], List[Any], str] = "",
+    title: str = "",
+    subtitle: str = "",
     buttons: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Render custom interactive UI in chat, such as cards, action buttons, or charts.

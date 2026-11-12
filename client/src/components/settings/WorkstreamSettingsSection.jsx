@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import InfoTooltip from './InfoTooltip';
 import {
   Activity,
   AppWindow,
@@ -19,7 +20,6 @@ import {
   X,
   Zap,
   FolderOpen,
-  Trash2,
   Download,
 } from 'lucide-react';
 import {
@@ -241,6 +241,7 @@ export default function WorkstreamSettingsSection() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h4 className="text-sm font-semibold text-white">Activity Awareness</h4>
+              <InfoTooltip text="Allows Rie to passively understand your open apps, code changes, and research context to build continuous working memory." />
               <span className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full ${
                 isMasterOn
                   ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
@@ -253,9 +254,6 @@ export default function WorkstreamSettingsSection() {
                 <span className="text-[10px] text-neutral-400 font-medium">Syncing...</span>
               )}
             </div>
-            <p className="text-xs text-neutral-500 mt-0.5 leading-normal">
-              Allows Rie to passively understand your open apps, code changes, and research context to build continuous working memory.
-            </p>
           </div>
         </div>
 
@@ -461,13 +459,11 @@ export default function WorkstreamSettingsSection() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-neutral-200">Track Clipboard Content</span>
+                <InfoTooltip text="Stores actual copied text. When OFF, only application names and hashes are saved to prevent exposing tokens." />
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] text-neutral-400 border border-white/5 font-medium">
                   OFF by default
                 </span>
               </div>
-              <p className="text-[11px] text-neutral-400 mt-0.5 leading-normal">
-                Stores actual copied text. When OFF, only application names and hashes are saved to prevent exposing tokens.
-              </p>
             </div>
             <div className="shrink-0">
               <ToggleSwitch
@@ -485,11 +481,9 @@ export default function WorkstreamSettingsSection() {
 
           {/* Track File Changes */}
           <div className="flex items-center justify-between p-3.5 px-4 hover:bg-white/[0.015] transition-colors gap-4">
-            <div className="min-w-0">
-              <span className="text-xs font-semibold text-neutral-200">Track File Diffs & Changes</span>
-              <p className="text-[11px] text-neutral-400 mt-0.5 leading-normal">
-                Records file save events and lines modified count in IDE editors.
-              </p>
+            <div className="min-w-0 flex items-center gap-2">
+              <span className="text-xs font-semibold text-neutral-200">Track File Diffs &amp; Changes</span>
+              <InfoTooltip text="Records file save events and lines modified count in IDE editors." />
             </div>
             <div className="shrink-0">
               <ToggleSwitch
@@ -507,11 +501,9 @@ export default function WorkstreamSettingsSection() {
 
           {/* Track Web URLs */}
           <div className="flex items-center justify-between p-3.5 px-4 hover:bg-white/[0.015] transition-colors gap-4">
-            <div className="min-w-0">
+            <div className="min-w-0 flex items-center gap-2">
               <span className="text-xs font-semibold text-neutral-200">Track Visited URLs</span>
-              <p className="text-[11px] text-neutral-400 mt-0.5 leading-normal">
-                Records full URLs in browser telemetry. When OFF, only page titles are recorded.
-              </p>
+              <InfoTooltip text="Records full URLs in browser telemetry. When OFF, only page titles are recorded." />
             </div>
             <div className="shrink-0">
               <ToggleSwitch
@@ -535,13 +527,11 @@ export default function WorkstreamSettingsSection() {
             <div className="min-w-0 space-y-1">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-neutral-200">Sensitive Apps Shield</span>
+                <InfoTooltip text="Password managers, authenticators, and banking tools are automatically filtered out before recording." />
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] text-neutral-400 border border-white/5 font-medium">
                   Always Blocked
                 </span>
               </div>
-              <p className="text-[11px] text-neutral-400 leading-normal">
-                Password managers, authenticators, and banking tools are automatically filtered out before recording:
-              </p>
               <div className="flex flex-wrap gap-1.5 pt-0.5">
                 {(privacy.exclude_apps || ['1password', 'bitwarden', 'keepass', 'lastpass', 'credential', 'banking', 'wallet', 'secret']).map((item) => (
                   <span
@@ -578,15 +568,13 @@ export default function WorkstreamSettingsSection() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-neutral-200">Session Aggregation</span>
+                <InfoTooltip text="Clusters granular raw activity events into coherent work blocks using idle thresholds." />
                 {sensorStatus?.memory?.sessions?.total_sessions > 0 && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.04] text-neutral-400 border border-white/5 font-medium">
                     {sensorStatus.memory.sessions.total_sessions} sessions synthesized
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-neutral-400 mt-0.5 leading-normal">
-                Clusters granular raw activity events into coherent work blocks using idle thresholds.
-              </p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <button
@@ -612,11 +600,9 @@ export default function WorkstreamSettingsSection() {
 
           {/* Semantic Summaries */}
           <div className="flex items-center justify-between p-3.5 px-4 hover:bg-white/[0.015] transition-colors gap-4">
-            <div className="min-w-0">
+            <div className="min-w-0 flex items-center gap-2">
               <span className="text-xs font-semibold text-neutral-200">Semantic Summaries</span>
-              <p className="text-[11px] text-neutral-400 mt-0.5 leading-normal">
-                Generates high-level narrative summaries and task topics using background reasoning.
-              </p>
+              <InfoTooltip text="Generates high-level narrative summaries and task topics using background reasoning." />
             </div>
             <div className="shrink-0">
               <ToggleSwitch
@@ -634,11 +620,9 @@ export default function WorkstreamSettingsSection() {
 
           {/* Long-Term Memory (Chroma) */}
           <div className="flex items-center justify-between p-3.5 px-4 hover:bg-white/[0.015] transition-colors gap-4">
-            <div className="min-w-0">
+            <div className="min-w-0 flex items-center gap-2">
               <span className="text-xs font-semibold text-neutral-200">Vector Storage (Chroma)</span>
-              <p className="text-[11px] text-neutral-400 mt-0.5 leading-normal">
-                Indexes aggregated work sessions into local vector database for instant semantic recall in chat.
-              </p>
+              <InfoTooltip text="Indexes aggregated work sessions into local vector database for instant semantic recall in chat." />
             </div>
             <div className="shrink-0">
               <ToggleSwitch
@@ -767,9 +751,10 @@ function SensorRow({
           {icon}
         </div>
 
-        <div className="min-w-0 space-y-0.5">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-semibold text-neutral-200">{title}</span>
+            {description && <InfoTooltip text={description} />}
 
             {/* Live status badge */}
             <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${statusBadgeStyle}`}>
@@ -799,10 +784,6 @@ function SensorRow({
               </span>
             )}
           </div>
-
-          <p className="text-[11px] text-neutral-400 leading-normal line-clamp-1">
-            {description}
-          </p>
         </div>
       </div>
 
@@ -812,29 +793,15 @@ function SensorRow({
         {pluginAction && (
           <>
             {pluginAction.isInstalled && !pluginAction.alwaysShowButton ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  title="Reinstall / Update companion"
-                  onClick={pluginAction.onReinstall}
-                  disabled={pluginAction.loading}
-                  className="text-[10px] text-neutral-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors flex items-center gap-1"
-                >
-                  <RefreshCw className={`w-3 h-3 ${pluginAction.loading ? 'animate-spin text-emerald-400' : ''}`} />
-                  <span>Update</span>
-                </button>
-                {pluginAction.onUninstall && (
-                  <button
-                    type="button"
-                    title="Remove companion"
-                    onClick={pluginAction.onUninstall}
-                    disabled={pluginAction.loading}
-                    className="text-[10px] text-neutral-500 hover:text-rose-400 px-1 py-0.5 rounded hover:bg-rose-500/10 transition-colors"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
+              <button
+                type="button"
+                title="Reinstall / Refresh companion hooks"
+                onClick={pluginAction.onReinstall}
+                disabled={pluginAction.loading}
+                className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors flex items-center justify-center disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${pluginAction.loading ? 'animate-spin text-emerald-400' : ''}`} />
+              </button>
             ) : (
               <button
                 type="button"

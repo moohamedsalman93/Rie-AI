@@ -4,12 +4,27 @@
 
 @layer base {
   :root {
-    --surface-bg: #0a0a0a;
-    --card-bg: #141414;
-    --input-bg: #000000;
-    --border-subtle: rgba(255, 255, 255, 0.05);
-    --border-muted: rgba(255, 255, 255, 0.1);
-    --accent-emerald: #10b981;
+    /* Rie-AI Design System Tokens */
+    --background: #09090B;
+    --sidebar: #121215;
+    --surface: #141417;
+    --surface-hover: #18181B;
+    --border: #27272A;
+    --border-strong: #3F3F47;
+    --accent: #00D492;
+    --accent-hover: #00BC7D;
+    --accent-dark: #025B40;
+    --text-primary: #F4F4F5;
+    --text-secondary: #A1A1AA;
+    --text-muted: #71717A;
+
+    /* Semantic Aliases */
+    --surface-bg: var(--background);
+    --card-bg: var(--surface);
+    --input-bg: #09090B;
+    --border-subtle: var(--border);
+    --border-muted: var(--border-strong);
+    --accent-emerald: var(--accent);
     --accent-blue: #3b82f6;
     --accent-amber: #f59e0b;
   }
@@ -49,8 +64,8 @@
   }
 
   .premium-card:hover {
-    background: #1a1a1a;
-    border-color: var(--border-muted);
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   }
 
@@ -284,8 +299,8 @@
 }
 
 .skills-modal {
-  background: #141414;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 16px;
   width: 480px;
   max-width: 90vw;
@@ -401,8 +416,8 @@
 }
 
 .skills-icon-btn.selected {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: #10b981;
+  background: rgba(0, 212, 146, 0.15);
+  border-color: var(--accent);
 }
 
 /* Toggle Switch */
@@ -444,7 +459,7 @@
 }
 
 .skills-toggle input:checked + .skills-toggle-slider {
-  background-color: #10b981;
+  background-color: var(--accent);
 }
 
 .skills-toggle input:checked + .skills-toggle-slider:before {
@@ -453,8 +468,8 @@
 
 /* Buttons */
 .skills-btn-primary {
-  background: #10b981;
-  color: #fff;
+  background: var(--accent);
+  color: #09090B;
   border: none;
   border-radius: 8px;
   padding: 8px 16px;
@@ -573,7 +588,7 @@
   width: 24px;
   height: 24px;
   border: 2px solid rgba(255, 255, 255, 0.1);
-  border-top-color: #10b981;
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -624,8 +639,8 @@
 }
 
 .skill-chip {
-  background: rgba(16, 185, 129, 0.08);
-  border: 1px solid rgba(16, 185, 129, 0.15);
+  background: rgba(0, 212, 146, 0.08);
+  border: 1px solid rgba(0, 212, 146, 0.15);
   border-radius: 100px;
   padding: 2px 8px;
   display: inline-flex;
@@ -657,14 +672,14 @@
 }
 
 .skill-chip-name {
-  color: #10b981;
+  color: var(--accent);
   font-weight: 500;
 }
 
 .skill-chip-remove {
   background: transparent;
   border: none;
-  color: rgba(16, 185, 129, 0.6);
+  color: rgba(0, 212, 146, 0.6);
   cursor: pointer;
   font-size: 12px;
   padding: 0 2px;
@@ -673,7 +688,7 @@
 }
 
 .skill-chip-remove:hover {
-  color: #10b981;
+  color: var(--accent);
 }
 
 /* Skill Picker Anchor & Button */
@@ -707,8 +722,8 @@
   bottom: 32px;
   left: 0;
   width: 260px;
-  background: #141414;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
   z-index: 30;
@@ -751,11 +766,11 @@
 }
 
 .skill-picker-item.active {
-  background: rgba(16, 185, 129, 0.05);
+  background: rgba(0, 212, 146, 0.05);
 }
 
 .skill-picker-item input[type="checkbox"] {
-  accent-color: #10b981;
+  accent-color: var(--accent);
 }
 
 .skill-picker-item-icon {
@@ -863,4 +878,4 @@
     border-color: rgba(245, 158, 11, 0.85);
   }
 }
-
+

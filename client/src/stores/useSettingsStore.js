@@ -42,3 +42,10 @@ export const useSettingsStore = create((set, get) => ({
   searchQuery: "",
   setSearchQuery: (query) => set({ searchQuery: query }),
 }));
+
+// Listen for system intelligence settings refresh events
+if (typeof window !== "undefined") {
+  window.addEventListener("rie-settings-refresh", () => {
+    useSettingsStore.getState().fetchSettings().catch(() => {});
+  });
+}

@@ -10,7 +10,7 @@ import sys
 import uuid
 import secrets
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 import logging
 import threading
@@ -468,7 +468,7 @@ def _init_db_tables():
 
     # Populate default skills if they don't exist by name
     import uuid
-    from datetime import datetime
+    from datetime import datetime, timezone
     now = datetime.utcnow().isoformat()
     
     # Clean up unwanted developer skills if previously seeded
@@ -888,6 +888,27 @@ Instead of typing field-by-field with individual clicks:
                 (desc, content, icon, now, name)
             )
 
+    # Create setting_transactions table for System Intelligence rollback journal
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS setting_transactions (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        key TEXT NOT NULL,
+        old_value TEXT,
+        new_value TEXT NOT NULL,
+        reason TEXT,
+        author TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        status TEXT NOT NULL
+    )
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_setting_transactions_key ON setting_transactions(key)
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_setting_transactions_timestamp ON setting_transactions(timestamp)
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -945,6 +966,99 @@ def delete_setting(key: str):
     
     cursor.execute("DELETE FROM settings WHERE key = ?", (key,))
     
+    conn.commit()
+    conn.close()
+
+# Setting Transactions / System Intelligence Rollback Journal
+
+def record_setting_transaction(
+    key: str,
+    old_value: Optional[str],
+    new_value: str,
+    reason: Optional[str] = None,
+    author: str = "rie",
+    tier: str = "autonomous",
+    status: str = "committed",
+    transaction_id: Optional[str] = None,
+) -> str:
+    """Record a setting modification transaction for rollback and auditability."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    tx_id = transaction_id or str(uuid.uuid4())
+    ts = datetime.now(timezone.utc).isoformat()
+    
+    cursor.execute(
+        """
+        INSERT INTO setting_transactions (id, timestamp, key, old_value, new_value, reason, author, tier, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (tx_id, ts, key, old_value, new_value, reason, author, tier, status)
+    )
+    conn.commit()
+    conn.close()
+    return tx_id
+
+def get_setting_transactions(limit: int = 50, key: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Retrieve recent setting modification transactions."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    if key:
+        cursor.execute(
+            """
+            SELECT id, timestamp, key, old_value, new_value, reason, author, tier, status
+            FROM setting_transactions
+            WHERE key = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (key, limit)
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT id, timestamp, key, old_value, new_value, reason, author, tier, status
+            FROM setting_transactions
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_setting_transaction(transaction_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a single setting transaction by ID."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        """
+        SELECT id, timestamp, key, old_value, new_value, reason, author, tier, status
+        FROM setting_transactions
+        WHERE id = ?
+        """,
+        (transaction_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_setting_transaction_status(transaction_id: str, status: str):
+    """Update status of a setting transaction (e.g. committed, rolled_back, failed)."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE setting_transactions SET status = ? WHERE id = ?",
+        (status, transaction_id)
+    )
     conn.commit()
     conn.close()
 

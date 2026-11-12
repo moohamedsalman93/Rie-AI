@@ -166,13 +166,13 @@ async def _background_initialization():
         except Exception as emb_err:
             logger.debug("Could not verify bundled embedding model: %s", emb_err)
 
-        # 8. Ensure bundled companion plugins are auto-injected (IDE & Terminal hooks)
+        # 8. Ensure browser extension files are prepared at ~/.rie/extensions/browser
         try:
             from app.workstream.plugin_manager import plugin_manager
-            await asyncio.to_thread(plugin_manager.auto_inject_all)
-            logger.info("Bundled companion plugins auto-injected and ready.")
+            await asyncio.to_thread(plugin_manager.prepare_browser_extension)
+            logger.info("Browser extension files prepared and ready.")
         except Exception as plug_err:
-            logger.debug("Could not auto-inject bundled companion plugins: %s", plug_err)
+            logger.debug("Could not prepare browser extension files: %s", plug_err)
     except Exception as e:
         logger.exception("Error during background initialization: %s", e)
 

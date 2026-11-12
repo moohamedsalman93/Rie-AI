@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import InfoTooltip from "./InfoTooltip";
 import {
   Globe,
   RefreshCw,
@@ -210,11 +211,9 @@ export default function BrowserSettingsSection() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-base font-medium text-neutral-100 flex items-center gap-2">
-            <Globe className="w-4 h-4 text-neutral-400" /> Browser Engine & Profiles
+            <Globe className="w-4 h-4 text-neutral-400" /> Browser Engine &amp; Profiles
+            <InfoTooltip text="Choose your preferred browser engine for web tasks and automation." />
           </h3>
-          <p className="text-xs text-neutral-400 mt-0.5">
-            Choose your preferred browser engine for web tasks and automation.
-          </p>
         </div>
         {engineChoice === "camoufox" && (
           <button
@@ -255,18 +254,16 @@ export default function BrowserSettingsSection() {
             >
               <Monitor className="w-4 h-4" />
             </div>
-            <div>
-              <div className="font-medium text-xs text-neutral-200 flex items-center gap-2">
-                Default Browser (Windows UI Tool)
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-xs text-neutral-200 flex items-center gap-2 flex-wrap">
+                <span>Default Browser (Windows UI Tool)</span>
+                <InfoTooltip text="Uses native Windows UI automation and system default browser. No downloads required." />
                 {engineChoice === "default" && (
                   <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-neutral-700 text-neutral-200 border border-neutral-600">
                     Active
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed">
-                Uses native Windows UI automation and system default browser. No downloads required.
-              </p>
             </div>
           </div>
         </div>
@@ -290,18 +287,16 @@ export default function BrowserSettingsSection() {
             >
               <Cpu className="w-4 h-4" />
             </div>
-            <div>
-              <div className="font-medium text-xs text-neutral-200 flex items-center gap-2">
-                Camoufox Engine (Stealth Firefox)
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-xs text-neutral-200 flex items-center gap-2 flex-wrap">
+                <span>Camoufox Engine (Stealth Firefox)</span>
+                <InfoTooltip text="Embedded stealth browser engine with C++ anti-fingerprinting. Pre-bundled & ready to use." />
                 {engineChoice === "camoufox" && (
                   <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-neutral-700 text-neutral-200 border border-neutral-600">
                     Active
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed">
-                Embedded stealth browser engine with C++ anti-fingerprinting. Pre-bundled & ready to use.
-              </p>
             </div>
           </div>
         </div>
@@ -335,10 +330,8 @@ export default function BrowserSettingsSection() {
             <div>
               <h4 className="font-medium text-xs text-neutral-200 flex items-center gap-2">
                 <Monitor className="w-3.5 h-3.5 text-neutral-400" /> Browser Window Mode
+                <InfoTooltip text="Configure whether Camoufox runs in headless mode, visible desktop GUI mode, or smart auto mode." />
               </h4>
-              <p className="text-[11px] text-neutral-400 mt-0.5">
-                Configure whether Camoufox runs in headless mode, visible desktop GUI mode, or smart auto mode.
-              </p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
@@ -351,18 +344,16 @@ export default function BrowserSettingsSection() {
                     : "bg-neutral-950/60 border-neutral-800/80 text-neutral-400 hover:border-neutral-700"
                 }`}
               >
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-2">
                   <EyeOff className={`w-3.5 h-3.5 ${headlessMode === "headless" ? "text-neutral-200" : "text-neutral-500"}`} />
                   <span className="font-medium text-xs text-neutral-200">Headless</span>
+                  <InfoTooltip text="Invisibly runs in background. Fastest performance without opening desktop windows." />
                   {headlessMode === "headless" && (
                     <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-white/[0.08] text-neutral-200 border border-white/10 font-mono">
                       Active
                     </span>
                   )}
                 </div>
-                <p className="text-[10px] text-neutral-400 leading-normal">
-                  Invisibly runs in background. Fastest performance without opening desktop windows.
-                </p>
               </div>
 
               {/* Normal / GUI Option */}
@@ -374,18 +365,16 @@ export default function BrowserSettingsSection() {
                     : "bg-neutral-950/60 border-neutral-800/80 text-neutral-400 hover:border-neutral-700"
                 }`}
               >
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-2">
                   <Eye className={`w-3.5 h-3.5 ${headlessMode === "normal" ? "text-neutral-200" : "text-neutral-500"}`} />
                   <span className="font-medium text-xs text-neutral-200">Normal</span>
+                  <InfoTooltip text="Opens a visible GUI window on desktop with full video/audio playback and manual input." />
                   {headlessMode === "normal" && (
                     <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-white/[0.08] text-neutral-200 border border-white/10 font-mono">
                       Active
                     </span>
                   )}
                 </div>
-                <p className="text-[10px] text-neutral-400 leading-normal">
-                  Opens a visible GUI window on desktop with full video/audio playback and manual input.
-                </p>
               </div>
 
               {/* Auto Option */}
@@ -397,18 +386,16 @@ export default function BrowserSettingsSection() {
                     : "bg-neutral-950/60 border-neutral-800/80 text-neutral-400 hover:border-neutral-700"
                 }`}
               >
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-2">
                   <Sparkles className={`w-3.5 h-3.5 ${headlessMode === "auto" ? "text-neutral-200" : "text-neutral-500"}`} />
                   <span className="font-medium text-xs text-neutral-200">Auto</span>
+                  <InfoTooltip text="AI automatically chooses headless for background tasks and visible GUI for user media & interactive sessions." />
                   {headlessMode === "auto" && (
                     <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-white/[0.08] text-neutral-200 border border-white/10 font-mono">
                       Active
                     </span>
                   )}
                 </div>
-                <p className="text-[10px] text-neutral-400 leading-normal">
-                  LLM Decided. AI automatically passes headless=True for background tasks and visible GUI for user media & interactive sessions.
-                </p>
               </div>
             </div>
           </div>

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Pencil } from 'lucide-react';
 import { getSettings } from '../../services/chatApi';
+import InfoTooltip from './InfoTooltip';
 
-export function SettingInput({ label, dbKey, value, onSave, isSaving, placeholder, isSecret, type = "text", allowEmpty = false }) {
+export function SettingInput({ label, tooltip, dbKey, value, onSave, isSaving, placeholder, isSecret, type = "text", allowEmpty = false }) {
   const [inputValue, setInputValue] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const isConfigured = !!value;
@@ -34,8 +35,9 @@ export function SettingInput({ label, dbKey, value, onSave, isSaving, placeholde
 
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4  border-white/5 last:border-0">
-      <div className="flex items-center gap-2.5 shrink-0">
+      <div className="flex items-center gap-2 shrink-0">
         <label className="text-xs font-medium text-neutral-400 tracking-wider">{label}</label>
+        {tooltip && <InfoTooltip text={tooltip} />}
         {isConfigured && !isEditing && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-neutral-400 border border-white/10 font-mono">
             Set

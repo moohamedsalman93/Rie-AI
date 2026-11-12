@@ -18,6 +18,7 @@ import SpeakerVoiceSettings from './SpeakerVoiceSettings';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
+import InfoTooltip from './InfoTooltip';
 import {
   DEFAULT_TAB,
   normalizeTabId,
@@ -1325,9 +1326,9 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
                         <div className="p-2 bg-neutral-800 rounded-lg text-neutral-200">
                           {PROVIDERS[selectedProvider]?.icon}
                         </div>
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h3 className="text-sm font-medium text-neutral-200">Assistant Provider</h3>
-                          <p className="text-[10px] text-neutral-500">Choose the model provider that powers your assistant.</p>
+                          <InfoTooltip text="Choose the model provider that powers your assistant." />
                         </div>
                       </div>
                       <div className="relative">
@@ -1355,9 +1356,9 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
                         <div className="p-2 bg-neutral-800 rounded-lg text-neutral-200">
                           {PROVIDERS[settings.fallback_llm_provider || 'none']?.icon || <AlertTriangle className="w-5 h-5 text-amber-500/80" />}
                         </div>
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h3 className="text-sm font-medium text-neutral-200">Fallback Provider</h3>
-                          <p className="text-[10px] text-neutral-500">Backup LLM to handle requests if primary provider experiences errors.</p>
+                          <InfoTooltip text="Backup LLM to handle requests if primary provider experiences errors." />
                         </div>
                       </div>
                       <div className="relative">
@@ -1460,6 +1461,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
                                     <>
                                       <SettingInput
                                         label="Google API Key"
+                                        tooltip="Tip: Add multiple keys separated by commas or lines to bypass Google's rate limits. They will be rotated automatically."
                                         dbKey="GOOGLE_API_KEY"
                                         value={settings.google_api_key}
                                         onSave={handleLocalSettingChange}
@@ -1471,9 +1473,7 @@ key1,
 key2,
 ..."
                                       />
-                                      <p className="text-[10px] text-neutral-500 mt-1">
-                                        Tip: Add multiple keys to bypass Google's rate limits. They will be rotated automatically.
-                                      </p>
+
                                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-white/5 last:border-0">
                                         <div className="flex items-center gap-2.5 shrink-0">
                                           <label className="text-xs font-medium text-neutral-400 tracking-wider">Model</label>
@@ -1560,6 +1560,7 @@ key2,
                                     <>
                                       <SettingInput
                                         label="Groq API Key"
+                                        tooltip="Tip: Add multiple keys to bypass Groq's per-minute rate limits. They will be rotated automatically."
                                         dbKey="GROQ_API_KEY"
                                         value={settings.groq_api_key}
                                         onSave={handleLocalSettingChange}
@@ -1568,9 +1569,7 @@ key2,
                                         type="textarea"
                                         placeholder="Enter keys separated by commas or lines:\ngsk_key1,\ngsk_key2,\n..."
                                       />
-                                      <p className="text-[10px] text-neutral-500 mt-1">
-                                        Tip: Add multiple keys to bypass Groq's per-minute rate limits. They will be rotated automatically.
-                                      </p>
+
                                       <SettingInput
                                         label="Model Name"
                                         dbKey="GROQ_MODEL"
@@ -1586,6 +1585,7 @@ key2,
                                     <>
                                       <SettingInput
                                         label="OpenAI API Key"
+                                        tooltip="Tip: Add multiple keys separated by commas or lines to bypass rate limits. They will be rotated automatically."
                                         dbKey="OPENAI_API_KEY"
                                         value={settings.openai_api_key}
                                         onSave={handleLocalSettingChange}
@@ -1597,9 +1597,7 @@ sk-...,
 sk-...,
 ..."
                                       />
-                                      <p className="text-[10px] text-neutral-500 mt-1">
-                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
-                                      </p>
+
                                       <SettingInput
                                         label="Base URL"
                                         dbKey="OPENAI_BASE_URL"
@@ -1623,6 +1621,7 @@ sk-...,
                                     <>
                                       <SettingInput
                                         label="Azure AI Foundry API Key"
+                                        tooltip="Tip: Add multiple keys separated by commas or lines to bypass rate limits. They will be rotated automatically."
                                         dbKey="AZURE_FOUNDRY_API_KEY"
                                         value={settings.azure_foundry_api_key}
                                         onSave={handleLocalSettingChange}
@@ -1634,20 +1633,16 @@ key1,
 key2,
 ..."
                                       />
-                                      <p className="text-[10px] text-neutral-500 mt-1">
-                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
-                                      </p>
+
                                       <SettingInput
                                         label="Base URL / Endpoint"
+                                        tooltip="Foundry Model Inference endpoint (e.g. https://<resource>.services.ai.azure.com/models) or Azure OpenAI v1 endpoint."
                                         dbKey="AZURE_FOUNDRY_BASE_URL"
                                         value={settings.azure_foundry_base_url}
                                         onSave={handleLocalSettingChange}
                                         isSaving={isSavingAll}
                                         placeholder="https://<resource>.services.ai.azure.com/models"
                                       />
-                                      <p className="text-[10px] text-neutral-500 mt-1">
-                                        Foundry Model Inference endpoint (e.g. https://&lt;resource&gt;.services.ai.azure.com/models) or Azure OpenAI v1 endpoint.
-                                      </p>
                                       <SettingInput
                                         label="Deployment / Model Name"
                                         dbKey="AZURE_FOUNDRY_MODEL"
@@ -1674,9 +1669,7 @@ sk-...,
 sk-...,
 ..."
                                       />
-                                      <p className="text-[10px] text-neutral-500 mt-1">
-                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
-                                      </p>
+
                                       <SettingInput
                                         label="Base URL"
                                         dbKey="DEEPSEEK_BASE_URL"
@@ -1711,9 +1704,7 @@ key1,
 key2,
 ..."
                                       />
-                                      <p className="text-[10px] text-neutral-500 mt-1">
-                                        Tip: Add multiple keys to bypass rate limits. They will be rotated automatically.
-                                      </p>
+
                                       <SettingInput
                                         label="Base URL"
                                         dbKey="GLM_BASE_URL"
@@ -1859,6 +1850,7 @@ key2,
                                     <>
                                       <SettingInput
                                         label="Ollama Endpoint"
+                                        tooltip="Leave empty to use default http://localhost:11434."
                                         dbKey="OLLAMA_API_URL"
                                         value={settings.ollama_api_url}
                                         onSave={handleLocalSettingChange}
@@ -1866,9 +1858,6 @@ key2,
                                         placeholder="http://localhost:11434"
                                         allowEmpty
                                       />
-                                      <p className="text-[10px] text-neutral-500 -mt-1">
-                                        Leave empty to use default <code className="text-neutral-400">http://localhost:11434</code>.
-                                      </p>
                                       <SettingInput
                                         label="Ollama API Key (optional)"
                                         dbKey="OLLAMA_API_KEY"
@@ -2029,11 +2018,8 @@ key2,
                           <Plug2 size={16} />
                         </div>
                         <h4 className={SL.sectionTitle}>MCP Servers</h4>
+                        <InfoTooltip text="Model Context Protocol (MCP) allows your assistant to connect to local or remote services, providing access to specific files, databases, or APIs." />
                       </div>
-
-                      <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
-                        Model Context Protocol (MCP) allows your assistant to connect to local or remote services, providing access to specific files, databases, or APIs.
-                      </p>
 
                       <div className="pt-2">
                         <McpServersManager
@@ -2052,14 +2038,8 @@ key2,
                           <Link size={16} />
                         </div>
                         <h4 className={SL.sectionTitle}>External APIs</h4>
+                        <InfoTooltip text="Connect custom API endpoints as tools for the agent. GET/DELETE use query params, while POST/PUT/PATCH send a body (JSON)." />
                       </div>
-
-                      <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
-                        Connect custom API endpoints as tools for the agent. GET/DELETE use query params, while POST/PUT/PATCH send a body.
-                      </p>
-                      <p className="text-xs text-neutral-500 leading-relaxed max-w-xl">
-                        Use Request body (JSON) for fixed or templated payloads, for example <code className="bg-neutral-800 px-1 rounded">{'{"query": "{query}"}'}</code>.
-                      </p>
 
                       <div className="pt-2">
                         <ExternalApisManager
@@ -2106,7 +2086,10 @@ key2,
 
                       <div className="premium-card rounded-xl p-5 space-y-4">
                         <div className="space-y-3 p-3">
-                          <div className="text-[11px] uppercase tracking-wider text-neutral-400">Orchestration Mode</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-[11px] uppercase tracking-wider text-neutral-400">Orchestration Mode</div>
+                            <InfoTooltip text="Solo: Single pipeline agent where reasoning and tools run together. Team: Planner delegating tasks to specialized sub-agents with dedicated tools." />
+                          </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <button
                               type="button"
@@ -2129,35 +2112,6 @@ key2,
                               Team (Planner delegation)
                             </button>
                           </div>
-                          {(settings.agent_orchestration_mode || 'team') === 'solo' ? (
-                            <div className="text-xs text-neutral-500 leading-relaxed space-y-1">
-                              <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
-                                Solo
-                              </div>
-                              <p>
-                                One main agent runs the full workflow: reasoning, tool use, and answers stay in a single
-                                pipeline with one shared configuration.
-                              </p>
-                              <p className="text-neutral-500 text-xs">
-                                Use this when you want the simplest setup and do not need separate roles or delegated
-                                sub-agents.
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="text-xs text-neutral-500 leading-relaxed space-y-1">
-                              <div className="text-neutral-300 font-medium text-xs uppercase tracking-wider">
-                                Team
-                              </div>
-                              <p>
-                                The planner breaks work into steps and delegates to a boss and member agents. Each role can
-                                have its own tools, external APIs, and instructions.
-                              </p>
-                              <p className="text-neutral-500 text-xs">
-                                Use this when tasks benefit from structured delegation or when different agents should use
-                                different capabilities.
-                              </p>
-                            </div>
-                          )}
                         </div>
 
 
@@ -2543,6 +2497,7 @@ key2,
                     </div>
                     <SettingInput
                       label="Terminal Restrictions"
+                      tooltip="Protect your system by blacklisting dangerous keywords. The agent will be unable to run any command that contains these strings."
                       dbKey="TERMINAL_RESTRICTIONS"
                       value={settings.terminal_restrictions}
                       onSave={handleLocalSettingChange}
@@ -2551,16 +2506,11 @@ key2,
                       placeholder="e.g. rm, del, format, curl, wget
 Separate keywords by commas. Commands containing these words will be blocked."
                     />
-                    <p className="text-[10px] text-neutral-500 mt-1">
-                      Protect your system by blacklisting dangerous keywords. The agent will be unable to run any command that contains these strings.
-                    </p>
 
                     <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold text-neutral-200">Human-in-the-Loop (HITL)</h4>
-                        <p className="text-[11px] text-neutral-500 max-w-xs">
-                          Choose how approvals are handled for potentially risky tool calls.
-                        </p>
+                        <InfoTooltip text="Choose how approvals are handled for potentially risky tool calls." />
                       </div>
                       <div className=" max-w-xs">
                         <select
@@ -2577,11 +2527,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
 
                     <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold text-neutral-200">Screen Privacy</h4>
-                        <p className="text-[11px] text-neutral-500 max-w-xs">
-                          Exclude the application from screenshots and screen recordings to protect your private chat data.
-                        </p>
+                        <InfoTooltip text="Exclude the application from screenshots and screen recordings to protect your private chat data." />
                       </div>
                       <div
                         onClick={() => handleLocalSettingChange('EXCLUDE_FROM_CAPTURE', String(!(settings.exclude_from_capture ?? true)))}
@@ -2596,11 +2544,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
 
                     <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold text-neutral-200">Kiosk Overlay</h4>
-                        <p className="text-[11px] text-neutral-500 max-w-xs">
-                          Float and overlay above full-screen kiosk apps. (Windows only)
-                        </p>
+                        <InfoTooltip text="Float and overlay above full-screen kiosk apps. (Windows only)" />
                       </div>
                       <div
                         onClick={handleToggleKioskOverlaySetting}
@@ -2615,11 +2561,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
 
                     <div className="flex items-center justify-between border-t border-white/5 pt-4">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold text-neutral-200">UIA Screen Capture (Text)</h4>
-                        <p className="text-[11px] text-neutral-500 max-w-xs">
-                          Extract text/structure via Windows UI Automation when attaching "Current Screen" instead of capturing a visual screenshot. Useful in kiosk/lockdown environments.
-                        </p>
+                        <InfoTooltip text="Extract text/structure via Windows UI Automation when attaching 'Current Screen' instead of capturing a visual screenshot. Useful in kiosk/lockdown environments." />
                       </div>
                       <div
                         onClick={() => handleLocalSettingChange('CAPTURE_SCREEN_AS_TEXT', String(!(settings.capture_screen_as_text ?? false)))}
@@ -2643,11 +2587,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                     </div>
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-4">
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1 flex items-center gap-2">
                           <h4 className="text-sm font-medium text-neutral-200">Floating Chat Transparency</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-xs">
-                            Adjust the transparency/opacity of the floating chat window.
-                          </p>
+                          <InfoTooltip text="Adjust the transparency/opacity of the floating chat window." />
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
                           <span className="text-xs font-mono font-bold text-emerald-400 w-9 text-right">
@@ -2688,11 +2630,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </div>
 
                       <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h4 className="text-sm font-medium text-neutral-200">Show Floating Bubble</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-xs">
-                            Display the floating bubble on your screen when minimized. Disable to hide it completely (restore via system tray or global shortcut Alt+Shift+A).
-                          </p>
+                          <InfoTooltip text="Display the floating bubble on your screen when minimized. Disable to hide it completely (restore via system tray or Alt+Shift+A)." />
                         </div>
                         <div
                           onClick={() => handleLocalSettingChange('SHOW_BUBBLE', String(!(settings.show_bubble ?? true)))}
@@ -2708,11 +2648,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                       {/* Bubble Text Label */}
                       <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                        <div>
-                          <h4 className="text-sm font-medium text-neutral-200">Show Bubble "Rie-AI" Label</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-xs">
-                            Display the "Rie-AI" text label next to the icon when idle. Disable for a compact icon-only bubble.
-                          </p>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-medium text-neutral-200">Show Bubble &quot;Rie-AI&quot; Label</h4>
+                          <InfoTooltip text="Display the 'Rie-AI' text label next to the icon when idle. Disable for a compact icon-only bubble." />
                         </div>
                         <div
                           onClick={() => handleLocalSettingChange('BUBBLE_SHOW_LABEL', String(!(settings.bubble_show_label ?? true)))}
@@ -2724,11 +2662,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                       {/* Bubble Size */}
                       <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h4 className="text-sm font-medium text-neutral-200">Floating Bubble Size</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-xs">
-                            Choose the physical size scale of the floating bubble widget.
-                          </p>
+                          <InfoTooltip text="Choose the physical size scale of the floating bubble widget." />
                         </div>
                         <div className="flex items-center gap-1 bg-neutral-900 border border-neutral-800 p-1 rounded-lg shrink-0">
                           {['small', 'medium', 'large'].map((size) => {
@@ -2754,11 +2690,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                       {/* Fully Transparent Background */}
                       <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h4 className="text-sm font-medium text-neutral-200">Transparent Glass Background</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-xs">
-                            Enable fully transparent glass background style for the floating bubble.
-                          </p>
+                          <InfoTooltip text="Enable fully transparent glass background style for the floating bubble." />
                         </div>
                         <div
                           onClick={() => handleLocalSettingChange('BUBBLE_TRANSPARENT_BG', String(!(settings.bubble_transparent_bg ?? false)))}
@@ -2770,11 +2704,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                       {/* Snap to Screen Edge */}
                       <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h4 className="text-sm font-medium text-neutral-200">Snap to Screen Edges</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-xs">
-                            Automatically magnetize the floating bubble to the nearest monitor edge when released.
-                          </p>
+                          <InfoTooltip text="Automatically magnetize the floating bubble to the nearest monitor edge when released." />
                         </div>
                         <div
                           onClick={() => handleLocalSettingChange('BUBBLE_SNAP_EDGE', String(!(settings.bubble_snap_edge ?? true)))}
@@ -2786,11 +2718,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                       {/* Show Tool Activity Status */}
                       <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-4">
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h4 className="text-sm font-medium text-neutral-200">Show Tool Activity on Bubble</h4>
-                          <p className="text-[10px] text-neutral-500 max-w-xs">
-                            Display active tool status labels (Searching, Reading Screen) on the bubble during agent execution.
-                          </p>
+                          <InfoTooltip text="Display active tool status labels (Searching, Reading Screen) on the bubble during agent execution." />
                         </div>
                         <div
                           onClick={() => handleLocalSettingChange('BUBBLE_SHOW_TOOLS', String(!(settings.bubble_show_tools ?? true)))}
@@ -2860,12 +2790,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       <h3 className={SL.sectionTitle}>Device &amp; Location</h3>
                     </div>
                     <div className="flex items-center justify-between gap-4">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-medium text-neutral-200">Share location</h4>
-                        <p className="text-[10px] text-neutral-500 max-w-md">
-                          Send approximate GPS with chat messages so Rie can answer nearby places, weather, and &quot;where am I&quot; questions.
-                          The first time, Windows will ask for location access for Rie-AI (Settings → Privacy → Location).
-                        </p>
+                        <InfoTooltip text="Send approximate GPS with chat messages so Rie can answer nearby places, weather, and 'where am I' questions. Windows location access required." />
                       </div>
                       <div
                         onClick={() => handleLocalSettingChange('SHARE_LOCATION', String(!(settings.share_location ?? true)))}
@@ -2882,9 +2809,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h3 className="text-sm font-medium text-neutral-200">Auto-start</h3>
-                        <p className="text-[10px] text-neutral-500">Launch Rie-AI automatically when you log in.</p>
+                        <InfoTooltip text="Launch Rie-AI automatically when you log in to Windows." />
                       </div>
                       <div
                         onClick={handleAutoStartToggle}
@@ -2907,11 +2834,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       <h3 className={SL.sectionTitle}>Data Management</h3>
                     </div>
                     <div className="flex items-center justify-between gap-4 pb-4 border-b border-white/5">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold text-neutral-200">Clear All Chat History</h4>
-                        <p className="text-[10px] text-neutral-500 max-w-md font-medium text-neutral-400">
-                          Permanently delete all chat threads, messages, scheduled tasks, notifications, and checkpoints. This cannot be undone.
-                        </p>
+                        <InfoTooltip text="Permanently delete all chat threads, messages, scheduled tasks, notifications, and checkpoints. This cannot be undone." />
                       </div>
                       <button
                         type="button"
@@ -2922,11 +2847,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       </button>
                     </div>
                     <div className="space-y-3 pt-2">
-                      <div>
-                        <h4 className="text-sm font-bold text-neutral-200">Backup & Restore</h4>
-                        <p className="text-[10px] text-neutral-500 max-w-md font-medium text-neutral-400">
-                          Export your settings, skills, custom tools, and conversations to a file, or restore them from a previous backup.
-                        </p>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-neutral-200">Backup &amp; Restore</h4>
+                        <InfoTooltip text="Export your settings, skills, custom tools, and conversations to a file, or restore them from a previous backup." />
                       </div>
                       <div className="flex gap-3">
                         <button
@@ -2956,9 +2879,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       <h3 className="text-sm font-medium text-neutral-200">About</h3>
                     </div>
                     <div className="flex items-center justify-between">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-medium text-neutral-200">Application Version</h4>
-                        <p className="text-[10px] text-neutral-500">Current installed version of Rie-AI.</p>
+                        <InfoTooltip text="Current installed version of Rie-AI desktop client." />
                       </div>
                       <span className="px-2.5 py-1 bg-white/[0.05] border border-white/10 rounded-lg text-xs font-mono font-medium text-neutral-300 tracking-wide flex items-center gap-2">
                         v{appVersion}
@@ -3117,9 +3040,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                       <h3 className={SL.sectionTitle}>Web Search</h3>
                     </div>
                     <div className="flex items-center justify-between gap-4 py-1.5">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-medium text-neutral-300">Search Provider</h4>
-                        <p className="text-[10px] text-neutral-500">Select the search engine service used by the Internet Search tool.</p>
+                        <InfoTooltip text="Select the search engine service used by the Internet Search tool." />
                       </div>
                       <div className="relative">
                         <select
@@ -3155,6 +3078,7 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <>
                           <SettingInput
                             label={`${provider.label} API Key`}
+                            tooltip="Powers the Internet Search tool in Capabilities."
                             dbKey={provider.keyDb}
                             value={settings[provider.keyField]}
                             onSave={handleLocalSettingChange}
@@ -3162,9 +3086,6 @@ Separate keywords by commas. Commands containing these words will be blocked."
                             isSecret
                             placeholder={provider.placeholder}
                           />
-                          <p className="text-[10px] text-neutral-500">
-                            Powers the Internet Search tool in Capabilities.
-                          </p>
                         </>
                       );
                     })()}
@@ -3176,10 +3097,8 @@ Separate keywords by commas. Commands containing these words will be blocked."
                         <FileText size={16} />
                       </div>
                       <h3 className={SL.sectionTitle}>Custom Knowledge</h3>
+                      <InfoTooltip text="Create named knowledge packs with custom instructions and files. Attach them in chat to inject context into the assistant." />
                     </div>
-                    <p className="text-[10px] text-neutral-500">
-                      Create named knowledge packs with custom instructions and files. Attach them in chat to inject context into the assistant.
-                    </p>
                     <KnowledgeManager />
                   </div>
                     </>
@@ -3197,11 +3116,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
                   {/* Gemini Multimodal Live Voice Section */}
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between gap-4">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-medium text-neutral-200">Gemini Live Voice Persona</h4>
-                        <p className="text-[10px] text-neutral-500 mt-0.5">
-                          Voice persona for zero-delay, bidirectional speech-to-speech conversations.
-                        </p>
+                        <InfoTooltip text="Voice persona for zero-delay, bidirectional speech-to-speech conversations." />
                       </div>
                       <div className="relative">
                         <select
@@ -3241,11 +3158,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
 
                   <div className={`${SL.toggleRow} space-y-3`}>
                     <div className="flex items-center justify-between gap-4">
-                      <div>
+                      <div className="flex items-center gap-2">
                         <h4 className="text-sm font-medium text-neutral-200">Wake Word</h4>
-                        <p className="text-[10px] text-neutral-500 mt-0.5">
-                          Say “Hey Rie” to open Live Voice automatically. The listener runs locally on Windows.
-                        </p>
+                        <InfoTooltip text="Say “Hey Rie” to open Live Voice automatically. The listener runs locally on Windows." />
                       </div>
                       <button
                         type="button"

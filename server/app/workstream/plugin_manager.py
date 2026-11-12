@@ -86,16 +86,6 @@ class PluginManager:
         terminal_status = self.check_terminal_installed()
         browser_status = self.check_browser_prepared()
 
-        # If running on a new device or plugins not yet injected, auto-inject them automatically!
-        if not ide_status.get("installed") or not terminal_status.get("installed") or not browser_status.get("prepared"):
-            try:
-                self.auto_inject_all()
-                ide_status = self.check_ide_installed()
-                terminal_status = self.check_terminal_installed()
-                browser_status = self.check_browser_prepared()
-            except Exception as auto_err:
-                logger.debug("Auto-injection fallback error during get_status: %s", auto_err)
-
         return {
             "ide": ide_status,
             "terminal": terminal_status,
@@ -392,12 +382,10 @@ class PluginManager:
     # -------------------------------------------------------------
     # AUTO-INJECT ALL (CALLED ON STARTUP & ON-DEMAND)
     # -------------------------------------------------------------
-    def auto_inject_all(self) -> Dict[str, Any]:
+    def auto_inject_all(self, include_terminal: bool = False, include_ide: bool = False) -> Dict[str, Any]:
         """
-        Silently ensures all bundled plugins are injected and prepared on startup:
-        1. Prepares browser extension at ~/.rie/extensions/browser.
-        2. Auto-injects IDE companion extension into all detected editors.
-        3. Auto-injects shell hooks into PowerShell profiles and ~/.bashrc.
+        Ensures bundled plugins are prepared.
+        IDE and Terminal injection require explicit opt-in to respect user uninstalls and protect system files.
         """
         results = {}
         try:
@@ -406,17 +394,23 @@ class PluginManager:
             logger.debug("Auto-prep browser extension: %s", e)
             results["browser"] = {"error": str(e)}
 
-        try:
-            results["ide"] = self.install_ide()
-        except Exception as e:
-            logger.debug("Auto-inject IDE: %s", e)
-            results["ide"] = {"error": str(e)}
+        if include_ide:
+            try:
+                results["ide"] = self.install_ide()
+            except Exception as e:
+                logger.debug("Auto-inject IDE: %s", e)
+                results["ide"] = {"error": str(e)}
+        else:
+            results["ide"] = {"status": "skipped", "message": "IDE injection requires explicit installation."}
 
-        try:
-            results["terminal"] = self.install_terminal()
-        except Exception as e:
-            logger.debug("Auto-inject Terminal: %s", e)
-            results["terminal"] = {"error": str(e)}
+        if include_terminal:
+            try:
+                results["terminal"] = self.install_terminal()
+            except Exception as e:
+                logger.debug("Auto-inject Terminal: %s", e)
+                results["terminal"] = {"error": str(e)}
+        else:
+            results["terminal"] = {"status": "skipped", "message": "Terminal injection requires explicit installation."}
 
         return results
 
