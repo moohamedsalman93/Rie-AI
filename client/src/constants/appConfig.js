@@ -28,6 +28,9 @@ export const TOOL_DISPLAY_NAMES = {
   get_full_screen_ui: "Looking",
   get_taskbar_ui: "Checking Taskbar",
   run_terminal_command: "Running Shell",
+  read_system_logs: "Checking Logs",
+  diagnose_system_errors: "Diagnosing Errors",
+  get_system_status: "Checking System Health",
 };
 
 export const getToolDisplayName = (name) => {

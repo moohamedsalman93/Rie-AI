@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     ChevronDown,
@@ -8,7 +8,8 @@ import {
     Users,
     CalendarClock,
     Trash2,
-    PanelLeftClose
+    PanelLeftClose,
+    PanelLeftOpen
 } from 'lucide-react';
 import { getHistory, listScheduledTasks, cancelScheduledTask } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -34,7 +35,10 @@ function formatRunAt(iso) {
 
 export function HistorySidebar({
     isOpen,
+    isCollapsed: controlledIsCollapsed,
     onClose,
+    onExpand,
+    onToggleCollapse = null,
     onSelectThread,
     onDeleteThread = () => {},
     onNewChat,
@@ -46,8 +50,11 @@ export function HistorySidebar({
     onStartFriendChat = () => {},
     sessionsByThread = {},
     apiStatus = 'online',
-    onToggleCollapse = null,
 }) {
+    const [internalCollapsed, setInternalCollapsed] = useState(false);
+    const isCollapsed = controlledIsCollapsed !== undefined ? controlledIsCollapsed : internalCollapsed;
+    const searchInputRef = useRef(null);
+
     const [threads, setThreads] = useState([]);
     const [loading, setLoading] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -68,6 +75,44 @@ export function HistorySidebar({
     const isPersistent = windowMode === 'normal';
     const showSidebar = isOpen || isPersistent;
     const PAGE_SIZE = 18;
+
+    const handleExpand = () => {
+        if (onExpand) {
+            onExpand();
+        } else if (onToggleCollapse) {
+            onToggleCollapse();
+        } else {
+            setInternalCollapsed(false);
+        }
+    };
+
+    const handleCollapse = () => {
+        if (onToggleCollapse) {
+            onToggleCollapse();
+        } else if (onClose) {
+            onClose();
+        } else {
+            setInternalCollapsed(true);
+        }
+    };
+
+    const handleSearchClick = () => {
+        handleExpand();
+        setTimeout(() => {
+            searchInputRef.current?.focus();
+        }, 120);
+    };
+
+    const handleFriendClick = () => {
+        handleExpand();
+        setFriendsOpen(true);
+    };
+
+    const handleScheduleClick = () => {
+        handleExpand();
+        setScheduledOpen(true);
+        loadScheduledTasks();
+    };
 
     const loadInitialHistory = useCallback(async () => {
         if (!showSidebar) return;
@@ -247,8 +292,68 @@ export function HistorySidebar({
         return Object.values(groups).filter((g) => g.threads.length > 0);
     }, [filteredThreads]);
 
+    const renderCollapsedBar = () => (
+        <div className="w-12 h-full flex flex-col items-center py-2.5 space-y-2 select-none bg-neutral-900 shrink-0">
+            {/* 1. Expand Icon */}
+            <button
+                type="button"
+                onClick={handleExpand}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                title="Expand Sidebar"
+            >
+                <PanelLeftOpen size={16} />
+            </button>
+
+            {/* 2. New Chat */}
+            <button
+                type="button"
+                onClick={onNewChat}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                title="New Chat (Ctrl+N)"
+            >
+                <Plus size={16} />
+            </button>
+
+            {/* 3. Search */}
+            <button
+                type="button"
+                onClick={handleSearchClick}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                title="Search Chats"
+            >
+                <Search size={16} />
+            </button>
+
+            {/* 4. Friend */}
+            <button
+                type="button"
+                onClick={handleFriendClick}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 relative cursor-pointer"
+                title={friends.length > 0 ? `Friends (${friends.length})` : "Friends"}
+            >
+                <Users size={16} />
+                {friends.length > 0 && (
+                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 ring-2 ring-neutral-900" />
+                )}
+            </button>
+
+            {/* 5. Schedule */}
+            <button
+                type="button"
+                onClick={handleScheduleClick}
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 relative cursor-pointer"
+                title={scheduledTasks.length > 0 ? `Scheduled Tasks (${scheduledTasks.length})` : "Scheduled Tasks"}
+            >
+                <CalendarClock size={16} />
+                {scheduledTasks.length > 0 && (
+                    <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-cyan-500 ring-2 ring-neutral-900" />
+                )}
+            </button>
+        </div>
+    );
+
     const renderContent = (closeOnSelect = false) => (
-        <div className="flex flex-col h-full overflow-hidden select-none bg-neutral-900 text-neutral-100">
+        <div className="flex flex-col h-full w-full min-w-[240px] overflow-hidden select-none bg-neutral-900 text-neutral-100">
             {/* Top Row: Search + New Chat + Collapse */}
             <div className="p-2.5 pb-2 shrink-0 border-b border-neutral-800">
                 <div className="flex items-center gap-1.5">
@@ -258,6 +363,7 @@ export function HistorySidebar({
                             className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none"
                         />
                         <input
+                            ref={searchInputRef}
                             type="text"
                             placeholder="Search chats..."
                             value={searchTerm}
@@ -284,10 +390,10 @@ export function HistorySidebar({
                     >
                         <Plus size={15} />
                     </button>
-                    {isPersistent && onToggleCollapse && (
+                    {isPersistent && (
                         <button
-                            onClick={onToggleCollapse}
-                            className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0"
+                            onClick={handleCollapse}
+                            className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
                             title="Collapse Sidebar"
                         >
                             <PanelLeftClose size={15} />
@@ -296,7 +402,7 @@ export function HistorySidebar({
                     {!isPersistent && (
                         <button
                             onClick={onClose}
-                            className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0"
+                            className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
                             title="Close"
                         >
                             <X size={15} />
@@ -449,64 +555,66 @@ export function HistorySidebar({
                             {searchTerm ? "No chats match." : "No chats yet."}
                         </div>
                     ) : (
-                        <div className="space-y-3">
+                        <div className="space-y-5">
                             {groupedThreads.map((group) => (
                                 <div key={group.title} className="space-y-0.5">
-                                    <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                                    <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-200  tracking-wider">
                                         {group.title}
                                     </div>
-                                    {group.threads.map((thread) => {
-                                        const isActive = thread.id === currentThreadId;
-                                        const isStreaming = streamingThreads.has(thread.id);
-                                        const friendMeta = getThreadFriendMeta(thread.id);
+                                    <div className="space-y-3/4 pl-2">
+                                        {group.threads.map((thread) => {
+                                            const isActive = thread.id === currentThreadId;
+                                            const isStreaming = streamingThreads.has(thread.id);
+                                            const friendMeta = getThreadFriendMeta(thread.id);
 
-                                        return (
-                                            <button
-                                                key={thread.id}
-                                                onClick={() => {
-                                                    onSelectThread(thread.id);
-                                                    if (closeOnSelect) onClose();
-                                                }}
-                                                className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative flex items-center justify-between ${
-                                                    isActive
-                                                        ? "bg-neutral-800 text-neutral-100 font-medium"
-                                                        : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
-                                                }`}
-                                            >
-                                                <div className="pr-5 min-w-0">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className="text-xs truncate">
-                                                            {thread.title || "Untitled Chat"}
-                                                        </span>
-                                                        {Boolean(friendMeta?.isFriendChat || friendMeta?.friendId) && (
-                                                            <span className="rounded bg-emerald-500/10 text-emerald-400 text-[9px] px-1 py-0.2 shrink-0">
-                                                                Friend
-                                                            </span>
-                                                        )}
-                                                        <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
-                                                        {isStreaming && (
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                                                        )}
-                                                    </div>
-                                                    <div className="text-[10px] opacity-50 mt-0.5">
-                                                        {formatDate(thread.updated_at || thread.created_at)}
-                                                    </div>
-                                                </div>
-
-                                                <div
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setThreadToDelete(thread.id);
-                                                        setIsConfirmOpen(true);
+                                            return (
+                                                <button
+                                                    key={thread.id}
+                                                    onClick={() => {
+                                                        onSelectThread(thread.id);
+                                                        if (closeOnSelect) onClose();
                                                     }}
-                                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all"
-                                                    title="Delete conversation"
+                                                    className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative flex items-center justify-between ${
+                                                        isActive
+                                                            ? "bg-neutral-800 text-neutral-100 font-medium"
+                                                            : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
+                                                    }`}
                                                 >
-                                                    <Trash2 size={12} />
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
+                                                    <div className="pr-5 min-w-0">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="text-xs truncate">
+                                                                {thread.title || "Untitled Chat"}
+                                                            </span>
+                                                            {Boolean(friendMeta?.isFriendChat || friendMeta?.friendId) && (
+                                                                <span className="rounded bg-emerald-500/10 text-emerald-400 text-[9px] px-1 py-0.2 shrink-0">
+                                                                    Friend
+                                                                </span>
+                                                            )}
+                                                            <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
+                                                            {isStreaming && (
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                                                            )}
+                                                        </div>
+                                                        <div className="text-[10px] opacity-50 mt-0.5">
+                                                            {formatDate(thread.updated_at || thread.created_at)}
+                                                        </div>
+                                                    </div>
+
+                                                    <div
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setThreadToDelete(thread.id);
+                                                            setIsConfirmOpen(true);
+                                                        }}
+                                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all"
+                                                        title="Delete conversation"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             ))}
 
@@ -535,7 +643,7 @@ export function HistorySidebar({
     if (isPersistent) {
         return (
             <aside className="w-full bg-neutral-900 border-r border-neutral-800 flex flex-col h-full shrink-0 relative z-20">
-                {renderContent(false)}
+                {isCollapsed ? renderCollapsedBar() : renderContent(false)}
             </aside>
         );
     }

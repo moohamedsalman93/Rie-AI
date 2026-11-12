@@ -40,9 +40,13 @@ LIVE_TOOL_DECLARATIONS = [
     {
         "name": "spawn_subagent",
         "description": (
-            "Spawns Rie's autonomous execution agent to perform tasks requiring "
-            "programming, writing or debugging code, running scripts or tests, executing terminal or PowerShell commands, "
-            "inspecting or editing files, git workflows, deep web research, or multi-step technical problem solving. "
+            "Spawns Rie's autonomous execution agent (The Hands) to perform complex tasks using indirect tools. "
+            "Call this for actions outside direct tools, such as: "
+            "1) Shell & Terminal: 'run_terminal_command'. "
+            "2) Filesystem & Code: 'read_file', 'write_file', 'edit_file', 'list_directory'. "
+            "3) Deep browser automation: 'browser_navigate', 'browser_click', 'browser_type', 'browser_extract'. "
+            "4) Settings management: 'modify_system_setting', 'rollback_system_setting'. "
+            "5) Skills & MCP: 'load_skill', 'read_knowledge_asset', 'list_mcp_servers'. "
             "Use mode='background' (default) for long-running workflows so you can continue talking with the user. "
             "Use mode='foreground' only for quick synchronous checks under 10 seconds."
         ),
@@ -372,6 +376,63 @@ LIVE_TOOL_DECLARATIONS = [
                 }
             }
         }
+    },
+    {
+        "name": "read_system_logs",
+        "description": (
+            "Reads recent backend debug logs from Rie with optional severity filtering (ALL, ERROR, WARNING, INFO) "
+            "and keyword search. Use this directly when the user asks to check Rie logs, inspect recent logs, or find a log entry."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "lines": {
+                    "type": "INTEGER",
+                    "description": "Number of recent log lines to retrieve (default: 25, max: 50)."
+                },
+                "level": {
+                    "type": "STRING",
+                    "enum": ["ALL", "ERROR", "WARNING", "INFO"],
+                    "description": "Severity level filter. Defaults to 'ALL'."
+                },
+                "search_query": {
+                    "type": "STRING",
+                    "description": "Optional keyword or error string to filter log lines."
+                }
+            }
+        }
+    },
+    {
+        "name": "diagnose_system_errors",
+        "description": (
+            "Diagnoses system error spikes, warning counts, and failing components in Rie's backend logs over a recent time window. "
+            "Use this directly when the user asks 'Are there any errors in the log?', 'What went wrong?', or 'Diagnose system errors'."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "window_minutes": {
+                    "type": "INTEGER",
+                    "description": "Time window in minutes to evaluate (default: 15)."
+                }
+            }
+        }
+    },
+    {
+        "name": "get_system_status",
+        "description": (
+            "Inspects Rie's operational modes, LLM provider states, tool health, and diagnostic summary. "
+            "Use this directly when the user asks about system health, status, or whether capabilities are working."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "capability_name": {
+                    "type": "STRING",
+                    "description": "Optional specific capability or tool name to inspect."
+                }
+            }
+        }
     }
 ]
 
@@ -691,6 +752,38 @@ class RieLiveToolDispatcher:
                 return await loop.run_in_executor(
                     None, get_work_sessions_func, timeframe, project, topic, file, domain, limit
                 )
+
+            # 9. System Diagnostics & Logs (Direct Tools)
+            elif tool_name == "read_system_logs":
+                raw_lines = args.get("lines")
+                try:
+                    lines = min(int(raw_lines), 60) if raw_lines is not None else 25
+                except (ValueError, TypeError):
+                    lines = 25
+                level = str(args.get("level") or "ALL").upper()
+                search_query = args.get("search_query")
+                from app.system_intelligence.tools import _read_system_logs
+                loop = asyncio.get_running_loop()
+                raw_logs = await loop.run_in_executor(None, _read_system_logs, lines, level, search_query)
+                return raw_logs[:2500] if len(raw_logs) > 2500 else raw_logs
+
+            elif tool_name == "diagnose_system_errors":
+                raw_window = args.get("window_minutes")
+                try:
+                    window_minutes = int(raw_window) if raw_window is not None else 15
+                except (ValueError, TypeError):
+                    window_minutes = 15
+                from app.system_intelligence.tools import _diagnose_system_errors
+                loop = asyncio.get_running_loop()
+                res = await loop.run_in_executor(None, _diagnose_system_errors, window_minutes)
+                return res[:2500] if len(res) > 2500 else res
+
+            elif tool_name == "get_system_status":
+                capability_name = args.get("capability_name")
+                from app.system_intelligence.tools import _get_system_status
+                loop = asyncio.get_running_loop()
+                res = await loop.run_in_executor(None, _get_system_status, capability_name)
+                return res[:2500] if len(res) > 2500 else res
 
             else:
                 logger.warning(f"[LiveDispatcher] Unrecognized tool: {tool_name}")

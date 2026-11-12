@@ -227,7 +227,13 @@ export function NormalModeLayout({
     onCancelSubAgent,
 }) {
     const [dragCounter, setDragCounter] = useState(0);
-    const [isHistoryVisible, setIsHistoryVisible] = useState(true);
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+        return localStorage.getItem("rie_sidebar_collapsed") === "true";
+    });
+
+    useEffect(() => {
+        localStorage.setItem("rie_sidebar_collapsed", String(isSidebarCollapsed));
+    }, [isSidebarCollapsed]);
     const [showExitConfirm, setShowExitConfirm] = useState(false);
     const [isKnowledgePickerOpen, setIsKnowledgePickerOpen] = useState(false);
     const [isBrowserPanelOpen, setIsBrowserPanelOpen] = useState(false);
@@ -350,6 +356,8 @@ export function NormalModeLayout({
     }, []);
 
     const sidebarWidth = isFullWindow ? 300 : 240;
+    const COLLAPSED_SIDEBAR_WIDTH = 48;
+    const currentSidebarWidth = isSidebarCollapsed ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
 
     useEffect(() => {
         if (!currentThreadId) {
@@ -398,35 +406,7 @@ export function NormalModeLayout({
                         <span className="text-sm font-semibold text-neutral-200">Rie-AI</span>
                     </div>
 
-                    {!isHistoryVisible && (
-                        <>
-                            <span className="text-neutral-600 font-light select-none mx-0.5">|</span>
-
-                            <button
-                                onClick={onNewChat}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors cursor-pointer"
-                                title="New Chat"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="12" y1="5" x2="12" y2="19" />
-                                    <line x1="5" y1="12" x2="19" y2="12" />
-                                </svg>
-                            </button>
-
-                            <button
-                                onClick={() => setIsHistoryVisible(true)}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                className="p-1.5 rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors cursor-pointer"
-                                title="Toggle History"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-                                </svg>
-                            </button>
-                        </>
-                    )}
-                </div>
+                                    </div>
 
                 {/* Center: Action Icons */}
                 <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-center" />
@@ -544,35 +524,32 @@ export function NormalModeLayout({
             {/* Main Content */}
             <div className="flex flex-1 min-h-0 overflow-hidden">
                 {/* Sidebar */}
-                <AnimatePresence initial={false}>
-                    {isHistoryVisible && (
-                        <motion.aside
-                            initial={{ width: 0, opacity: 0 }}
-                            animate={{ width: sidebarWidth, opacity: 1 }}
-                            exit={{ opacity: 0, width: 0 }}
-                            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-                            className="flex flex-col shrink-0 overflow-hidden h-full z-20"
-                            style={{ width: sidebarWidth }}
-                        >
-                            <HistorySidebar
-                                isOpen={isHistoryVisible}
-                                onClose={() => setIsHistoryVisible(false)}
-                                onToggleCollapse={() => setIsHistoryVisible(false)}
-                                onSelectThread={onSelectThread}
-                                onDeleteThread={onDeleteThread}
-                                onNewChat={onNewChat}
-                                currentThreadId={currentThreadId}
-                                streamingThreads={streamingThreads}
-                                windowMode="normal"
-                                friends={friends}
-                                friendThreadMeta={friendThreadMeta}
-                                onStartFriendChat={onStartFriendChat}
-                                sessionsByThread={sessionsByThread}
-                                apiStatus={apiStatus}
-                            />
-                        </motion.aside>
-                    )}
-                </AnimatePresence>
+                <motion.aside
+                    initial={false}
+                    animate={{ width: currentSidebarWidth }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                    className="flex flex-col shrink-0 overflow-hidden h-full z-20"
+                    style={{ width: currentSidebarWidth }}
+                >
+                    <HistorySidebar
+                        isOpen={!isSidebarCollapsed}
+                        isCollapsed={isSidebarCollapsed}
+                        onClose={() => setIsSidebarCollapsed(true)}
+                        onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
+                        onExpand={() => setIsSidebarCollapsed(false)}
+                        onSelectThread={onSelectThread}
+                        onDeleteThread={onDeleteThread}
+                        onNewChat={onNewChat}
+                        currentThreadId={currentThreadId}
+                        streamingThreads={streamingThreads}
+                        windowMode="normal"
+                        friends={friends}
+                        friendThreadMeta={friendThreadMeta}
+                        onStartFriendChat={onStartFriendChat}
+                        sessionsByThread={sessionsByThread}
+                        apiStatus={apiStatus}
+                    />
+                </motion.aside>
 
                 {/* Chat Area */}
                 <div
@@ -582,7 +559,7 @@ export function NormalModeLayout({
                 >
                     {/* Messages */}
                     {!isNewChat || voiceControls ? (
-                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-4" : "px-12")} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+                        <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 ${isBrowserPanelOpen ? "px-3" : (!isSidebarCollapsed ? "px-4" : "px-12")} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
                             <div className="max-w-3xl mx-auto w-full space-y-3">
                                 {activeFriendMeta?.isFriendChat && (
                                     <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
@@ -745,7 +722,7 @@ export function NormalModeLayout({
                             <div ref={messagesEndRef} />
                         </main>
                     ) : (
-                        <main className={`flex-1 min-h-0 flex flex-col items-center justify-center p-6 overflow-y-auto custom-scrollbar pb-28 ${isBrowserPanelOpen ? "px-3" : (isHistoryVisible ? "px-12" : "px-12")}`}>
+                        <main className={`flex-1 min-h-0 flex flex-col items-center justify-center p-6 overflow-y-auto custom-scrollbar pb-28 ${isBrowserPanelOpen ? "px-3" : (!isSidebarCollapsed ? "px-12" : "px-12")}`}>
                             <div className="w-full max-w-3xl mx-auto flex flex-col justify-center py-4">
                                 <motion.div
                                     initial={{ opacity: 0, y: -10 }}
@@ -891,7 +868,7 @@ export function NormalModeLayout({
                                 }
                             }
                         }}
-                        className={`py-3 absolute bottom-0 left-0 w-full z-10 transition-all ${chatPanelWidthPx < 420 ? "px-2" : chatPanelWidthPx < 580 ? "px-3" : chatPanelWidthPx < 760 ? "px-4" : isHistoryVisible ? "px-6" : "px-10 xl:px-16"}`}
+                        className={`py-3 absolute bottom-0 left-0 w-full z-10 transition-all ${chatPanelWidthPx < 420 ? "px-2" : chatPanelWidthPx < 580 ? "px-3" : chatPanelWidthPx < 760 ? "px-4" : !isSidebarCollapsed ? "px-6" : "px-10 xl:px-16"}`}
                     >
                         <div className="w-full max-w-xl xl:max-w-3xl mx-auto">
                             <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all">

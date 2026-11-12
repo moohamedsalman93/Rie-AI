@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 import websockets
 from app.config import settings
-from app.database import save_message
+from app.database import save_message, get_thread_title, get_thread_messages, update_thread_title
 from app.job_manager import job_manager
 from app.live_tool_dispatcher import live_tool_dispatcher
 from app.live_voice_protocol import VoiceTranscripts, tool_result_status
@@ -38,6 +38,21 @@ async def get_live_voices():
     return {"voices": AVAILABLE_LIVE_VOICES}
 
 
+def _is_ws_active(ws) -> bool:
+    """Checks whether a websockets client connection is currently open and active."""
+    if ws is None:
+        return False
+    state = getattr(ws, "state", None)
+    if state is not None:
+        # websockets v13+ State enum: CONNECTING=0, OPEN=1, CLOSING=2, CLOSED=3
+        return getattr(state, "name", "") == "OPEN" or state == 1
+    if hasattr(ws, "closed"):
+        return not ws.closed
+    if hasattr(ws, "open"):
+        return bool(ws.open)
+    return True
+
+
 def _verify_ws_token(token: Optional[str]) -> bool:
     """Validate internal desktop app token if configured in environment."""
     expected_token = os.environ.get("RIE_APP_TOKEN")
@@ -46,6 +61,57 @@ def _verify_ws_token(token: Optional[str]) -> bool:
     if token and secrets.compare_digest(token, expected_token):
         return True
     return False
+
+
+async def _update_thread_title_if_untitled(thread_id: str, ws: Optional[WebSocket] = None) -> None:
+    """Generate and persist an LLM title for the thread if it is currently untitled."""
+    try:
+        current_title = await asyncio.to_thread(get_thread_title, thread_id)
+        if current_title and current_title not in ("Untitled Chat", "Untitled", ""):
+            return
+
+        messages = await asyncio.to_thread(get_thread_messages, thread_id)
+        user_texts = []
+        for m in messages:
+            if m.get("role") == "user":
+                content = (m.get("content") or "").strip()
+                if content.startswith("[OTHER]"):
+                    continue
+                if content.startswith("[USER]"):
+                    content = content[6:].strip()
+                cleaned = re.sub(r"<[^>]+>|\[[^\]]+\]|\([^)]+\)|\*[^*]+\*", "", content).strip()
+                if cleaned:
+                    user_texts.append(content)
+
+        if not user_texts:
+            return
+
+        title = None
+        try:
+            from app.agent import agent_manager
+            title = await agent_manager.generate_chat_thread_title(user_texts[:2])
+        except Exception as llm_err:
+            logger.warning("[LiveVoice] LLM title generation failed, falling back to text snippet: %s", llm_err)
+            first_text = user_texts[0].strip()
+            title = first_text[:40].strip() if first_text else "Voice Conversation"
+
+        if not title:
+            return
+
+        await asyncio.to_thread(update_thread_title, thread_id, title)
+        logger.info("[LiveVoice] Updated thread %s title to: %s", thread_id, title)
+
+        if ws and _is_ws_active(ws):
+            try:
+                await ws.send_json({
+                    "type": "thread_title",
+                    "thread_id": thread_id,
+                    "title": title,
+                })
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("[LiveVoice] Failed to generate thread title for %s: %s", thread_id, exc)
 
 
 def resolve_user_name() -> str:
@@ -249,11 +315,18 @@ def build_live_system_instruction(
         "- You must NEVER output Telugu script or Devanagari script under any circumstances.\n"
         "- The user speaks English and Tamil. Interpret all user speech strictly as English or Tamil, never as Telugu or Hindi.\n"
         "- Seamlessly speak in Tamil (தமிழ்) or English based on the language the user speaks to you.\n\n"
-        "## CORE ARCHITECTURAL PRINCIPLES:\n"
-        "1. CONVERSATIONAL BRAIN: You are the voice and intent coordinator. Fast tools are your reflexes, and the autonomous subagent is your hands.\n"
-        "2. ROUTING FIRST: Never independently decide that an executable capability is unavailable. When the user asks for an action, file operation, coding, terminal command, or technical task, route the request to the appropriate fast tool or to `spawn_subagent`.\n"
-        "3. FAST REFLEXES: For instant actions (launching an app like Spotify, media controls, web search, opening a URL, saving memory, scheduling reminders), invoke your dedicated fast tools immediately without hesitation.\n"
-        "4. BACKGROUND AGENT (HANDS): For all deep technical work, programming, terminal commands, file edits, test execution, or multi-step research, invoke `spawn_subagent(task=..., mode='background')`. It will return a job ID immediately.\n"
+        "## CORE ARCHITECTURAL PRINCIPLES (DIRECT VS. INDIRECT TOOLS):\n"
+        "1. CONVERSATIONAL BRAIN: You are the voice and intent coordinator. Fast tools are your direct reflexes, and the autonomous subagent is your indirect hands.\n"
+        "2. DIRECT TOOLS (FAST REFLEXES): You have full function declarations for direct tools:\n"
+        "   - Desktop & Apps: `app_tool`, `press_keys`, `get_desktop_state`\n"
+        "   - Web & Browsing: `internet_search`, `browser_open`\n"
+        "   - System Diagnostics & Logs: `read_system_logs`, `diagnose_system_errors`, `get_system_status`\n"
+        "   - Memory & Reminders: `save_memory`, `search_memory`, `schedule_task`\n"
+        "   - Activity & Timeline: `get_work_summary`, `search_activity`, `get_activity_timeline`, `get_terminal_history`, `get_last_work_session`, `get_work_sessions`\n"
+        "   - Session Control: `disconnect_session`\n"
+        "   Invoke these direct tools immediately without hesitation whenever asked!\n"
+        "3. DIRECT LOGS & DIAGNOSTICS: When the user asks to check Rie logs, view recent logs, inspect errors, or check system health, IMMEDIATELY call `read_system_logs`, `diagnose_system_errors`, or `get_system_status` directly! Naturally speak a concise 1-2 sentence spoken summary of what you find in the logs. Never say you cannot check logs or that you lack access.\n"
+        "4. INDIRECT TOOLS (SUBAGENT HANDS): For all other actions (file editing, coding, running terminal commands, multi-step web scraping, modifying settings), spawn an autonomous agent via `spawn_subagent(task=..., mode='background')`. The subagent has access to: `run_terminal_command`, `read_file`, `write_file`, `edit_file`, `list_directory`, `browser_click`, `browser_type`, `modify_system_setting`, `load_skill`, `list_mcp_servers`.\n"
         "5. PROMPT ACKNOWLEDGMENT: When launching a background subagent, immediately speak a brief natural confirmation (e.g. 'I've started the agent on that. I'll let you know as soon as it's finished!'). You can continue conversing with the user while the agent works.\n"
         "6. NOTIFICATION SUMMARIES: When the background agent finishes, you will receive a notification event. Naturally speak a concise 1-2 sentence update summarizing the completed outcome.\n"
         "7. CANCEL SUBAGENT: If the user asks to cancel, stop, or abort the agent or task, immediately invoke `cancel_subagent()` to stop the background subagent.\n"
@@ -427,8 +500,15 @@ async def gemini_live_voice_websocket(
 
             async def notify_gemini(task_desc: str, result_summary: str):
                 try:
-                    if not gemini_ws.closed:
-                        clean_summary = result_summary[:600]
+                    if _is_ws_active(gemini_ws):
+                        clean_summary = str(result_summary or "").strip()[:600]
+                        # Reset response firewall so assistant voice is authorized to speak the completion
+                        turn_state["speaker"] = "USER"
+                        turn_state["authorized"] = True
+                        turn_state["user_delegated"] = False
+                        turn_state["suppress_assistant"] = False
+                        turn_state["verifying"] = False
+
                         notification = {
                             "clientContent": {
                                 "turns": [
@@ -481,6 +561,8 @@ async def gemini_live_voice_websocket(
                     try:
                         label = f"[{turn_state['speaker']}] {item['text'].strip()}" if turn_state["speaker"] == "OTHER" else item['text'].strip()
                         await asyncio.to_thread(save_message, thread_id, role, label)
+                        if role == "user":
+                            asyncio.create_task(_update_thread_title_if_untitled(thread_id, websocket))
                     except Exception:
                         logger.exception("[LiveVoice] Failed saving transcript")
                 if notify:
@@ -591,6 +673,7 @@ async def gemini_live_voice_websocket(
                                 if thread_id:
                                     try:
                                         await asyncio.to_thread(save_message, thread_id, "user", user_text)
+                                        asyncio.create_task(_update_thread_title_if_untitled(thread_id, websocket))
                                     except Exception as db_err:
                                         logger.warning(f"[LiveVoice] Failed saving user message to db: {db_err}")
 

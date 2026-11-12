@@ -570,6 +570,9 @@ function MainApp() {
           ...prev,
           [currentThreadId]: upsertVoiceMessage(prev[currentThreadId] || [], transcript),
         }));
+        if (transcript.role === "user" && !transcript.isPartial) {
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent("rie-history-refresh")), 3000);
+        }
       },
       onError: (err) => {
         if (liveSessionRef.current !== session) return;

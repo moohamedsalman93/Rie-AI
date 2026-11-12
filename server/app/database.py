@@ -1104,6 +1104,17 @@ def update_thread_title(thread_id: str, title: str) -> None:
     conn.close()
 
 
+def get_thread_title(thread_id: str) -> Optional[str]:
+    """Get a thread's current title."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title FROM threads WHERE id = ?", (thread_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 def count_user_messages(thread_id: str) -> int:
     """Count user messages in a thread."""
     db_path = get_db_path()

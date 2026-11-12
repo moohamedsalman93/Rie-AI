@@ -833,6 +833,11 @@ export class LiveVoiceSession {
           this.scheduleDisconnectAfterSpeech(350);
         }
         break;
+      case "thread_title":
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("rie-history-refresh"));
+        }
+        break;
       case "error":
       case "closed":
         this.fail(msg.message || msg.reason || "Voice connection ended. Please reconnect.");

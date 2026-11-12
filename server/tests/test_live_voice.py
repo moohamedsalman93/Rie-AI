@@ -95,6 +95,26 @@ class TestLiveVoice(unittest.TestCase):
             else:
                 settings._settings.pop("SHARE_LOCATION", None)
 
+    def test_update_thread_title_if_untitled(self):
+        """Verify _update_thread_title_if_untitled updates untitled threads with user messages."""
+        import asyncio
+        from app.database import create_thread, save_message, get_thread_title, update_thread_title
+        from app.live_voice import _update_thread_title_if_untitled
+
+        test_thread_id = f"test-voice-thread-{int(asyncio.get_event_loop().time() * 1000)}"
+        create_thread("Untitled Chat", test_thread_id)
+        save_message(test_thread_id, "user", "How can I deploy a React app to production?")
+
+        self.assertEqual(get_thread_title(test_thread_id), "Untitled Chat")
+
+        # Run the title update
+        asyncio.run(_update_thread_title_if_untitled(test_thread_id))
+
+        new_title = get_thread_title(test_thread_id)
+        self.assertIsNotNone(new_title)
+        self.assertNotEqual(new_title, "Untitled Chat")
+        self.assertTrue(len(new_title) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
