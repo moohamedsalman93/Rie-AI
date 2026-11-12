@@ -318,7 +318,11 @@ class PluginManager:
                 try:
                     lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
                     filtered = [line for line in lines if "rie-shell-" not in line and "Rie AI Shell Integration" not in line]
-                    p.write_text("\n".join(filtered) + "\n", encoding="utf-8")
+                    cleaned_content = "\n".join(filtered).strip()
+                    if not cleaned_content:
+                        p.unlink(missing_ok=True)
+                    else:
+                        p.write_text(cleaned_content + "\n", encoding="utf-8")
                     cleaned_ps = True
                 except Exception as e:
                     logger.warning(f"Failed to clean {p}: {e}")
@@ -329,10 +333,21 @@ class PluginManager:
             try:
                 lines = bashrc.read_text(encoding="utf-8", errors="ignore").splitlines()
                 filtered = [line for line in lines if "rie-shell-" not in line and "Rie AI Shell Integration" not in line]
-                bashrc.write_text("\n".join(filtered) + "\n", encoding="utf-8")
+                cleaned_content = "\n".join(filtered).strip()
+                if not cleaned_content:
+                    bashrc.unlink(missing_ok=True)
+                else:
+                    bashrc.write_text(cleaned_content + "\n", encoding="utf-8")
                 cleaned_bash = True
             except Exception as e:
                 logger.warning(f"Failed to clean {bashrc}: {e}")
+
+        # Also remove copied shell scripts from ~/.rie/shell/
+        try:
+            (RIE_SHELL_DIR / "rie-shell-powershell.ps1").unlink(missing_ok=True)
+            (RIE_SHELL_DIR / "rie-shell-bash.sh").unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to clean shell script files: {e}")
 
         return {
             "success": True,
@@ -494,14 +509,18 @@ class PluginManager:
 
         # 1. Standard Documents location
         candidates.append(USER_HOME / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1")
+        candidates.append(USER_HOME / "Documents" / "WindowsPowerShell" / "profile.ps1")
         candidates.append(USER_HOME / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1")
+        candidates.append(USER_HOME / "Documents" / "PowerShell" / "profile.ps1")
 
         # 2. OneDrive redirected Documents location
         onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
         if onedrive:
             od_path = Path(onedrive)
             candidates.append(od_path / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1")
+            candidates.append(od_path / "Documents" / "WindowsPowerShell" / "profile.ps1")
             candidates.append(od_path / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1")
+            candidates.append(od_path / "Documents" / "PowerShell" / "profile.ps1")
 
         # Deduplicate preserving order
         unique = []

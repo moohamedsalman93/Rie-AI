@@ -115,64 +115,52 @@ export default function WorkstreamSettingsSection() {
     }
   };
 
-  // --- Auto-Inject Plugin Actions ---
+  // --- Auto-Inject & Auto-Delete Plugin Actions ---
   const handleInstallIde = async () => {
     setInstallingPlugin('ide');
-    setPluginNotice(null);
     try {
-      const res = await installIdePlugin();
-      setPluginNotice(res.message || 'Auto-injected into IDE!');
+      await installIdePlugin();
       await loadData(true);
     } catch (err) {
-      setPluginNotice(`IDE install failed: ${err.message}`);
+      console.warn('[ActivitySensors] IDE install error:', err);
     } finally {
       setInstallingPlugin(null);
-      setTimeout(() => setPluginNotice(null), 5000);
     }
   };
 
   const handleUninstallIde = async () => {
-    if (!window.confirm('Remove Rie companion from VS Code / Antigravity?')) return;
     setInstallingPlugin('ide');
     try {
       await uninstallIdePlugin();
-      setPluginNotice('Removed IDE companion extension.');
       await loadData(true);
     } catch (err) {
-      alert(`Uninstall failed: ${err.message}`);
+      console.warn('[ActivitySensors] IDE uninstall error:', err);
     } finally {
       setInstallingPlugin(null);
-      setTimeout(() => setPluginNotice(null), 4000);
     }
   };
 
   const handleInstallTerminal = async () => {
     setInstallingPlugin('terminal');
-    setPluginNotice(null);
     try {
-      const res = await installTerminalPlugin();
-      setPluginNotice(res.message || 'Hooks injected into PowerShell & Git Bash!');
+      await installTerminalPlugin();
       await loadData(true);
     } catch (err) {
-      setPluginNotice(`Terminal inject failed: ${err.message}`);
+      console.warn('[ActivitySensors] Terminal install error:', err);
     } finally {
       setInstallingPlugin(null);
-      setTimeout(() => setPluginNotice(null), 5000);
     }
   };
 
   const handleUninstallTerminal = async () => {
-    if (!window.confirm('Remove Rie shell hooks from PowerShell profile & Git Bash?')) return;
     setInstallingPlugin('terminal');
     try {
       await uninstallTerminalPlugin();
-      setPluginNotice('Removed terminal hooks.');
       await loadData(true);
     } catch (err) {
-      alert(`Uninstall failed: ${err.message}`);
+      console.warn('[ActivitySensors] Terminal uninstall error:', err);
     } finally {
       setInstallingPlugin(null);
-      setTimeout(() => setPluginNotice(null), 4000);
     }
   };
 
@@ -382,30 +370,21 @@ export default function WorkstreamSettingsSection() {
             title="IDE Activity"
             description="Streams active workspace files and code edits from VS Code and Antigravity."
             detectedText={sensorStatus?.sensors?.ide?.detected_ides?.join(', ')}
+            badge={pluginStatus?.ide?.installed ? "Injected" : null}
+            badgeColor="bg-white/[0.04] text-neutral-300 border-white/10"
             enabled={sensors.ide !== false}
             masterEnabled={isMasterOn}
             status={sensorStatus?.sensors?.ide}
-            pluginAction={
-              pluginStatus?.ide?.installed
-                ? {
-                    isInstalled: true,
-                    installedBadge: `Injected (${(pluginStatus.ide.installed_editors || ['VS Code']).join(', ')})`,
-                    onReinstall: handleInstallIde,
-                    onUninstall: handleUninstallIde,
-                    loading: installingPlugin === 'ide',
-                  }
-                : {
-                    label: 'Auto-Inject',
-                    onClick: handleInstallIde,
-                    loading: installingPlugin === 'ide',
-                    highlight: false,
-                  }
-            }
-            onChange={(val) => {
+            onChange={async (val) => {
               handleConfigUpdate((prev) => ({
                 ...prev,
                 sensors: { ...prev.sensors, ide: val },
               }));
+              if (val) {
+                await handleInstallIde();
+              } else {
+                await handleUninstallIde();
+              }
             }}
           />
 
@@ -416,30 +395,21 @@ export default function WorkstreamSettingsSection() {
             title="Terminal Activity"
             description="Captures executed commands, working directories, and execution exit codes."
             detectedText={sensorStatus?.sensors?.terminal?.detected_shells?.join(', ')}
+            badge={pluginStatus?.terminal?.installed ? "Hooks Injected" : null}
+            badgeColor="bg-white/[0.04] text-neutral-300 border-white/10"
             enabled={sensors.terminal !== false}
             masterEnabled={isMasterOn}
             status={sensorStatus?.sensors?.terminal}
-            pluginAction={
-              pluginStatus?.terminal?.installed
-                ? {
-                    isInstalled: true,
-                    installedBadge: 'Hooks Injected',
-                    onReinstall: handleInstallTerminal,
-                    onUninstall: handleUninstallTerminal,
-                    loading: installingPlugin === 'terminal',
-                  }
-                : {
-                    label: 'Inject Hooks',
-                    onClick: handleInstallTerminal,
-                    loading: installingPlugin === 'terminal',
-                    highlight: false,
-                  }
-            }
-            onChange={(val) => {
+            onChange={async (val) => {
               handleConfigUpdate((prev) => ({
                 ...prev,
                 sensors: { ...prev.sensors, terminal: val },
               }));
+              if (val) {
+                await handleInstallTerminal();
+              } else {
+                await handleUninstallTerminal();
+              }
             }}
           />
         </div>
@@ -787,37 +757,22 @@ function SensorRow({
         </div>
       </div>
 
-      {/* Right Column: Plugin Action Button + Toggle */}
+      {/* Right Column: Optional Action Button + Toggle */}
       <div className="flex items-center gap-2.5 shrink-0">
-        {/* On-Demand Auto-Inject or Load Button */}
         {pluginAction && (
-          <>
-            {pluginAction.isInstalled && !pluginAction.alwaysShowButton ? (
-              <button
-                type="button"
-                title="Reinstall / Refresh companion hooks"
-                onClick={pluginAction.onReinstall}
-                disabled={pluginAction.loading}
-                className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-colors flex items-center justify-center disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${pluginAction.loading ? 'animate-spin text-emerald-400' : ''}`} />
-              </button>
+          <button
+            type="button"
+            onClick={pluginAction.onClick}
+            disabled={pluginAction.loading}
+            className="text-xs font-medium px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 hover:border-neutral-600"
+          >
+            {pluginAction.loading ? (
+              <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
             ) : (
-              <button
-                type="button"
-                onClick={pluginAction.onClick}
-                disabled={pluginAction.loading}
-                className="text-xs font-medium px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 hover:border-neutral-600"
-              >
-                {pluginAction.loading ? (
-                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
-                ) : (
-                  pluginAction.icon || null
-                )}
-                <span>{pluginAction.loading ? 'Injecting...' : pluginAction.label}</span>
-              </button>
+              pluginAction.icon || null
             )}
-          </>
+            <span>{pluginAction.loading ? 'Loading...' : pluginAction.label}</span>
+          </button>
         )}
 
         <ToggleSwitch

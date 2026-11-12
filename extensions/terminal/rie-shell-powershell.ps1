@@ -5,19 +5,6 @@
 # Don't hook non-interactive or redirected automation processes
 if (-not $Host.UI -or -not $Host.UI.RawUI) { return }
 
-# Detect VS Code / Antigravity IDE environment
-$global:__rie_is_vscode = ($env:TERM_PROGRAM -eq 'vscode') -or ($env:VSCODE_INJECTION) -or (Test-Path variable:global:__VSCodeState)
-
-if ($global:__rie_shell_initialized) { return }
-$global:__rie_shell_initialized = $true
-
-$global:__rie_last_history_id = -1
-$global:__rie_current_cmd = $null
-$global:__rie_current_cmd_id = $null
-$global:__rie_cmd_start_time = $null
-$global:__rie_prompt_executing = $false
-$global:__rie_endpoint = if ($env:RIE_WORKSTREAM_URL) { $env:RIE_WORKSTREAM_URL } else { "http://127.0.0.1:14300/workstream/events" }
-
 # Helper to check if terminal activity tracking is enabled locally and remotely
 function global:__rie_is_terminal_enabled {
     if ($global:RIE_TERMINAL_DISABLED) { return $false }
@@ -36,6 +23,22 @@ function global:__rie_is_terminal_enabled {
     }
     return $true
 }
+
+# If terminal tracking is disabled in Rie settings, do not initialize or print banner
+if (-not (global:__rie_is_terminal_enabled)) { return }
+
+# Detect VS Code / Antigravity IDE environment
+$global:__rie_is_vscode = ($env:TERM_PROGRAM -eq 'vscode') -or ($env:VSCODE_INJECTION) -or (Test-Path variable:global:__VSCodeState)
+
+if ($global:__rie_shell_initialized) { return }
+$global:__rie_shell_initialized = $true
+
+$global:__rie_last_history_id = -1
+$global:__rie_current_cmd = $null
+$global:__rie_current_cmd_id = $null
+$global:__rie_cmd_start_time = $null
+$global:__rie_prompt_executing = $false
+$global:__rie_endpoint = if ($env:RIE_WORKSTREAM_URL) { $env:RIE_WORKSTREAM_URL } else { "http://127.0.0.1:14300/workstream/events" }
 
 # Helper to dispatch non-blocking HTTP POST on thread pool
 function global:__rie_send_event_async($payloadObj) {
