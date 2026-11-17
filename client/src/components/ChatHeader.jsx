@@ -150,7 +150,7 @@ export function ChatHeader({
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-xs text-neutral-300 transition-colors hover:bg-neutral-700/50 hover:text-white"
                   >
                     <Users className="h-3.5 w-3.5 shrink-0 text-neutral-300" />
-                    <span>Friends</span>
+                    <span>Connections</span>
                   </button>
                 )}
 

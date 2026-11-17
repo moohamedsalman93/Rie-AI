@@ -2054,6 +2054,7 @@ def upsert_friend(
     fingerprint: str,
     public_key: str,
     public_url: Optional[str] = None,
+    friend_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     now = datetime.utcnow().isoformat()
     db_path = get_db_path()
@@ -2062,27 +2063,31 @@ def upsert_friend(
     cursor = conn.cursor()
     cursor.execute("SELECT id, created_at FROM friends WHERE device_id = ?", (device_id,))
     existing = cursor.fetchone()
+    if not existing and friend_id:
+        cursor.execute("SELECT id, created_at FROM friends WHERE id = ?", (friend_id,))
+        existing = cursor.fetchone()
+
     if existing:
-        friend_id = existing["id"]
+        target_friend_id = existing["id"]
         cursor.execute(
             """
             UPDATE friends
             SET name = ?, fingerprint = ?, public_key = ?, public_url = ?, updated_at = ?
             WHERE id = ?
             """,
-            (name, fingerprint, public_key, public_url, now, friend_id),
+            (name, fingerprint, public_key, public_url, now, target_friend_id),
         )
     else:
-        friend_id = str(uuid.uuid4())
+        target_friend_id = friend_id or str(uuid.uuid4())
         cursor.execute(
             """
             INSERT INTO friends (id, name, device_id, fingerprint, public_key, public_url, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (friend_id, name, device_id, fingerprint, public_key, public_url, now, now),
+            (target_friend_id, name, device_id, fingerprint, public_key, public_url, now, now),
         )
     conn.commit()
-    cursor.execute("SELECT * FROM friends WHERE id = ?", (friend_id,))
+    cursor.execute("SELECT * FROM friends WHERE id = ?", (target_friend_id,))
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else {}

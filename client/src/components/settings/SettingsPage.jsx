@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getVersion } from '@tauri-apps/api/app';
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, getConnectivityIdentity, initPairing, confirmPairing, finalizePairing, getFriends, checkFriendStatus, getNgrokStatus, installNgrok, removeFriend, getPeerAccessCatalog, updateFriendAccess, clearAllHistory, exportBackup, importBackup } from '../../services/chatApi';
+import { getSettings, updateSetting, getLogs, getOllamaModels, getGeminiModels, getRieUsage, getConnectivityIdentity, getConnections, checkConnectionStatus, removeConnection, getPeerAccessCatalog, updateConnectionAccess, clearAllHistory, exportBackup, importBackup, sendConnectionRequest, getConnectionRequests, acceptConnectionRequest, declineConnectionRequest, cancelConnectionRequest } from '../../services/chatApi';
 import { checkForAppUpdate, downloadAppUpdate, installDownloadedUpdate } from '../../services/updater';
 import { isWakeWordEnabled } from '../../services/wakeWordService';
 import { setShareLocationEnabled, prefetchClientLocation } from '../../utils/locationUtils';
@@ -74,6 +74,10 @@ import {
   ShieldCheck,
   Cpu,
   Clock,
+  UserPlus,
+  Mail,
+  UserCheck,
+  UserX,
   X,
 } from 'lucide-react';
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
@@ -285,28 +289,11 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   const [appVersion, setAppVersion] = useState('');
   const [connectivityIdentity, setConnectivityIdentity] = useState(null);
   const [friends, setFriends] = useState([]);
-  const [pairingToken, setPairingToken] = useState('');
-  const [pairingPayload, setPairingPayload] = useState('');
-  const [incomingPairToken, setIncomingPairToken] = useState('');
-  const [receiverPayload, setReceiverPayload] = useState('');
-  const [pairingMode, setPairingMode] = useState('sender');
-  const [ngrokStatus, setNgrokStatus] = useState(null);
-  const [ngrokInstallResult, setNgrokInstallResult] = useState(null);
-  const [ngrokInstalling, setNgrokInstalling] = useState(false);
-  const [ngrokConfirmOpen, setNgrokConfirmOpen] = useState(false);
-  const [ngrokReadyState, setNgrokReadyState] = useState('idle');
-  const [ngrokTokenInput, setNgrokTokenInput] = useState('');
-  const [ngrokDomainInput, setNgrokDomainInput] = useState('');
-  const [connectivityConfigOpen, setConnectivityConfigOpen] = useState(false);
-  const [pairModalOpen, setPairModalOpen] = useState(false);
+  const [connectivityRefreshing, setConnectivityRefreshing] = useState(false);
   const [friendStatusById, setFriendStatusById] = useState({});
   const [checkingFriendId, setCheckingFriendId] = useState(null);
   const [removingFriendId, setRemovingFriendId] = useState(null);
-  const [connectivityRefreshing, setConnectivityRefreshing] = useState(false);
-  const [pairTokenCopied, setPairTokenCopied] = useState(false);
-  const [pairPayloadCopied, setPairPayloadCopied] = useState(false);
-  const [pairConfirmResult, setPairConfirmResult] = useState(null);
-  const [receiverFinalizePayload, setReceiverFinalizePayload] = useState('');
+  const [pairModalOpen, setPairModalOpen] = useState(false);
   const [connectivityQuickCopy, setConnectivityQuickCopy] = useState(null);
   const [peerAccessOpen, setPeerAccessOpen] = useState(false);
   const [peerAccessFriend, setPeerAccessFriend] = useState(null);
@@ -316,6 +303,11 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   const [peerAccessTools, setPeerAccessTools] = useState(() => new Set());
   const [peerAccessUseAllDefault, setPeerAccessUseAllDefault] = useState(true);
   const [peerAccessSaving, setPeerAccessSaving] = useState(false);
+  const [friendModalTab, setFriendModalTab] = useState('add');
+  const [targetFriendEmail, setTargetFriendEmail] = useState('');
+  const [friendRequests, setFriendRequests] = useState({ incoming: [], outgoing: [] });
+  const [friendRequestsLoading, setFriendRequestsLoading] = useState(false);
+  const [friendActionMsg, setFriendActionMsg] = useState(null);
   const friendStatusPollInFlightRef = useRef(false);
   const FRIEND_STATUS_POLL_MS = 30000;
   const FRIEND_STATUS_STALE_MS = 90000;
@@ -661,18 +653,79 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     loadConnectivityData();
   };
 
+  const loadFriendRequests = async () => {
+    try {
+      setFriendRequestsLoading(true);
+      const data = await getConnectionRequests();
+      if (isMountedRef.current) {
+        setFriendRequests(data || { incoming: [], outgoing: [] });
+      }
+    } catch (err) {
+      console.warn('Failed to load connection requests:', err);
+    } finally {
+      if (isMountedRef.current) setFriendRequestsLoading(false);
+    }
+  };
+
+  const handleSendFriendRequest = async (e) => {
+    if (e) e.preventDefault();
+    const email = targetFriendEmail.trim();
+    if (!email) return;
+    try {
+      setFriendActionMsg(null);
+      await sendConnectionRequest(email);
+      setFriendActionMsg({ type: 'success', text: `Connection request sent to ${email}!` });
+      setTargetFriendEmail('');
+      await loadFriendRequests();
+    } catch (err) {
+      setFriendActionMsg({ type: 'error', text: err.message || 'Failed to send connection request' });
+    }
+  };
+
+  const handleAcceptRequest = async (requestId) => {
+    try {
+      setFriendActionMsg(null);
+      await acceptConnectionRequest(requestId);
+      await loadFriendRequests();
+      await loadConnectivityData();
+      setFriendActionMsg({ type: 'success', text: 'Connection request accepted!' });
+    } catch (err) {
+      setFriendActionMsg({ type: 'error', text: err.message || 'Failed to accept connection request' });
+    }
+  };
+
+  const handleDeclineRequest = async (requestId) => {
+    try {
+      setFriendActionMsg(null);
+      await declineConnectionRequest(requestId);
+      await loadFriendRequests();
+      setFriendActionMsg({ type: 'info', text: 'Connection request declined' });
+    } catch (err) {
+      setFriendActionMsg({ type: 'error', text: err.message || 'Failed to decline request' });
+    }
+  };
+
+  const handleCancelRequest = async (requestId) => {
+    try {
+      setFriendActionMsg(null);
+      await cancelConnectionRequest(requestId);
+      await loadFriendRequests();
+      setFriendActionMsg({ type: 'info', text: 'Connection request cancelled' });
+    } catch (err) {
+      setFriendActionMsg({ type: 'error', text: err.message || 'Failed to cancel request' });
+    }
+  };
+
   const loadConnectivityData = async () => {
     try {
-      const [identityData, friendsData, tunnelStatus] = await Promise.all([
+      const [identityData, connectionsData] = await Promise.all([
         getConnectivityIdentity(),
-        getFriends(),
-        getNgrokStatus(),
+        getConnections(),
       ]);
       if (!isMountedRef.current) return;
       setConnectivityIdentity(identityData);
-      setFriends(Array.isArray(friendsData) ? friendsData : []);
-      setNgrokStatus(tunnelStatus);
-      setNgrokReadyState(tunnelStatus?.ready_state || 'not_ready');
+      setFriends(Array.isArray(connectionsData) ? connectionsData : []);
+      loadFriendRequests();
     } catch (err) {
       console.error('Failed to load connectivity data:', err);
     }
@@ -876,84 +929,17 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     }
   };
 
-  const handleInitPairing = async () => {
-    try {
-      setPairConfirmResult(null);
-      const result = await initPairing(settings.connectivity_device_name || connectivityIdentity?.name || null);
-      setPairingToken(result.pairing_token || '');
-      setConnectivityIdentity(result.identity || null);
-    } catch (err) {
-      setError(`Failed to start pairing: ${err.message}`);
-    }
-  };
-
-  const handleGeneratePairingPayload = async () => {
-    try {
-      const token = incomingPairToken.trim();
-      if (!token) {
-        setError('Paste a pairing token first.');
-        return;
-      }
-      let identity = connectivityIdentity;
-      if (!identity?.device_id || !identity?.fingerprint || !identity?.public_key) {
-        identity = await getConnectivityIdentity();
-        setConnectivityIdentity(identity);
-      }
-      if (!identity?.device_id || !identity?.fingerprint || !identity?.public_key) {
-        throw new Error('Unable to load local identity. Refresh Connectivity and try again.');
-      }
-      const payload = {
-        pairing_token: token,
-        peer_name: (identity?.name || settings.connectivity_device_name || 'My Rie').trim(),
-        peer_device_id: identity.device_id,
-        peer_fingerprint: identity.fingerprint,
-        peer_public_key: identity.public_key,
-        peer_public_url: identity.public_url || null,
-      };
-      setReceiverPayload(JSON.stringify(payload, null, 2));
-      setError(null);
-    } catch (err) {
-      setError(`Failed to generate pairing payload: ${err.message}`);
-    }
-  };
-
-  const handleConfirmPairing = async () => {
-    try {
-      const parsed = JSON.parse(pairingPayload || '{}');
-      const result = await confirmPairing(parsed);
-      setPairConfirmResult(result || null);
-      setPairingPayload(result?.reciprocal_synced ? '' : pairingPayload);
-      await loadConnectivityData();
-    } catch (err) {
-      setError(`Failed to confirm pairing: ${err.message}`);
-    }
-  };
-
-  const handleReceiverFinalize = async () => {
-    try {
-      const parsed = JSON.parse(receiverFinalizePayload || '{}');
-      await finalizePairing(parsed);
-      setReceiverFinalizePayload('');
-      await loadConnectivityData();
-      setPairModalOpen(false);
-    } catch (err) {
-      setError(`Failed to finalize pairing on this device: ${err.message}`);
-    }
-  };
-
-  const handleOpenPairModal = () => {
+  const handleOpenPairModal = (tab = 'add') => {
     setPairModalOpen(true);
-    setPairingMode('sender');
-    setPairTokenCopied(false);
-    setPairPayloadCopied(false);
-    setPairConfirmResult(null);
-    setReceiverFinalizePayload('');
+    setFriendModalTab(tab);
+    setFriendActionMsg(null);
+    loadFriendRequests();
   };
 
   const handleCheckFriendStatus = async (friendId) => {
     try {
       setCheckingFriendId(friendId);
-      const result = await checkFriendStatus(friendId);
+      const result = await checkConnectionStatus(friendId);
       setFriendStatusById(prev => ({ ...prev, [friendId]: result }));
     } catch (err) {
       setFriendStatusById(prev => ({
@@ -981,7 +967,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
 
         const settled = await Promise.allSettled(
           friendIds.map(async (friendId) => {
-            const result = await checkFriendStatus(friendId);
+            const result = await checkConnectionStatus(friendId);
             return [friendId, result];
           })
         );
@@ -1043,13 +1029,13 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   const navGroups = filterNavGroups(settingsSearch);
 
   const handleRemoveFriend = async (friendId, friendName) => {
-    const displayName = (friendName || "this paired device").trim() || "this paired device";
-    const confirmed = window.confirm(`Remove pairing with ${displayName}?`);
+    const displayName = (friendName || "this connection").trim() || "this connection";
+    const confirmed = window.confirm(`Remove connection with ${displayName}?`);
     if (!confirmed) return;
 
     try {
       setRemovingFriendId(friendId);
-      await removeFriend(friendId);
+      await removeConnection(friendId);
       setFriendStatusById((prev) => {
         const next = { ...prev };
         delete next[friendId];
@@ -1057,7 +1043,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       });
       await loadConnectivityData();
     } catch (err) {
-      setError(`Failed to remove pairing: ${err.message}`);
+      setError(`Failed to remove connection: ${err.message}`);
     } finally {
       setRemovingFriendId(null);
     }
@@ -1147,7 +1133,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       if (!peerAccessUseAllDefault) {
         payload.allowed_tool_ids = Array.from(peerAccessTools);
       }
-      const updated = await updateFriendAccess(peerAccessFriend.id, payload);
+      const updated = await updateConnectionAccess(peerAccessFriend.id, payload);
       setFriends((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
       setPeerAccessOpen(false);
       setPeerAccessFriend(null);
@@ -1158,26 +1144,6 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
     }
   };
 
-  const handleInstallNgrok = async () => {
-    try {
-      if (!ngrokTokenInput.trim()) {
-        setError('ngrok auth token is required.');
-        return;
-      }
-      setNgrokInstalling(true);
-      setNgrokInstallResult(null);
-      setNgrokReadyState('starting');
-      const result = await installNgrok(ngrokTokenInput.trim(), ngrokDomainInput.trim() || null);
-      setNgrokInstallResult(result);
-      setNgrokReadyState(result?.ready_state || (result?.ok ? 'ready' : 'failed'));
-      await loadSettings();
-    } catch (err) {
-      setNgrokInstallResult({ ok: false, steps: [{ step: 'install', ok: false, message: err.message }] });
-      setNgrokReadyState('failed');
-    } finally {
-      setNgrokInstalling(false);
-    }
-  };
 
   const handleToolToggle = (toolId) => {
     const newTools = enabledTools.includes(toolId)
@@ -1226,10 +1192,8 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   };
 
   const connectivityChipState = (() => {
-    if (!ngrokStatus?.installed) return 'not install';
-    const needsConfig = !ngrokStatus?.public_url;
-    if (needsConfig || !ngrokStatus?.tunnel_running) return 'config needed';
-    return 'running';
+    if (!settings.RIE_ACCESS_TOKEN) return 'sign-in needed';
+    return 'connected';
   })();
 
   const handleAutoStartToggle = () => {
@@ -2129,244 +2093,98 @@ key2,
                   )}
 
                   {advancedSubTab === 'remote' && (
-                    <div className="relative overflow-x-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-                      <div className="relative flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="relative overflow-x-hidden animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-5">
+                      {/* Clean Minimal Header */}
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-white/[0.08]">
                         <div className="space-y-0.5 min-w-0">
-                          <h3 className="text-base font-semibold tracking-tight text-white">Remote access & pairing</h3>
-                          <p className="max-w-xl text-xs leading-relaxed text-neutral-400">
-                            Expose your agent safely through ngrok, then pair trusted devices so friends can reach this instance at a stable URL.
+                          <h3 className="text-base font-semibold tracking-tight text-white flex items-center gap-2">
+                            <Users size={18} className="text-emerald-400" />
+                            Connections
+                          </h3>
+                          <p className="text-xs text-neutral-400">
+                            Connect with colleagues and devices to collaborate, route tasks, and chat.
                           </p>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 lg:justify-end shrink-0">
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-300">
-                            <span
-                              className={`h-1.5 w-1.5 shrink-0 rounded-full ${connectivityChipState === 'running' ? 'bg-emerald-400' : connectivityChipState === 'not install' ? 'bg-red-400' : 'bg-amber-400'
-                                }`}
-                            />
-                            Tunnel: <span className="font-medium text-neutral-100">{connectivityChipState}</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-300">
-                            Pairs: <span className="font-medium text-neutral-100">{friends.length}</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-300">
-                            Ready:{' '}
-                            <span className="font-mono text-[10px] font-medium uppercase text-neutral-100">{ngrokReadyState || '—'}</span>
-                          </span>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <motion.button
+                            whileTap={{ scale: 0.97 }}
+                            type="button"
+                            onClick={() => handleOpenPairModal('add')}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-white transition-colors cursor-pointer shadow-sm shadow-emerald-950"
+                          >
+                            <UserPlus size={14} aria-hidden />
+                            Add Connection
+                          </motion.button>
+                          <motion.button
+                            whileTap={{ scale: 0.97 }}
+                            type="button"
+                            onClick={() => handleOpenPairModal('requests')}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-neutral-900/90 hover:bg-neutral-800 px-3.5 py-2 text-xs font-medium text-neutral-200 transition-colors cursor-pointer"
+                          >
+                            <Mail size={14} aria-hidden />
+                            Requests
+                            {friendRequests.incoming.length > 0 && (
+                              <span className="ml-1 rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-bold text-black">
+                                {friendRequests.incoming.length}
+                              </span>
+                            )}
+                          </motion.button>
+                          <button
+                            type="button"
+                            onClick={handleRefreshConnectivity}
+                            disabled={connectivityRefreshing}
+                            className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/90 p-2 text-neutral-400 hover:text-white hover:border-white/20 transition-colors disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                            title="Refresh connections"
+                            aria-label="Refresh connections"
+                          >
+                            <RefreshCw size={14} className={connectivityRefreshing ? 'animate-spin' : ''} aria-hidden />
+                          </button>
                         </div>
                       </div>
 
-                      <div className="relative mt-3 rounded-lg border border-amber-500/20 bg-amber-950/20 p-3">
-                        <div className="flex items-start gap-2.5">
-                          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" aria-hidden />
-                          <div className="min-w-0">
-                            <h4 className="text-xs font-semibold text-amber-200">Warning before using connectivity</h4>
-                            <p className="mt-0.5 text-xs leading-relaxed text-amber-200/80">
-                              Opening remote connectivity can expose your local agent to the internet. This may lead to
-                              unauthorized access or data leakage if you share endpoints with untrusted devices.
-                            </p>
+                      {/* Pending Incoming Requests Banner */}
+                      {friendRequests.incoming.length > 0 && (
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+                          <div className="flex items-center gap-2.5">
+                            <Mail className="h-4 w-4 shrink-0 text-amber-400" />
+                            <span>You have <strong>{friendRequests.incoming.length}</strong> incoming connection request(s).</span>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPairModal('requests')}
+                            className="rounded-lg bg-amber-600 hover:bg-amber-500 px-3 py-1 text-xs font-semibold text-white transition-colors cursor-pointer"
+                          >
+                            Review
+                          </button>
                         </div>
-                      </div>
+                      )}
 
-                      <div className="relative mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
-                        <div className="xl:col-span-7 space-y-4">
-                          <div className="relative overflow-hidden rounded-2xl border border-white/[0.08] bg-neutral-950/80 p-1 shadow-lg shadow-black/20">
-                            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-                            <div className="rounded-[14px] bg-neutral-950/90 p-5 sm:p-6">
-                              <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="min-w-0 space-y-1.5">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h4 className="text-base font-semibold text-white">ngrok public tunnel</h4>
-                                    <span
-                                      className={`rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide ${connectivityChipState === 'running'
-                                          ? 'border-emerald-500/25 bg-emerald-950/40 text-emerald-300'
-                                          : connectivityChipState === 'not install'
-                                            ? 'border-red-500/25 bg-red-950/35 text-red-300'
-                                            : 'border-amber-500/25 bg-amber-950/35 text-amber-300'
-                                        }`}
-                                    >
-                                      {connectivityChipState}
-                                    </span>
-                                  </div>
-                                  <p className="text-xs leading-relaxed text-neutral-400">
-                                    When enabled, Rie can advertise an HTTPS URL peers use instead of a LAN address.
-                                  </p>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-3 rounded-xl border border-white/5 bg-neutral-900/50 px-3 py-2">
-                                  <span className="text-[11px] font-medium text-neutral-400">Expose tunnel</span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleLocalSettingChange('CONNECTIVITY_NGROK_ENABLED', String(!settings.connectivity_ngrok_enabled))}
-                                    className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all duration-300 ${settings.connectivity_ngrok_enabled
-                                        ? 'bg-emerald-700/85'
-                                        : 'border border-neutral-700 bg-neutral-800'
-                                      }`}
-                                    aria-label="Toggle ngrok tunnel"
-                                  >
-                                    <motion.span
-                                      animate={{ x: settings.connectivity_ngrok_enabled ? 28 : 4 }}
-                                      className="inline-block h-5 w-5 rounded-full bg-white shadow-md"
-                                    />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                                <div className="rounded-xl border border-white/10 bg-black/30 p-4">
-                                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500">Engine state</div>
-                                  <p className="mt-2 font-mono text-sm font-semibold text-white">{ngrokReadyState || 'unknown'}</p>
-                                </div>
-                                <div className="rounded-xl border border-white/10 bg-black/30 p-4 sm:col-span-1">
-                                  <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-neutral-500">Public HTTPS</div>
-                                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                    <p className="min-w-0 break-all font-mono text-[11px] leading-snug text-neutral-200">
-                                      {ngrokStatus?.public_url || (
-                                        <span className="text-neutral-500">Not assigned — run tunnel config when you are ready.</span>
-                                      )}
-                                    </p>
-                                    {ngrokStatus?.public_url ? (
-                                      <motion.button
-                                        type="button"
-                                        whileTap={{ scale: 0.97 }}
-                                        onClick={async () => {
-                                          try {
-                                            await navigator.clipboard.writeText(ngrokStatus.public_url);
-                                            setConnectivityQuickCopy('url');
-                                            setTimeout(() => setConnectivityQuickCopy(null), 1400);
-                                          } catch {
-                                            /* ignore */
-                                          }
-                                        }}
-                                        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-white/12 bg-neutral-900/70 px-2.5 py-1.5 text-[10px] font-medium text-neutral-300 hover:border-white/18 hover:bg-neutral-800 hover:text-neutral-100"
-                                      >
-                                        {connectivityQuickCopy === 'url' ? <Check size={12} /> : <Copy size={12} />}
-                                        {connectivityQuickCopy === 'url' ? 'Copied' : 'Copy'}
-                                      </motion.button>
-                                    ) : null}
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-white/5 pt-5">
-                                <motion.button
-                                  whileTap={{ scale: 0.97 }}
-                                  onClick={() => setConnectivityConfigOpen(true)}
-                                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-600 bg-neutral-900/60 px-3.5 py-2.5 text-xs font-medium text-neutral-100 transition-colors hover:border-neutral-500 hover:bg-neutral-800"
-                                >
-                                  <Settings size={14} aria-hidden />
-                                  Tunnel setup
-                                </motion.button>
-                                <motion.button
-                                  whileTap={{ scale: 0.97 }}
-                                  onClick={handleOpenPairModal}
-                                  className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-950/45 px-3.5 py-2.5 text-xs font-medium text-emerald-100/95 transition-colors hover:border-emerald-500/50 hover:bg-emerald-950/70"
-                                >
-                                  <Plus size={14} aria-hidden />
-                                  Pair a device
-                                </motion.button>
-                                <button
-                                  type="button"
-                                  onClick={handleRefreshConnectivity}
-                                  disabled={connectivityRefreshing}
-                                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-700 px-3.5 py-2.5 text-xs font-medium text-neutral-300 transition-colors hover:border-neutral-500 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                  <RefreshCw size={14} className={connectivityRefreshing ? 'animate-spin' : ''} aria-hidden />
-                                  Refresh
-                                </button>
-                              </div>
-                            </div>
+                      {/* Connection List or Empty State */}
+                      {friends.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-neutral-950/40 py-16 text-center">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-neutral-900 border border-white/10 text-neutral-400 mb-3">
+                            <Users size={22} className="text-neutral-400" />
                           </div>
+                          <p className="text-sm font-semibold text-white">No connections yet</p>
+                          <p className="mt-1 text-xs text-neutral-400 max-w-sm">
+                            Add a colleague or another machine using their Rie account email to start collaborating.
+                          </p>
+                          <motion.button
+                            whileTap={{ scale: 0.97 }}
+                            type="button"
+                            onClick={() => handleOpenPairModal('add')}
+                            className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-semibold text-white transition-colors cursor-pointer"
+                          >
+                            <UserPlus size={14} aria-hidden />
+                            Add Connection
+                          </motion.button>
                         </div>
-
-                        <div className="xl:col-span-5">
-                          <div className="h-full rounded-2xl border border-white/[0.08] bg-neutral-950/70 p-5 shadow-lg shadow-black/15">
-                            <div className="min-w-0">
-                              <h5 className="text-sm font-semibold text-white">This device</h5>
-                              <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-400">
-                                Shown to the other device when you start a pairing handoff.
-                              </p>
-                            </div>
-
-                            <div className="mt-5 space-y-4">
-                              <div className="rounded-xl border border-white/10 bg-black/25 p-3">
-                                <SettingInput
-                                  label="Device display name"
-                                  dbKey="CONNECTIVITY_DEVICE_NAME"
-                                  value={settings.connectivity_device_name ?? connectivityIdentity?.name ?? ''}
-                                  onSave={handleLocalSettingChange}
-                                  isSaving={isSavingAll}
-                                  placeholder="e.g. My Rie"
-                                  allowEmpty={false}
-                                />
-                              </div>
-
-                              <div className="rounded-xl border border-white/10 bg-black/25 p-4">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-neutral-500">Identity ID</span>
-                                  {connectivityIdentity?.device_id ? (
-                                    <motion.button
-                                      type="button"
-                                      whileTap={{ scale: 0.97 }}
-                                      onClick={async () => {
-                                        try {
-                                          await navigator.clipboard.writeText(connectivityIdentity.device_id);
-                                          setConnectivityQuickCopy('id');
-                                          setTimeout(() => setConnectivityQuickCopy(null), 1400);
-                                        } catch {
-                                          /* ignore */
-                                        }
-                                      }}
-                                      className="inline-flex items-center gap-1 rounded-lg border border-neutral-600 px-2 py-1 text-[10px] font-medium text-neutral-300 hover:border-neutral-500"
-                                    >
-                                      {connectivityQuickCopy === 'id' ? <Check size={11} /> : <Copy size={11} />}
-                                      {connectivityQuickCopy === 'id' ? 'Copied' : 'Copy'}
-                                    </motion.button>
-                                  ) : null}
-                                </div>
-                                <p className="mt-2 break-all font-mono text-[11px] leading-relaxed text-neutral-200 selection:bg-neutral-600">
-                                  {connectivityIdentity?.device_id || 'â€”'}
-                                </p>
-                              </div>
-                            </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          <div className="flex items-center justify-between px-1 text-xs text-neutral-400">
+                            <span>{friends.length} {friends.length === 1 ? 'connection' : 'connections'}</span>
                           </div>
-                        </div>
-                      </div>
-
-                      <div className="relative mt-2 rounded-2xl border border-white/[0.08] bg-neutral-950/60 p-5 sm:p-6">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-900 ring-1 ring-white/10">
-                              <Users className="h-5 w-5 text-neutral-200" aria-hidden />
-                            </div>
-                            <div>
-                              <h5 className="text-sm font-semibold text-white">Trusted peers</h5>
-                              <p className="text-[11px] text-neutral-500">
-                                Last health check is per-row â€” tap the refresh control to update.
-                              </p>
-                            </div>
-                          </div>
-                          <span className="self-start rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1 text-[11px] text-neutral-400 sm:self-center">
-                            {friends.length} linked {friends.length === 1 ? 'device' : 'devices'}
-                          </span>
-                        </div>
-
-                        {friends.length === 0 ? (
-                          <div className="mt-4 rounded-lg border border-dashed border-neutral-700/80 bg-neutral-900/20 px-4 py-8 text-center">
-                            <p className="text-sm font-medium text-neutral-300">No peers linked yet</p>
-                            <p className="mx-auto mt-1 max-w-sm text-xs text-neutral-500">
-                              Pair another Rie install so you can route work or share context across machines.
-                            </p>
-                            <motion.button
-                              whileTap={{ scale: 0.97 }}
-                              onClick={handleOpenPairModal}
-                              className="mt-5 inline-flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-emerald-950/45 px-4 py-2.5 text-xs font-medium text-emerald-100/95 transition-colors hover:border-emerald-500/50 hover:bg-emerald-950/70"
-                            >
-                              <Plus size={14} aria-hidden />
-                              Start pairing
-                            </motion.button>
-                          </div>
-                        ) : (
-                          <ul className="mt-6 space-y-3">
+                          <ul className="space-y-2">
                             {friends.map((friend) => {
                               const statusRow = friendStatusById[friend.id];
                               const checkedAtMs = statusRow?.checked_at ? Date.parse(statusRow.checked_at) : NaN;
@@ -2374,7 +2192,7 @@ key2,
                               const hasStatus = !!statusRow;
                               const isStale = hasStatus && !isFresh;
                               const reachable = statusRow?.reachable === true && !isStale;
-                              const statusLabel = !hasStatus || isStale ? 'unknown' : (reachable ? 'online' : 'offline');
+                              const isOnline = hasStatus && !isStale && reachable;
                               const initials = (friend.name || '?')
                                 .trim()
                                 .split(/\s+/)
@@ -2382,101 +2200,83 @@ key2,
                                 .slice(0, 2)
                                 .map((w) => w[0]?.toUpperCase())
                                 .join('');
+
                               return (
                                 <li key={friend.id}>
-                                  <div className="overflow-hidden rounded-2xl border border-white/10 bg-neutral-900/35 transition-colors hover:bg-neutral-900/55">
-                                    <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-5">
-                                      <div className="flex min-w-0 flex-1 gap-3">
-
-                                        <div className="min-w-0 flex-1 space-y-1">
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <span className="truncate font-semibold text-white" title={friend.name || 'Unnamed friend'}>
-                                              {friend.name || 'Unnamed friend'}
-                                            </span>
-                                            <span
-                                              className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusLabel === 'unknown'
-                                                  ? 'border-neutral-600 bg-neutral-800/80 text-neutral-400'
-                                                  : statusLabel === 'online'
-                                                    ? 'border-emerald-500/25 bg-emerald-950/45 text-emerald-200/90'
-                                                    : 'border-red-500/25 bg-red-950/35 text-red-200/85'
-                                                }`}
-                                            >
-                                              {statusLabel}
-                                            </span>
-                                          </div>
-                                          <p
-                                            className="break-all font-mono text-[10px] leading-relaxed text-neutral-500"
-                                            title={friend.public_url || undefined}
-                                          >
-                                            {friend.public_url || 'No public endpoint saved'}
-                                          </p>
-                                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-neutral-500">
-                                            <span>
-                                              Latency{' '}
-                                              <span className="tabular-nums text-neutral-300">
-                                                {statusRow?.latency_ms != null ? `${statusRow.latency_ms} ms` : 'â€”'}
-                                              </span>
-                                            </span>
-                                            <span>
-                                              Checked{' '}
-                                              <span className="text-neutral-400">
-                                                {statusRow?.checked_at ? new Date(statusRow.checked_at).toLocaleString() : 'â€”'}
-                                                {isStale ? ' (stale)' : ''}
-                                              </span>
-                                            </span>
-                                          </div>
-                                        </div>
+                                  <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-neutral-950/70 hover:bg-neutral-900/60 p-3.5 transition-colors">
+                                    <div className="flex min-w-0 items-center gap-3">
+                                      <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-neutral-900 border border-white/10 text-xs font-bold text-neutral-200">
+                                        {initials || <Users size={16} />}
+                                        <span
+                                          className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-neutral-950 ${
+                                            isOnline ? 'bg-emerald-400' : 'bg-neutral-600'
+                                          }`}
+                                          title={isOnline ? 'Online' : 'Offline'}
+                                        />
                                       </div>
-                                      <div className="flex shrink-0 items-center gap-2 self-end sm:self-center">
-                                        <motion.button
-                                          type="button"
-                                          whileTap={{ scale: 0.97 }}
-                                          onClick={() => openPeerAccessModal(friend)}
-                                          disabled={removingFriendId === friend.id}
-                                          className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-white/15 hover:bg-neutral-800/90 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                          title="Inbound access â€” tools and memory"
-                                          aria-label="Configure peer access"
-                                        >
-                                          <Shield size={16} aria-hidden />
-                                        </motion.button>
-                                        <motion.button
-                                          type="button"
-                                          whileTap={{ scale: 0.97 }}
-                                          onClick={() => handleRemoveFriend(friend.id, friend.name)}
-                                          disabled={removingFriendId === friend.id}
-                                          className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-red-500/35 hover:bg-red-950/40 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
-                                          title="Remove pairing"
-                                          aria-label={removingFriendId === friend.id ? 'Removing pairing' : 'Remove pairing'}
-                                        >
-                                          <Trash2 size={16} aria-hidden />
-                                        </motion.button>
-                                        <motion.button
-                                          type="button"
-                                          whileTap={{ scale: 0.97 }}
-                                          onClick={() => handleCheckFriendStatus(friend.id)}
-                                          disabled={checkingFriendId === friend.id || removingFriendId === friend.id}
-                                          className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-neutral-900/60 p-2.5 text-neutral-400 transition-colors hover:border-white/15 hover:bg-neutral-800/90 hover:text-neutral-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                          title="Ping peer health"
-                                          aria-label={checkingFriendId === friend.id ? 'Checking status' : 'Check status'}
-                                        >
-                                          <RefreshCw size={16} className={checkingFriendId === friend.id ? 'animate-spin' : ''} aria-hidden />
-                                        </motion.button>
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="truncate text-sm font-semibold text-white" title={friend.name || 'Connection'}>
+                                            {friend.name || 'Connection'}
+                                          </span>
+                                          <span
+                                            className={`rounded-full px-2 py-0.2 text-[10px] font-medium ${
+                                              isOnline
+                                                ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30'
+                                                : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
+                                            }`}
+                                          >
+                                            {isOnline ? 'Online' : 'Offline'}
+                                          </span>
+                                        </div>
+                                        <p className="truncate text-xs text-neutral-400 mt-0.5">
+                                          {friend.email || friend.device_id || 'Connected collaborator'}
+                                        </p>
                                       </div>
                                     </div>
-                                    {statusRow?.failure_code ? (
-                                      <div className="border-t border-white/[0.06] bg-neutral-900/40 px-4 py-2.5 text-[11px] text-neutral-300">
-                                        <span className="font-medium text-neutral-200">Issue:</span>{' '}
-                                        {statusRow.failure_code}
-                                        {statusRow?.failure_stage ? ` (${statusRow.failure_stage})` : ''}
-                                      </div>
-                                    ) : null}
+
+                                    <div className="flex shrink-0 items-center gap-1.5">
+                                      <motion.button
+                                        type="button"
+                                        whileTap={{ scale: 0.97 }}
+                                        onClick={() => openPeerAccessModal(friend)}
+                                        disabled={removingFriendId === friend.id}
+                                        className="inline-flex items-center justify-center rounded-lg border border-white/10 bg-neutral-900/60 p-2 text-neutral-400 hover:text-white hover:border-white/20 hover:bg-neutral-800 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                        title="Permissions & Shared Tools"
+                                        aria-label="Configure connection permissions"
+                                      >
+                                        <Shield size={15} aria-hidden />
+                                      </motion.button>
+                                      <motion.button
+                                        type="button"
+                                        whileTap={{ scale: 0.97 }}
+                                        onClick={() => handleCheckFriendStatus(friend.id)}
+                                        disabled={checkingFriendId === friend.id || removingFriendId === friend.id}
+                                        className="inline-flex items-center justify-center rounded-lg border border-white/10 bg-neutral-900/60 p-2 text-neutral-400 hover:text-white hover:border-white/20 hover:bg-neutral-800 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                        title="Check status"
+                                        aria-label={checkingFriendId === friend.id ? 'Checking status' : 'Check status'}
+                                      >
+                                        <RefreshCw size={15} className={checkingFriendId === friend.id ? 'animate-spin' : ''} aria-hidden />
+                                      </motion.button>
+                                      <motion.button
+                                        type="button"
+                                        whileTap={{ scale: 0.97 }}
+                                        onClick={() => handleRemoveFriend(friend.id, friend.name)}
+                                        disabled={removingFriendId === friend.id}
+                                        className="inline-flex items-center justify-center rounded-lg border border-white/10 bg-neutral-900/60 p-2 text-neutral-400 hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-950/20 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                                        title="Remove connection"
+                                        aria-label={removingFriendId === friend.id ? 'Removing connection' : 'Remove connection'}
+                                      >
+                                        <Trash2 size={15} aria-hidden />
+                                      </motion.button>
+                                    </div>
                                   </div>
                                 </li>
                               );
                             })}
                           </ul>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3378,17 +3178,6 @@ Separate keywords by commas. Commands containing these words will be blocked."
       </AnimatePresence>
 
       <ConfirmationModal
-        isOpen={ngrokConfirmOpen}
-        onClose={() => setNgrokConfirmOpen(false)}
-        onConfirm={handleInstallNgrok}
-        title="Install ngrok Tunnel?"
-        message="Rie will download ngrok if needed, then start a tunnel using your token and save the public endpoint."
-        confirmText="Install"
-        cancelText="Cancel"
-        type="warning"
-      />
-
-      <ConfirmationModal
         isOpen={discardConfirmOpen}
         onClose={() => setDiscardConfirmOpen(false)}
         onConfirm={() => {
@@ -3404,51 +3193,6 @@ Separate keywords by commas. Commands containing these words will be blocked."
         type="warning"
       />
       <AnimatePresence>
-        {connectivityConfigOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              className="w-full max-w-xl rounded-2xl border border-neutral-700 bg-neutral-950 p-5 space-y-4"
-            >
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-white">Connection Config</h4>
-                <button onClick={() => setConnectivityConfigOpen(false)} className="text-neutral-400 hover:text-white text-xs cursor-pointer">Close</button>
-              </div>
-              <input
-                type="password"
-                value={ngrokTokenInput}
-                onChange={(e) => setNgrokTokenInput(e.target.value)}
-                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200"
-                placeholder="Paste ngrok auth token"
-              />
-              <input
-                type="text"
-                value={ngrokDomainInput}
-                onChange={(e) => setNgrokDomainInput(e.target.value)}
-                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-neutral-200"
-                placeholder="Optional reserved domain (leave empty for random)"
-              />
-              <div className="flex items-center gap-2">
-                <motion.button
-                  whileTap={{ scale: 0.97 }}
-                  onClick={() => setNgrokConfirmOpen(true)}
-                  disabled={ngrokInstalling || !ngrokTokenInput.trim()}
-                  className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
-                >
-                  {ngrokInstalling ? 'Setting up...' : 'Run Setup'}
-                </motion.button>
-                <button onClick={handleRefreshConnectivity} disabled={connectivityRefreshing} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer disabled:opacity-60">
-                  <RefreshCw size={14} className={connectivityRefreshing ? "animate-spin" : ""} />
-                  Refresh
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
         {pairModalOpen && (
           <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4 sm:p-6">
             <motion.div
@@ -3459,189 +3203,184 @@ Separate keywords by commas. Commands containing these words will be blocked."
             >
               <div className="shrink-0 space-y-3 border-b border-neutral-800 px-5 pb-4 pt-5">
                 <div className="flex items-center justify-between gap-3">
-                  <h4 className="text-sm font-bold text-white">New Pair</h4>
+                  <div className="flex items-center gap-2">
+                    <Users className="h-5 w-5 text-emerald-400" />
+                    <h4 className="text-sm font-bold text-white">Connections</h4>
+                  </div>
                   <button type="button" onClick={() => setPairModalOpen(false)} className="shrink-0 text-neutral-400 hover:text-white text-xs cursor-pointer">
                     Close
                   </button>
                 </div>
-                <p className="text-xs text-neutral-400">Choose your role, then follow the stepper.</p>
-                <div className="inline-flex max-w-full flex-wrap rounded-lg border border-neutral-700 overflow-hidden">
+                <p className="text-xs text-neutral-400">Manage connections and link devices via your Rie account.</p>
+
+                {/* Sub Tab Switcher */}
+                <div className="inline-flex max-w-full flex-wrap rounded-lg border border-neutral-700 bg-neutral-900/70 p-1">
                   <button
                     type="button"
-                    onClick={() => setPairingMode('sender')}
-                    className={`px-3 py-1.5 text-xs font-semibold transition-colors ${pairingMode === 'sender' ? 'bg-emerald-600 text-white' : 'bg-neutral-900 text-neutral-300'}`}
+                    onClick={() => { setFriendModalTab('add'); setFriendActionMsg(null); }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${friendModalTab === 'add' ? 'bg-emerald-600 text-white' : 'text-neutral-400 hover:text-white'}`}
                   >
-                    This is Device A (sender)
+                    <UserPlus size={13} />
+                    Add Connection
                   </button>
                   <button
                     type="button"
-                    onClick={() => setPairingMode('receiver')}
-                    className={`px-3 py-1.5 text-xs font-semibold transition-colors ${pairingMode === 'receiver' ? 'bg-indigo-600 text-white' : 'bg-neutral-900 text-neutral-300'}`}
+                    onClick={() => { setFriendModalTab('requests'); setFriendActionMsg(null); loadFriendRequests(); }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${friendModalTab === 'requests' ? 'bg-indigo-600 text-white' : 'text-neutral-400 hover:text-white'}`}
                   >
-                    This is Device B (receiver)
+                    <Mail size={13} />
+                    Requests
+                    {friendRequests.incoming.length > 0 && (
+                      <span className="ml-1 rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-bold text-black">
+                        {friendRequests.incoming.length}
+                      </span>
+                    )}
                   </button>
-                </div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  {(() => {
-                    const labels = [
-                      pairingMode === 'sender' ? 'Create token' : 'Paste token',
-                      pairingMode === 'sender' ? 'Share token' : 'Generate payload',
-                      pairingMode === 'sender' ? 'Confirm pairing' : 'Send payload back',
-                    ];
-                    const currentStep = pairingMode === 'sender'
-                      ? (pairingToken ? (pairingPayload.trim() ? 3 : 2) : 1)
-                      : (incomingPairToken.trim() ? (receiverPayload.trim() ? 3 : 2) : 1);
-
-                    return labels.map((label, idx) => {
-                      const stepNum = idx + 1;
-                      const isCurrent = stepNum === currentStep;
-                      const isDone = stepNum < currentStep;
-
-                      return (
-                        <div
-                          key={label}
-                          className={`rounded-xl border px-3 py-3 text-xs transition-colors ${isCurrent
-                            ? 'border-emerald-500/80 bg-emerald-500/15 text-emerald-100'
-                            : isDone
-                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                              : 'border-neutral-700 bg-neutral-900/60 text-neutral-400'
-                            }`}
-                        >
-                          <div className="font-bold">Step {stepNum}</div>
-                          <div className="mt-0.5">{label}</div>
-                        </div>
-                      );
-                    });
-                  })()}
                 </div>
               </div>
 
               <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4">
-                {pairingMode === 'sender' ? (
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap gap-2">
-                      <motion.button whileTap={{ scale: 0.97 }} onClick={handleInitPairing} className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors">Create Pair Token</motion.button>
-                      {pairingToken && (
+                {friendActionMsg && (
+                  <div className={`mb-4 rounded-xl border p-3 text-xs ${
+                    friendActionMsg.type === 'success'
+                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                      : friendActionMsg.type === 'error'
+                        ? 'border-rose-500/40 bg-rose-500/10 text-rose-200'
+                        : 'border-neutral-600 bg-neutral-800 text-neutral-200'
+                  }`}>
+                    {friendActionMsg.text}
+                  </div>
+                )}
+
+                {friendModalTab === 'add' && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-black/25 p-4">
+                      <h5 className="text-xs font-semibold text-white">Send Connection Request</h5>
+                      <p className="mt-1 text-[11px] text-neutral-400 leading-relaxed">
+                        Enter your connection's Rie account email. No open ports, tunnels, or complex tokens are required.
+                        They will see the request in their app and can accept in 1 click.
+                      </p>
+                      <form onSubmit={handleSendFriendRequest} className="mt-3 flex flex-wrap gap-2">
+                        <input
+                          type="email"
+                          required
+                          value={targetFriendEmail}
+                          onChange={(e) => setTargetFriendEmail(e.target.value)}
+                          placeholder="e.g. colleague@example.com"
+                          className="flex-1 min-w-[200px] rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-500 focus:outline-none"
+                        />
                         <motion.button
                           whileTap={{ scale: 0.97 }}
-                          onClick={async () => {
-                            await navigator.clipboard.writeText(pairingToken);
-                            setPairTokenCopied(true);
-                            setTimeout(() => setPairTokenCopied(false), 1200);
-                          }}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-200 text-xs cursor-pointer hover:border-neutral-500 transition-colors"
+                          type="submit"
+                          disabled={!targetFriendEmail.trim()}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 transition-colors disabled:opacity-50 cursor-pointer"
                         >
-                          {pairTokenCopied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
-                          {pairTokenCopied ? 'Copied' : 'Copy Token'}
+                          <UserPlus size={13} />
+                          Send Connection Request
                         </motion.button>
+                      </form>
+                    </div>
+                  </div>
+                )}
+
+                {friendModalTab === 'requests' && (
+                  <div className="space-y-5">
+                    {/* Incoming Requests */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="text-xs font-semibold text-neutral-200 flex items-center gap-1.5">
+                          <Mail size={13} className="text-indigo-400" />
+                          Incoming Connection Requests
+                          <span className="text-neutral-500 text-[10px]">({friendRequests.incoming.length})</span>
+                        </h5>
+                        <button
+                          type="button"
+                          onClick={loadFriendRequests}
+                          disabled={friendRequestsLoading}
+                          className="text-[11px] text-neutral-400 hover:text-white inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <RefreshCw size={11} className={friendRequestsLoading ? 'animate-spin' : ''} />
+                          Refresh
+                        </button>
+                      </div>
+
+                      {friendRequests.incoming.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/20 p-4 text-center text-xs text-neutral-500">
+                          No pending incoming requests
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {friendRequests.incoming.map((req) => (
+                            <div key={req.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-700/80 bg-neutral-900/60 p-3 text-xs">
+                              <div className="min-w-0">
+                                <div className="font-medium text-white truncate">{req.sender_email}</div>
+                                <div className="text-[10px] text-neutral-500">Wants to connect with you</div>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <motion.button
+                                  whileTap={{ scale: 0.97 }}
+                                  type="button"
+                                  onClick={() => handleAcceptRequest(req.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors cursor-pointer"
+                                >
+                                  <UserCheck size={13} />
+                                  Accept
+                                </motion.button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeclineRequest(req.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-neutral-700 hover:bg-neutral-800 px-3 py-1.5 text-xs text-neutral-300 transition-colors cursor-pointer"
+                                >
+                                  <UserX size={13} />
+                                  Decline
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
-                    {pairingToken && <div className="p-2 rounded border border-neutral-700 bg-neutral-900 text-xs text-neutral-200 break-all">{pairingToken}</div>}
-                    <textarea
-                      value={pairingPayload}
-                      onChange={(e) => setPairingPayload(e.target.value)}
-                      className="max-h-48 min-h-[8rem] w-full resize-y overflow-y-auto bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
-                      placeholder='Paste payload JSON from Device B, then click "Confirm Pairing"'
-                    />
-                    {pairConfirmResult && (
-                      <div className={`rounded-lg border px-3 py-2 text-xs ${pairConfirmResult.reciprocal_synced
-                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-100'
-                          : 'border-amber-500/40 bg-amber-500/10 text-amber-100'
-                        }`}>
-                        <div className="font-semibold">
-                          {pairConfirmResult.reciprocal_synced ? 'Paired on both devices' : 'Only local pairing saved'}
+
+                    {/* Outgoing Requests */}
+                    <div className="border-t border-neutral-800/80 pt-4">
+                      <h5 className="text-xs font-semibold text-neutral-200 mb-2 flex items-center gap-1.5">
+                        <Clock size={13} className="text-amber-400" />
+                        Outgoing Connection Requests
+                        <span className="text-neutral-500 text-[10px]">({friendRequests.outgoing.length})</span>
+                      </h5>
+
+                      {friendRequests.outgoing.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-neutral-800 bg-neutral-900/20 p-4 text-center text-xs text-neutral-500">
+                          No outgoing connection requests
                         </div>
-                        <div className="mt-1">{pairConfirmResult.reciprocal_message || 'No message available.'}</div>
-                        {!pairConfirmResult.reciprocal_synced && pairConfirmResult.finalize_payload && (
-                          <div className="mt-2 space-y-2">
-                            <div className="text-[11px] text-amber-200">Send this finalize payload to Device B and import it there:</div>
-                            <textarea
-                              readOnly
-                              value={JSON.stringify(pairConfirmResult.finalize_payload, null, 2)}
-                              className="max-h-40 min-h-[7rem] w-full resize-y overflow-y-auto bg-neutral-900 border border-neutral-700 rounded-lg px-2 py-2 text-[11px] text-neutral-200"
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-neutral-700 bg-neutral-900/50 p-3 space-y-2">
-                    <div className="text-xs font-semibold text-neutral-200">Paste token from Device A</div>
-                    <input
-                      value={incomingPairToken}
-                      onChange={(e) => setIncomingPairToken(e.target.value)}
-                      className="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
-                      placeholder="Paste token here, then click Generate Payload"
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <motion.button
-                        whileTap={{ scale: 0.97 }}
-                        onClick={handleGeneratePairingPayload}
-                        className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer transition-colors"
-                      >
-                        Generate Payload
-                      </motion.button>
-                      <motion.button
-                        whileTap={{ scale: 0.97 }}
-                        onClick={async () => {
-                          if (!receiverPayload.trim()) return;
-                          await navigator.clipboard.writeText(receiverPayload);
-                          setPairPayloadCopied(true);
-                          setTimeout(() => setPairPayloadCopied(false), 1200);
-                        }}
-                        disabled={!receiverPayload.trim()}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-700 text-neutral-200 text-xs cursor-pointer hover:border-neutral-500 transition-colors disabled:opacity-60"
-                      >
-                        {pairPayloadCopied ? <Check size={14} className="text-emerald-300" /> : <Copy size={14} />}
-                        {pairPayloadCopied ? 'Copied Payload' : 'Copy Payload'}
-                      </motion.button>
-                    </div>
-                    <textarea
-                      value={receiverPayload}
-                      onChange={(e) => setReceiverPayload(e.target.value)}
-                      className="max-h-48 min-h-[8rem] w-full resize-y overflow-y-auto bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
-                      placeholder='Generated payload appears here. Send this JSON to Device A.'
-                    />
-                    <div className="space-y-2 border-t border-neutral-700/70 pt-2">
-                      <div className="text-xs font-semibold text-neutral-200">Manual Finalize (fallback)</div>
-                      <textarea
-                        value={receiverFinalizePayload}
-                        onChange={(e) => setReceiverFinalizePayload(e.target.value)}
-                        className="max-h-40 min-h-[7rem] w-full resize-y overflow-y-auto bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-xs text-neutral-200"
-                        placeholder='If Device A reports reciprocal sync failed, paste finalize payload JSON here and click Finalize on this Device B.'
-                      />
-                      <button
-                        type="button"
-                        onClick={handleReceiverFinalize}
-                        disabled={!receiverFinalizePayload.trim()}
-                        className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
-                      >
-                        Finalize On This Device
-                      </button>
+                      ) : (
+                        <div className="space-y-2">
+                          {friendRequests.outgoing.map((req) => (
+                            <div key={req.id} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-800 bg-neutral-900/40 p-3 text-xs">
+                              <div className="min-w-0">
+                                <div className="font-medium text-neutral-200 truncate">{req.receiver_email}</div>
+                                <div className="text-[10px] text-neutral-500">Awaiting acceptance</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleCancelRequest(req.id)}
+                                className="text-neutral-400 hover:text-rose-300 text-xs cursor-pointer transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
               </div>
 
               <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-neutral-800 px-5 py-4">
-                <button type="button" onClick={() => setPairModalOpen(false)} className="px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer">
-                  Cancel
+                <button type="button" onClick={() => setPairModalOpen(false)} className="px-3 py-2 rounded-lg border border-neutral-700 text-neutral-300 text-xs cursor-pointer hover:bg-neutral-800 transition-colors">
+                  Close
                 </button>
-                {pairingMode === 'sender' ? (
-                  <motion.button
-                    whileTap={{ scale: 0.97 }}
-                    onClick={handleConfirmPairing}
-                    disabled={!pairingPayload.trim()}
-                    className="px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold cursor-pointer transition-colors"
-                  >
-                    Confirm Pairing
-                  </motion.button>
-                ) : (
-                  <button type="button" onClick={() => setPairModalOpen(false)} className="px-3 py-2 rounded-lg bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs cursor-pointer">
-                    Done (Send JSON to Device A)
-                  </button>
-                )}
               </div>
             </motion.div>
           </div>
@@ -3659,9 +3398,9 @@ Separate keywords by commas. Commands containing these words will be blocked."
               <div className="shrink-0 border-b border-neutral-800 px-5 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h4 className="text-sm font-bold text-white">Inbound peer access</h4>
+                    <h4 className="text-sm font-bold text-white">Connection Permissions</h4>
                     <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
-                      When <span className="text-neutral-300">{peerAccessFriend?.name || 'this device'}</span> calls your tunnel, limit what their query can do on this machine.
+                      When <span className="text-neutral-300">{peerAccessFriend?.name || 'this connection'}</span> sends requests to this machine, limit what actions their agent can execute locally.
                       Long-term memory for guests uses an isolated namespace when enabled.
                     </p>
                   </div>

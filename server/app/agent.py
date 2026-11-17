@@ -81,12 +81,10 @@ def _patch_deepagents_subagents_for_subchat() -> None:
         _get_subagents,
         _EXCLUDED_STATE_KEYS,
         TASK_TOOL_DESCRIPTION,
-        HumanMessage,
-        ToolMessage,
-        StructuredTool,
-        InjectedToolArg,
-        Command,
     )
+    from langchain_core.messages import HumanMessage, ToolMessage
+    from langchain_core.tools import StructuredTool, InjectedToolArg
+    from langgraph.types import Command
 
     def _custom_create_task_tool(
         *,

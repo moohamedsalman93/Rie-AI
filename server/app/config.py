@@ -291,7 +291,16 @@ class Settings:
     # Rie configuration - managed dynamically by the main backend
     @property
     def RIE_API_URL(self) -> str:
-        return "https://rie-api-399060682924.asia-south1.run.app/v1"
+        return (self._get("RIE_API_URL") or "https://rie-api-399060682924.asia-south1.run.app/v1").rstrip("/")
+
+    @property
+    def RIE_WS_URL(self) -> str:
+        api_url = self.RIE_API_URL
+        if api_url.startswith("https://"):
+            return "wss://" + api_url[len("https://"):]
+        elif api_url.startswith("http://"):
+            return "ws://" + api_url[len("http://"):]
+        return api_url
 
     @property
     def RIE_MODEL(self) -> str:

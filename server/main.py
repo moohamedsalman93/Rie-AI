@@ -38,7 +38,7 @@ from app.routes import router
 from app.database import init_db, is_db_ready, ensure_db_ready, get_db_initialization_status
 from app.mcp_client import mcp_manager
 from app.scheduler import scheduler_manager, is_scheduler_ready
-from app.connectivity.ngrok_autostart import try_start_ngrok_tunnel_on_startup
+from app.connectivity.central_client import gateway_client
 
 # Create FastAPI application instance
 app = FastAPI(
@@ -68,7 +68,7 @@ app.add_middleware(
 
 # Subsystem background status tracker
 _subsystem_status = {
-    "ngrok": False,
+    "gateway": False,
 }
 
 @app.get("/health")
@@ -96,8 +96,7 @@ async def status_check():
     """Subsystem status check: reports detailed state across background services."""
     db_status = get_db_initialization_status()
     sched_status = "READY" if is_scheduler_ready() else "INITIALIZING"
-    ngrok_enabled = getattr(settings, "CONNECTIVITY_NGROK_ENABLED", False)
-    ngrok_status = "RUNNING" if _subsystem_status.get("ngrok") else ("DISABLED" if not ngrok_enabled else "STOPPED")
+    gateway_status = "CONNECTED" if gateway_client.is_connected() else "DISCONNECTED"
 
     is_overall_ready = (db_status == "READY" and sched_status == "READY")
 
@@ -107,7 +106,7 @@ async def status_check():
             "database": db_status,
             "scheduler": sched_status,
             "plugins": "READY",
-            "ngrok": ngrok_status,
+            "gateway": gateway_status,
             "browser": "NOT_INITIALIZED",
             "llm_providers": "LAZY",
         },
@@ -118,7 +117,7 @@ async def status_check():
 async def _background_initialization():
     """Run non-critical background initialization without blocking FastAPI startup or /health."""
     try:
-        logger.info("Starting background initialization (database, scheduler, ngrok)...")
+        logger.info("Starting background initialization (database, scheduler, gateway)...")
         # 1. DB initialization in worker thread
         await asyncio.to_thread(init_db)
         logger.info("Database schema initialized.")
@@ -128,10 +127,13 @@ async def _background_initialization():
         scheduler_manager.reschedule_pending_from_db()
         logger.info("Scheduler started.")
 
-        # 3. Ngrok autostart check
-        await asyncio.to_thread(try_start_ngrok_tunnel_on_startup)
-        _subsystem_status["ngrok"] = getattr(settings, "CONNECTIVITY_NGROK_ENABLED", False)
-        logger.info("Ngrok autostart check complete.")
+        # 3. Central Cloud Gateway Client autostart
+        try:
+            gateway_client.start()
+            _subsystem_status["gateway"] = True
+            logger.info("Central Cloud Gateway Client started.")
+        except Exception as gw_err:
+            logger.warning("Could not start Central Cloud Gateway Client: %s", gw_err)
 
         # 4. Background session aggregation loop (every 3 minutes)
         try:
@@ -193,6 +195,12 @@ async def shutdown_event():
         pass
 
     # Avoid hanging uvicorn reload if a cleanup routine blocks.
+    try:
+        from app.connectivity.central_client import gateway_client
+        await gateway_client.stop()
+    except Exception:
+        pass
+
     try:
         await asyncio.wait_for(mcp_manager.cleanup(), timeout=5)
     except asyncio.TimeoutError:

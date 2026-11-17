@@ -506,52 +506,79 @@ export async function getConnectivityIdentity() {
   return response.json();
 }
 
-export async function initPairing(name = null) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/pair/init`, {
+export async function sendConnectionRequest(targetEmail) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/requests`, {
     method: "POST",
     headers: getHeaders(),
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ target_email: targetEmail }),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to initialize pairing");
+    await throwHttpError(response, "Failed to send connection request");
   }
   return response.json();
 }
 
-export async function confirmPairing(payload) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/pair/confirm`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    await throwHttpError(response, "Failed to confirm pairing");
-  }
-  return response.json();
-}
-
-export async function finalizePairing(payload) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/pair/finalize`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    await throwHttpError(response, "Failed to finalize pairing");
-  }
-  return response.json();
-}
-
-export async function getFriends() {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends`, {
+export async function getConnectionRequests() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/requests`, {
     method: "GET",
     headers: getHeaders(),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to fetch friends");
+    await throwHttpError(response, "Failed to fetch connection requests");
   }
   return response.json();
 }
+
+export async function acceptConnectionRequest(requestId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/requests/${encodeURIComponent(requestId)}/accept`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to accept connection request");
+  }
+  return response.json();
+}
+
+export async function declineConnectionRequest(requestId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/requests/${encodeURIComponent(requestId)}/decline`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to decline connection request");
+  }
+  return response.json();
+}
+
+export async function cancelConnectionRequest(requestId) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/requests/${encodeURIComponent(requestId)}/cancel`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to cancel connection request");
+  }
+  return response.json();
+}
+
+export async function getConnections() {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to fetch connections");
+  }
+  return response.json();
+}
+
+export const sendFriendRequest = sendConnectionRequest;
+export const getFriendRequests = getConnectionRequests;
+export const acceptFriendRequest = acceptConnectionRequest;
+export const declineFriendRequest = declineConnectionRequest;
+export const cancelFriendRequest = cancelConnectionRequest;
+export const getFriends = getConnections;
 
 export async function getPeerAccessCatalog() {
   const response = await fetch(`${API_BASE_URL}/connectivity/peer-access/catalog`, {
@@ -565,27 +592,29 @@ export async function getPeerAccessCatalog() {
 }
 
 export async function updateFriendAccess(friendId, body) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/access`, {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}/access`, {
     method: "PATCH",
     headers: getHeaders(),
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to update friend access");
+    await throwHttpError(response, "Failed to update peer access");
   }
   return response.json();
 }
+export const updateConnectionAccess = updateFriendAccess;
 
 export async function removeFriend(friendId) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}`, {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}`, {
     method: "DELETE",
     headers: getHeaders(),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to remove paired friend");
+    await throwHttpError(response, "Failed to remove connection");
   }
   return response.json();
 }
+export const removeConnection = removeFriend;
 
 export async function fetchPeerQueryHistory(limit = 100, offset = 0) {
   const params = new URLSearchParams({
@@ -613,19 +642,20 @@ export async function clearPeerQueryHistory() {
   return response.json();
 }
 
-export async function askFriend(friendId, query, threadId = null) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask`, {
+export async function askConnection(friendId, query, threadId = null) {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}/ask`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ friend_id: friendId, query, thread_id: threadId }),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to ask friend");
+    await throwHttpError(response, "Failed to ask connection");
   }
   return response.json();
 }
+export const askFriend = askConnection;
 
-export async function streamFriendChat(
+export async function streamConnectionChat(
   friendId,
   query,
   threadId,
@@ -634,14 +664,14 @@ export async function streamFriendChat(
   onError,
   signal = null
 ) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask/stream`, {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}/ask/stream`, {
     method: "POST",
     headers: getHeaders(),
     signal,
     body: JSON.stringify({ friend_id: friendId, query, thread_id: threadId }),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to ask friend");
+    await throwHttpError(response, "Failed to ask connection");
   }
 
   const reader = response.body.getReader();
@@ -662,7 +692,7 @@ export async function streamFriendChat(
           const data = JSON.parse(trimmed.substring(6));
           if (onChunk) onChunk(data);
         } catch (e) {
-          console.error("Error parsing friend stream SSE data", e, trimmed);
+          console.error("Error parsing connection stream SSE data", e, trimmed);
         }
       }
     }
@@ -670,91 +700,61 @@ export async function streamFriendChat(
   } catch (error) {
     if (error.name === "AbortError") return;
     if (onError) onError(error);
-    else console.error("Friend stream error:", error);
+    else console.error("Connection stream error:", error);
   }
 }
+export const streamFriendChat = streamConnectionChat;
 
-export async function cancelFriendStream(friendId, threadId, streamId = null) {
+export async function cancelConnectionStream(friendId, threadId, streamId = null) {
   if (!friendId || !threadId) return { status: "ignored", cancelled: false };
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/ask/stream/cancel`, {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}/ask/stream/cancel`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ thread_id: threadId, stream_id: streamId }),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to cancel friend stream");
+    await throwHttpError(response, "Failed to cancel connection stream");
   }
   return response.json();
 }
+export const cancelFriendStream = cancelConnectionStream;
 
 export async function checkFriendStatus(friendId) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/status`, {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}/status`, {
     method: "GET",
     headers: getHeaders(),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to check friend status");
+    await throwHttpError(response, "Failed to check connection status");
   }
   return response.json();
 }
-
-export async function updateFriendEndpoint(friendId, publicUrl) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/endpoint`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify({ public_url: publicUrl }),
-  });
-  if (!response.ok) {
-    await throwHttpError(response, "Failed to update friend endpoint");
-  }
-  return response.json();
-}
-
-export async function getNgrokStatus() {
-  const response = await fetch(`${API_BASE_URL}/connectivity/ngrok/status`, {
-    method: "GET",
-    headers: getHeaders(),
-  });
-  if (!response.ok) {
-    await throwHttpError(response, "Failed to get ngrok status");
-  }
-  return response.json();
-}
-
-export async function installNgrok(authToken, domain = null) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/ngrok/install`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify({ confirmed: true, auth_token: authToken, domain }),
-  });
-  if (!response.ok) {
-    await throwHttpError(response, "Failed to install ngrok");
-  }
-  return response.json();
-}
+export const checkConnectionStatus = checkFriendStatus;
 
 export async function getFriendApproval(friendId, threadId) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/approval?thread_id=${encodeURIComponent(threadId)}`, {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}/approval?thread_id=${encodeURIComponent(threadId)}`, {
     method: "GET",
     headers: getHeaders(),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to get friend approval");
+    await throwHttpError(response, "Failed to get connection approval");
   }
   return response.json();
 }
 
 export async function approveFriendForThread(friendId, threadId) {
-  const response = await fetch(`${API_BASE_URL}/connectivity/friends/${encodeURIComponent(friendId)}/approval`, {
+  const response = await fetch(`${API_BASE_URL}/connectivity/connections/${encodeURIComponent(friendId)}/approval`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ thread_id: threadId }),
   });
   if (!response.ok) {
-    await throwHttpError(response, "Failed to approve friend");
+    await throwHttpError(response, "Failed to approve connection");
   }
   return response.json();
 }
+export const getConnectionApproval = getFriendApproval;
+export const approveConnectionForThread = approveFriendForThread;
 
 /**
  * Get backend logs

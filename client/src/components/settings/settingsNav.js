@@ -97,7 +97,7 @@ export const DIAGNOSTICS_SUB_TABS = [
 
 export const ADVANCED_SUB_TABS = [
   { id: 'orchestration', label: 'Orchestration' },
-  { id: 'remote', label: 'Remote access' },
+  { id: 'remote', label: 'Connections' },
 ];
 
 export const CAPABILITY_SUB_TABS = [

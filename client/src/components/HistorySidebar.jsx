@@ -462,7 +462,7 @@ export function HistorySidebar({
                     >
                         <span className="flex items-center gap-2">
                             <Users size={13} className="text-neutral-400" />
-                            <span className="font-medium text-[11px]">Friends</span>
+                            <span className="font-medium text-[11px]">Connections</span>
                             {friends.length > 0 && (
                                 <span className="text-[10px] text-neutral-500 font-mono">
                                     ({friends.length})
@@ -488,7 +488,7 @@ export function HistorySidebar({
                                         className="flex items-center justify-between px-2 py-1 rounded bg-neutral-800/40 hover:bg-neutral-800/70 transition-colors"
                                     >
                                         <span className="text-xs text-neutral-300 truncate">
-                                            {friend.name || "Friend"}
+                                            {friend.name || "Connection"}
                                         </span>
                                         <button
                                             type="button"
