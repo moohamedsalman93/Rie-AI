@@ -367,8 +367,8 @@ export function ChatInputArea({
                     }
                   }
                 }}
-                placeholder="Tell Rie what to do..."
-                className={`custom-scrollbar w-full resize-none rounded-2xl border bg-neutral-800/80 px-3 py-2 text-[13px] text-neutral-100 placeholder-neutral-500 shadow-sm outline-none transition-all placeholder:transition-opacity border-white/10 focus:bg-neutral-800 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'} disabled:opacity-50 max-h-[280px]`}
+                placeholder={chatMode === 'coding' ? "Ask a coding question, edit files, or execute tests..." : "Tell Rie what to do..."}
+                className={`custom-scrollbar w-full resize-none rounded-2xl border bg-neutral-800/80 px-3 py-2 text-[13px] text-neutral-100 placeholder-neutral-500 shadow-sm outline-none transition-all placeholder:transition-opacity border-white/10 focus:bg-neutral-800 ${chatMode === 'agent' ? 'focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10' : chatMode === 'coding' ? 'focus:border-violet-500 focus:ring-4 focus:ring-violet-500/10' : 'focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'} disabled:opacity-50 max-h-[280px]`}
                 disabled={isLoading}
               />
             </div>

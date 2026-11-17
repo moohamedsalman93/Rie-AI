@@ -11,7 +11,7 @@ import {
     PanelLeftClose,
     PanelLeftOpen
 } from 'lucide-react';
-import { getHistory, listScheduledTasks, cancelScheduledTask } from '../services/chatApi';
+import { getHistory, listScheduledTasks, cancelScheduledTask, getSubchats } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
 import { KnowledgeHistoryBadge } from './KnowledgeAttachmentChips';
 
@@ -62,6 +62,43 @@ export function HistorySidebar({
     const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+    const [threadSubchatsMap, setThreadSubchatsMap] = useState({});
+
+    // Automatically load child subchats for threads that have subchats
+    useEffect(() => {
+        if (!threads || threads.length === 0) return;
+        const threadsWithSubchats = threads.filter(
+            (t) => Number(t.subchat_count || 0) > 0 && !threadSubchatsMap[t.id]
+        );
+        if (threadsWithSubchats.length === 0) return;
+
+        let cancelled = false;
+        threadsWithSubchats.forEach(async (t) => {
+            try {
+                const subs = await getSubchats(t.id);
+                if (!cancelled && Array.isArray(subs)) {
+                    setThreadSubchatsMap((prev) => ({ ...prev, [t.id]: subs }));
+                }
+            } catch (err) {
+                console.debug("Failed fetching subchats for thread:", t.id, err);
+            }
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [threads]);
+
+    useEffect(() => {
+        if (!currentThreadId) return;
+        if (!threadSubchatsMap[currentThreadId]) {
+            getSubchats(currentThreadId).then((subs) => {
+                if (Array.isArray(subs) && subs.length > 0) {
+                    setThreadSubchatsMap((prev) => ({ ...prev, [currentThreadId]: subs }));
+                }
+            }).catch(() => {});
+        }
+    }, [currentThreadId]);
     const [threadToDelete, setThreadToDelete] = useState(null);
 
     // Accordions (Friends & Scheduled)
@@ -567,51 +604,88 @@ export function HistorySidebar({
                                             const isStreaming = streamingThreads.has(thread.id);
                                             const friendMeta = getThreadFriendMeta(thread.id);
 
-                                            return (
-                                                <button
-                                                    key={thread.id}
-                                                    onClick={() => {
-                                                        onSelectThread(thread.id);
-                                                        if (closeOnSelect) onClose();
-                                                    }}
-                                                    className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative flex items-center justify-between ${
-                                                        isActive
-                                                            ? "bg-neutral-800 text-neutral-100 font-medium"
-                                                            : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
-                                                    }`}
-                                                >
-                                                    <div className="pr-5 min-w-0">
-                                                        <div className="flex items-center gap-1.5">
-                                                            <span className="text-xs truncate">
-                                                                {thread.title || "Untitled Chat"}
-                                                            </span>
-                                                            {Boolean(friendMeta?.isFriendChat || friendMeta?.friendId) && (
-                                                                <span className="rounded bg-emerald-500/10 text-emerald-400 text-[9px] px-1 py-0.2 shrink-0">
-                                                                    Friend
-                                                                </span>
-                                                            )}
-                                                            <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
-                                                            {isStreaming && (
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                                                            )}
-                                                        </div>
-                                                        <div className="text-[10px] opacity-50 mt-0.5">
-                                                            {formatDate(thread.updated_at || thread.created_at)}
-                                                        </div>
-                                                    </div>
+                                            const childSubchats = threadSubchatsMap[thread.id] || [];
 
-                                                    <div
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setThreadToDelete(thread.id);
-                                                            setIsConfirmOpen(true);
+                                            return (
+                                                <div key={thread.id} className="space-y-0.5">
+                                                    <button
+                                                        onClick={() => {
+                                                            onSelectThread(thread.id);
+                                                            if (closeOnSelect) onClose();
                                                         }}
-                                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all"
-                                                        title="Delete conversation"
+                                                        className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative flex items-center justify-between ${
+                                                            isActive
+                                                                ? "bg-neutral-800 text-neutral-100 font-medium"
+                                                                : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
+                                                        }`}
                                                     >
-                                                        <Trash2 size={12} />
-                                                    </div>
-                                                </button>
+                                                        <div className="pr-5 min-w-0">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="text-xs truncate">
+                                                                    {thread.title || "Untitled Chat"}
+                                                                </span>
+                                                                {Boolean(friendMeta?.isFriendChat || friendMeta?.friendId) && (
+                                                                    <span className="rounded bg-emerald-500/10 text-emerald-400 text-[9px] px-1 py-0.2 shrink-0">
+                                                                        Friend
+                                                                    </span>
+                                                                )}
+                                                                <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
+                                                                {isStreaming && (
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-2 mt-0.5">
+                                                                <span className="text-[10px] opacity-50">
+                                                                    {formatDate(thread.updated_at || thread.created_at)}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        <div
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setThreadToDelete(thread.id);
+                                                                setIsConfirmOpen(true);
+                                                            }}
+                                                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all cursor-pointer"
+                                                            title="Delete conversation"
+                                                        >
+                                                            <Trash2 size={12} />
+                                                        </div>
+                                                    </button>
+
+                                                    {/* Nested Subchats Tree */}
+                                                    {childSubchats.length > 0 && (
+                                                        <div className="ml-3 pl-2.5 border-l border-white/[0.08] space-y-0.5 py-0.5">
+                                                            {childSubchats.map((sub) => {
+                                                                const isSubActive = sub.id === currentThreadId;
+                                                                const subClean = (sub.title || sub.subagent_type || "Subchat").replace(/_/g, " ");
+                                                                return (
+                                                                    <button
+                                                                        key={sub.id}
+                                                                        onClick={() => {
+                                                                            onSelectThread(sub.id);
+                                                                            if (closeOnSelect) onClose();
+                                                                        }}
+                                                                        className={`w-full text-left px-2 py-1.5 rounded-md text-xs transition-colors flex items-center justify-between group/sub ${
+                                                                            isSubActive
+                                                                                ? "bg-neutral-800 text-emerald-400 font-medium"
+                                                                                : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
+                                                                        }`}
+                                                                    >
+                                                                        <span className="truncate flex items-center gap-1.5 min-w-0">
+                                                                            <span className="text-[10px] text-emerald-500/70 font-mono">↳</span>
+                                                                            <span className="truncate text-[11px]">{subClean}</span>
+                                                                        </span>
+                                                                        <span className="text-[9px] text-neutral-500 font-mono shrink-0 ml-1">
+                                                                            {sub.message_count || 1} msg
+                                                                        </span>
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             );
                                         })}
                                     </div>

@@ -12,7 +12,7 @@ import { CustomUiContainer } from "./custom_ui/CustomUiContainer";
 import VoiceToolActivity from "./VoiceToolActivity";
 import VoiceSubAgentActivity from "./VoiceSubAgentActivity";
 
-function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion, onCancelSubAgent, onSend) {
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion, onCancelSubAgent, onSend, onOpenSubchat) {
   if (!blocks || blocks.length === 0) return null;
 
   const elements = [];
@@ -49,7 +49,7 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
       );
     } else if (block.type === "subagent") {
       flushToolGroup();
-      elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} />);
+      elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} onOpenSubchat={onOpenSubchat} />);
     } else if (block.type === "thought") {
       flushToolGroup();
       elements.push(
@@ -117,6 +117,7 @@ function ChatMessagesImpl({
   retryStatus = null,
   isVoiceActive = false,
   onCancelSubAgent,
+  onOpenSubchat,
   setInput,
   textareaRef,
 }) {
@@ -350,7 +351,8 @@ function ChatMessagesImpl({
                       Boolean(m.isPartial) || (isLoading && m.id === streamingBotMessageId),
                       onAnswerQuestion || ((_id, text) => onSend(text)),
                       onCancelSubAgent,
-                      onSend
+                      onSend,
+                      onOpenSubchat
                     )}
                     {pendingAction && m.id === messages[messages.length - 1].id && m.from === "bot" && (
                       <HITLApproval

@@ -6,9 +6,10 @@ import {
   Brain,
   Activity,
   Workflow,
+  BarChart3,
 } from 'lucide-react';
 
-/** @typedef {'assistant'|'capabilities'|'voice'|'memory'|'privacy'|'diagnostics'|'advanced'} SettingsTabId */
+/** @typedef {'assistant'|'capabilities'|'voice'|'memory'|'privacy'|'diagnostics'|'usage'|'advanced'} SettingsTabId */
 
 export const LEGACY_TAB_MAP = {
   provider: 'assistant',
@@ -22,6 +23,9 @@ export const LEGACY_TAB_MAP = {
   workstream: 'memory',
   sensors: 'memory',
   activity: 'memory',
+  tokens: 'usage',
+  token_usage: 'usage',
+  consumption: 'usage',
 };
 
 export const DEFAULT_TAB = 'assistant';
@@ -68,6 +72,7 @@ export const SETTINGS_NAV_GROUPS = [
     id: 'system',
     label: 'System',
     tabs: [
+      { id: 'usage', label: 'Token Usage', icon: BarChart3 },
       { id: 'privacy', label: 'Privacy & system', icon: Shield },
       { id: 'diagnostics', label: 'Diagnostics', icon: Activity },
     ],
@@ -85,6 +90,7 @@ export const MEMORY_SUB_TABS = [
 ];
 
 export const DIAGNOSTICS_SUB_TABS = [
+  { id: 'usage', label: 'Token Usage', description: 'Day-to-day token consumption and stats' },
   { id: 'logs', label: 'Logs', description: 'Local backend log output' },
   { id: 'tracing', label: 'Tracing', description: 'Optional LangSmith cloud tracing' },
 ];
@@ -105,6 +111,7 @@ export const CAPABILITY_SUB_TABS = [
 
 /** Search index: query tokens → tab (+ optional subTab) */
 export const SETTINGS_SEARCH_INDEX = [
+  { terms: ['token', 'tokens', 'token usage', 'token consumption', 'usage', 'cost', 'daily tokens', 'day to day', 'consumption', 'daily usage', 'prompt tokens', 'completion tokens'], tab: 'usage' },
   { terms: ['assistant', 'provider', 'llm', 'gemini', 'groq', 'openai', 'ollama', 'vertex', 'rie', 'api key', 'model'], tab: 'assistant' },
   { terms: ['tools', 'capabilities', 'builtin', 'terminal', 'mouse', 'keyboard', 'desktop', 'mcp', 'external api'], tab: 'capabilities' },
   { terms: ['skills', 'rules', 'instructions', 'skill library'], tab: 'capabilities', subTab: 'skills' },

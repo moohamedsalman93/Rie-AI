@@ -27,8 +27,14 @@ export const useChatStore = create((set, get) => ({
   input: "",
   setInput: (input) => set({ input }),
 
-  chatMode: "agent", // "agent" | "chat"
-  setChatMode: (mode) => set({ chatMode: mode }),
+  chatMode: "agent", // "agent" | "chat" | "coding"
+  setChatMode: (mode) => set({ chatMode: mode, codingMode: mode === "coding" }),
+
+  codingMode: false,
+  setCodingMode: (enabled) => set((state) => ({
+    codingMode: enabled,
+    chatMode: enabled ? "coding" : (state.chatMode === "coding" ? "agent" : state.chatMode),
+  })),
 
   speedMode: "thinking", // "thinking" | "flash"
   setSpeedMode: (mode) => set({ speedMode: mode }),
@@ -67,4 +73,27 @@ export const useChatStore = create((set, get) => ({
           ? updater(state.friendThreadMeta)
           : updater,
     })),
+
+  // Subchat & Thread Drawer state
+  activeSubchatId: null,
+  activeSubchatParentId: null,
+  activeSubchatTitle: null,
+  activeSubchatType: null,
+  isSubchatDrawerOpen: false,
+  openSubchat: (subchatId, parentId = null, title = null, subagentType = null) =>
+    set({
+      activeSubchatId: subchatId,
+      activeSubchatParentId: parentId,
+      activeSubchatTitle: title,
+      activeSubchatType: subagentType,
+      isSubchatDrawerOpen: true,
+    }),
+  closeSubchatDrawer: () =>
+    set({
+      isSubchatDrawerOpen: false,
+      activeSubchatId: null,
+      activeSubchatParentId: null,
+      activeSubchatTitle: null,
+      activeSubchatType: null,
+    }),
 }));

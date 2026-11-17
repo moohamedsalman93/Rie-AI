@@ -156,7 +156,7 @@ function MainApp() {
   const [pendingActions, setPendingActions] = useState({}); // Map: threadId -> HITL request
 
   // New states for toggles
-  const [chatMode, setChatMode] = useState("agent"); // "agent" | "chat"
+  const [chatMode, setChatMode] = useState("agent"); // "agent" | "chat" | "coding"
   const [speedMode, setSpeedMode] = useState("thinking"); // "thinking" | "flash"
   const [scheduleNotifications, setScheduleNotifications] = useState([]);
   const [scheduleNotificationLog, setScheduleNotificationLog] = useState([]);
@@ -884,9 +884,11 @@ function MainApp() {
           taskCalls.forEach((call) => {
             const callId = call.id || `subagent_${Date.now()}_${Math.random()}`;
             const meta = call.subagent_meta || {};
+            const subchatId = call.subchat_id || meta.subchat_id || (callId.startsWith("subchat_") ? callId : `subchat_${callId}`);
             const activity = {
               type: "subagent",
               id: callId,
+              subchatId: subchatId,
               name: meta.name || call.args?.subagent_type || "subagent",
               description: call.args?.description || meta.description || "Working on the delegated task",
               image: meta.logo_url || null,
@@ -2833,7 +2835,7 @@ function MainApp() {
   // Force chat mode if using Rie provider (or if LLM provider is unset/default)
   useEffect(() => {
     const provider = settings?.llm_provider || 'rie';
-    if (provider === 'rie' && chatMode === 'agent') {
+    if (provider === 'rie' && chatMode !== 'chat') {
       setChatMode('chat');
     }
   }, [settings?.llm_provider, chatMode]);

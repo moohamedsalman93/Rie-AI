@@ -42,8 +42,10 @@ import { AttachmentPopover } from './AttachmentPopover';
 import VoiceControls from './VoiceControls';
 import VoiceToolActivity from './VoiceToolActivity';
 import VoiceSubAgentActivity from './VoiceSubAgentActivity';
+import SubchatDrawer from './SubchatDrawer';
+import { useChatStore } from '../stores/useChatStore';
 
-function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion, onCancelSubAgent, onSend) {
+function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQuestion, onCancelSubAgent, onSend, onOpenSubchat) {
     if (!blocks || blocks.length === 0) return null;
 
     const elements = [];
@@ -80,7 +82,7 @@ function renderMessageBlocks(blocks, tooltipPlacement, isStreaming, onAnswerQues
             );
         } else if (block.type === 'subagent') {
             flushToolGroup();
-            elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} />);
+            elements.push(<SubAgentActivity key={block.id || `subagent-${idx}`} block={block} onOpenSubchat={onOpenSubchat} />);
         } else if (block.type === 'thought') {
             flushToolGroup();
             elements.push(
@@ -226,6 +228,16 @@ export function NormalModeLayout({
     voiceControls = null,
     onCancelSubAgent,
 }) {
+    const {
+        activeSubchatId,
+        activeSubchatParentId,
+        activeSubchatTitle,
+        activeSubchatType,
+        isSubchatDrawerOpen,
+        openSubchat,
+        closeSubchatDrawer,
+    } = useChatStore();
+
     const [dragCounter, setDragCounter] = useState(0);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
         return localStorage.getItem("rie_sidebar_collapsed") === "true";
@@ -669,7 +681,8 @@ export function NormalModeLayout({
                                                                     Boolean(m.isPartial) || m.id === streamingBotMessageId,
                                                                     onAnswerQuestion || ((_id, text) => onSend(text)),
                                                                     onCancelSubAgent,
-                                                                    onSend
+                                                                    onSend,
+                                                                    openSubchat
                                                                 )}
                                                             </div>
                                                         ) : (
@@ -1200,6 +1213,19 @@ export function NormalModeLayout({
                     )}
                 </AnimatePresence>
             </div>
+            <SubchatDrawer
+                isOpen={isSubchatDrawerOpen}
+                onClose={closeSubchatDrawer}
+                subchatId={activeSubchatId}
+                parentThreadId={activeSubchatParentId}
+                initialTitle={activeSubchatTitle}
+                initialType={activeSubchatType}
+                onSwitchToFullChat={(id) => {
+                    closeSubchatDrawer();
+                    onSelectThread(id);
+                }}
+            />
+
 
 
 

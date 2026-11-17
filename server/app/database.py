@@ -165,6 +165,84 @@ def init_db():
     finally:
         _db_initialized_event.set()
 
+def _backfill_token_usage_if_empty(cursor: sqlite3.Cursor) -> None:
+    """If token_usage is empty, seed it with estimated tokens from historical messages."""
+    try:
+        cursor.execute("SELECT COUNT(*) FROM token_usage")
+        if cursor.fetchone()[0] > 0:
+            return
+
+        cursor.execute("SELECT COUNT(*) FROM messages")
+        if cursor.fetchone()[0] == 0:
+            return
+
+        cursor.execute("""
+            SELECT 
+                SUBSTR(created_at, 1, 10) AS msg_date,
+                role,
+                thread_id,
+                COUNT(*) AS cnt,
+                SUM(LENGTH(content)) AS total_len,
+                MAX(created_at) AS last_ts
+            FROM messages
+            WHERE created_at IS NOT NULL AND content IS NOT NULL
+            GROUP BY msg_date, role, thread_id
+            ORDER BY msg_date ASC
+        """)
+        rows = cursor.fetchall()
+        if not rows:
+            return
+
+        aggregated: dict[tuple[str, str], dict[str, Any]] = {}
+        for msg_date, role, thread_id, cnt, total_len, last_ts in rows:
+            if not msg_date:
+                continue
+            key = (msg_date, thread_id or "default")
+            if key not in aggregated:
+                aggregated[key] = {
+                    "date": msg_date,
+                    "timestamp": last_ts or f"{msg_date}T12:00:00Z",
+                    "thread_id": thread_id,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                }
+            approx_tokens = max(cnt, (total_len or 0) // 4)
+            if role == "user":
+                aggregated[key]["prompt_tokens"] += approx_tokens
+            else:
+                aggregated[key]["completion_tokens"] += approx_tokens
+
+        insert_rows = []
+        for item in aggregated.values():
+            prompt = item["prompt_tokens"]
+            completion = item["completion_tokens"]
+            if prompt > 0 and completion == 0:
+                completion = max(10, prompt // 2)
+            elif completion > 0 and prompt == 0:
+                prompt = max(10, completion // 2)
+            total = prompt + completion
+            insert_rows.append((
+                item["date"],
+                item["timestamp"],
+                "default-model",
+                "rie",
+                prompt,
+                completion,
+                total,
+                item["thread_id"],
+                "chat_backfill",
+            ))
+
+        if insert_rows:
+            cursor.executemany("""
+                INSERT INTO token_usage (
+                    date, timestamp, model, provider, prompt_tokens, completion_tokens, total_tokens, thread_id, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, insert_rows)
+            logging.getLogger(__name__).info("Backfilled %d historical token usage rows from messages.", len(insert_rows))
+    except Exception as e:
+        logging.getLogger(__name__).warning("Failed to backfill token_usage: %s", e)
+
 def _init_db_tables():
     db_path = get_db_path()
     conn = sqlite3.connect(db_path, timeout=30.0)
@@ -222,6 +300,22 @@ def _init_db_tables():
         cursor.execute("SELECT image_url FROM messages LIMIT 1")
     except sqlite3.OperationalError:
         cursor.execute("ALTER TABLE messages ADD COLUMN image_url TEXT")
+
+    # Ensure threads table has subchat and parent thread columns
+    try:
+        cursor.execute("PRAGMA table_info(threads)")
+        existing_thread_cols = {row[1] for row in cursor.fetchall()}
+        if "parent_thread_id" not in existing_thread_cols:
+            cursor.execute("ALTER TABLE threads ADD COLUMN parent_thread_id TEXT REFERENCES threads(id) ON DELETE CASCADE")
+        if "thread_type" not in existing_thread_cols:
+            cursor.execute("ALTER TABLE threads ADD COLUMN thread_type TEXT DEFAULT 'main'")
+        if "subagent_type" not in existing_thread_cols:
+            cursor.execute("ALTER TABLE threads ADD COLUMN subagent_type TEXT")
+        if "subagent_status" not in existing_thread_cols:
+            cursor.execute("ALTER TABLE threads ADD COLUMN subagent_status TEXT")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_threads_parent_id ON threads(parent_thread_id)")
+    except Exception as e:
+        logging.warning("Error migrating threads table schema for subchats: %s", e)
 
     # Migrate legacy tunnel settings keys to ngrok/neutral naming.
     legacy_prefix = "CONNECTIVITY_" + "CLOUD" + "FLARE_"
@@ -909,6 +1003,37 @@ Instead of typing field-by-field with individual clicks:
     CREATE INDEX IF NOT EXISTS idx_setting_transactions_timestamp ON setting_transactions(timestamp)
     ''')
 
+    # Create token_usage table for day-to-day token tracking
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        model TEXT,
+        provider TEXT,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        thread_id TEXT,
+        source TEXT DEFAULT 'chat'
+    )
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_token_usage_date ON token_usage(date)
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_token_usage_timestamp ON token_usage(timestamp)
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_token_usage_provider ON token_usage(provider)
+    ''')
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_token_usage_thread ON token_usage(thread_id)
+    ''')
+
+    # Seed historical token usage estimates from messages if table is empty
+    _backfill_token_usage_if_empty(cursor)
+
     conn.commit()
     conn.close()
 
@@ -1090,6 +1215,129 @@ def create_thread(title: str, thread_id: Optional[str] = None) -> str:
     conn.close()
     return thread_id
 
+
+def create_subchat_thread(
+    parent_thread_id: str,
+    title: str,
+    subagent_type: Optional[str] = None,
+    thread_id: Optional[str] = None,
+) -> str:
+    """Create a new subchat thread linked to a parent thread."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    if not thread_id:
+        thread_id = str(uuid.uuid4())
+
+    now = datetime.utcnow().isoformat()
+
+    cursor.execute("SELECT id FROM threads WHERE id = ?", (thread_id,))
+    if cursor.fetchone():
+        cursor.execute(
+            """
+            UPDATE threads 
+            SET title = ?, updated_at = ?, parent_thread_id = ?, thread_type = 'subchat', subagent_type = COALESCE(?, subagent_type)
+            WHERE id = ?
+            """,
+            (title, now, parent_thread_id, subagent_type, thread_id)
+        )
+    else:
+        cursor.execute(
+            """
+            INSERT INTO threads (id, title, created_at, updated_at, parent_thread_id, thread_type, subagent_type, subagent_status)
+            VALUES (?, ?, ?, ?, ?, 'subchat', ?, 'running')
+            """,
+            (thread_id, title, now, now, parent_thread_id, subagent_type)
+        )
+
+    conn.commit()
+    conn.close()
+    return thread_id
+
+
+def update_subagent_status(thread_id: str, status: str) -> None:
+    """Update subagent execution status on a subchat thread."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        "UPDATE threads SET subagent_status = ?, updated_at = ? WHERE id = ?",
+        (status, now, thread_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_subchats(parent_thread_id: str) -> List[Dict[str, Any]]:
+    """Get all child subchats belonging to a parent thread."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT t.*,
+               (SELECT COUNT(*) FROM messages m WHERE m.thread_id = t.id) AS message_count
+        FROM threads t
+        WHERE t.parent_thread_id = ?
+        ORDER BY t.created_at ASC
+        """,
+        (parent_thread_id,)
+    )
+    rows = cursor.fetchall()
+    subchats = []
+    for r in rows:
+        subchats.append({
+            "id": r["id"],
+            "title": r["title"],
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+            "parent_thread_id": r["parent_thread_id"],
+            "thread_type": r["thread_type"] or "subchat",
+            "subagent_type": r["subagent_type"],
+            "subagent_status": r["subagent_status"] or "completed",
+            "message_count": int(r["message_count"] or 0),
+        })
+    conn.close()
+    return subchats
+
+
+def get_thread_info(thread_id: str) -> Optional[Dict[str, Any]]:
+    """Get details for a single thread including parent and subagent metadata."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT t.*,
+               p.title AS parent_title
+        FROM threads t
+        LEFT JOIN threads p ON p.id = t.parent_thread_id
+        WHERE t.id = ?
+        """,
+        (thread_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "parent_thread_id": row["parent_thread_id"],
+        "parent_title": row["parent_title"],
+        "thread_type": row["thread_type"] or "main",
+        "subagent_type": row["subagent_type"],
+        "subagent_status": row["subagent_status"],
+    }
+
 def update_thread_title(thread_id: str, title: str) -> None:
     """Update a thread's display title."""
     db_path = get_db_path()
@@ -1153,26 +1401,37 @@ def save_message(thread_id: str, role: str, content: str, image_url: Optional[st
     conn.commit()
     conn.close()
 
-def get_threads(limit: Optional[int] = None, offset: int = 0, search: Optional[str] = None) -> List[Dict[str, Any]]:
+def get_threads(
+    limit: Optional[int] = None,
+    offset: int = 0,
+    search: Optional[str] = None,
+    include_subchats: bool = False,
+) -> List[Dict[str, Any]]:
     """Get chat threads ordered by last update with optional pagination and search filter"""
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    where_clause = ""
+    where_clauses = []
     params = []
     
+    if not include_subchats:
+        where_clauses.append("(t.parent_thread_id IS NULL OR t.thread_type = 'main')")
+
     if search and search.strip():
-        where_clause = "WHERE LOWER(t.title) LIKE ?"
+        where_clauses.append("LOWER(t.title) LIKE ?")
         params.append(f"%{search.strip().lower()}%")
+
+    where_stmt = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         
     query = f"""
         SELECT
             t.*,
             ft.friend_id AS friend_id,
             ft.friend_name AS friend_name,
-            tk_agg.knowledge_names AS knowledge_names
+            tk_agg.knowledge_names AS knowledge_names,
+            COALESCE(sub_agg.subchat_count, 0) AS subchat_count
         FROM threads t
         LEFT JOIN friend_threads ft ON ft.thread_id = t.id
         LEFT JOIN (
@@ -1180,7 +1439,13 @@ def get_threads(limit: Optional[int] = None, offset: int = 0, search: Optional[s
             FROM thread_knowledge
             GROUP BY thread_id
         ) tk_agg ON tk_agg.thread_id = t.id
-        {where_clause}
+        LEFT JOIN (
+            SELECT parent_thread_id, COUNT(*) AS subchat_count
+            FROM threads
+            WHERE parent_thread_id IS NOT NULL
+            GROUP BY parent_thread_id
+        ) sub_agg ON sub_agg.parent_thread_id = t.id
+        {where_stmt}
         ORDER BY t.updated_at DESC
     """
     
@@ -1207,6 +1472,10 @@ def get_threads(limit: Optional[int] = None, offset: int = 0, search: Optional[s
             "title": row["title"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "parent_thread_id": row["parent_thread_id"] if "parent_thread_id" in row.keys() else None,
+            "thread_type": row["thread_type"] if "thread_type" in row.keys() else "main",
+            "subagent_type": row["subagent_type"] if "subagent_type" in row.keys() else None,
+            "subchat_count": int(row["subchat_count"]) if "subchat_count" in row.keys() else 0,
             "is_friend_chat": bool(row["friend_id"]),
             "friend_id": row["friend_id"],
             "friend_name": row["friend_name"],
@@ -1328,11 +1597,23 @@ def fork_thread_messages(
 
 
 def delete_thread(thread_id: str):
-    """Delete a thread and its messages"""
+    """Delete a thread and its messages, including child subchats"""
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
+    # Clean up child subchats first
+    try:
+        cursor.execute("SELECT id FROM threads WHERE parent_thread_id = ?", (thread_id,))
+        child_ids = [r[0] for r in cursor.fetchall()]
+        for cid in child_ids:
+            cursor.execute("DELETE FROM messages WHERE thread_id = ?", (cid,))
+            cursor.execute("DELETE FROM friend_threads WHERE thread_id = ?", (cid,))
+            cursor.execute("DELETE FROM thread_knowledge WHERE thread_id = ?", (cid,))
+            cursor.execute("DELETE FROM threads WHERE id = ?", (cid,))
+    except Exception as e:
+        logging.warning("Error cleaning up child subchats for thread %s: %s", thread_id, e)
+
     cursor.execute("DELETE FROM messages WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM friend_threads WHERE thread_id = ?", (thread_id,))
     cursor.execute("DELETE FROM thread_knowledge WHERE thread_id = ?", (thread_id,))
@@ -3005,6 +3286,287 @@ def delete_plugin_integration(plugin_id: str) -> bool:
         return False
     finally:
         conn.close()
+
+
+def record_token_usage(
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: Optional[int] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    source: str = "chat",
+    timestamp: Optional[str] = None,
+) -> int:
+    """Record a token usage event into the database."""
+    ts = timestamp or datetime.now(timezone.utc).isoformat()
+    date_str = ts[:10]  # 'YYYY-MM-DD'
+    p_tok = max(0, int(prompt_tokens or 0))
+    c_tok = max(0, int(completion_tokens or 0))
+    t_tok = int(total_tokens) if total_tokens is not None else (p_tok + c_tok)
+
+    if p_tok == 0 and c_tok == 0 and t_tok == 0:
+        return 0
+
+    db_path = get_db_path()
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO token_usage (
+                date, timestamp, model, provider, prompt_tokens, completion_tokens, total_tokens, thread_id, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                date_str,
+                ts,
+                (model or "unknown").strip(),
+                (provider or "unknown").strip().lower(),
+                p_tok,
+                c_tok,
+                t_tok,
+                thread_id,
+                source,
+            ),
+        )
+        conn.commit()
+        return cursor.lastrowid or 0
+
+
+def get_daily_token_usage(
+    days: int = 30,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Retrieve day-by-day aggregated token usage."""
+    from datetime import timedelta
+    db_path = get_db_path()
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        query = """
+            SELECT 
+                date,
+                SUM(prompt_tokens) AS prompt_tokens,
+                SUM(completion_tokens) AS completion_tokens,
+                SUM(total_tokens) AS total_tokens,
+                COUNT(*) AS request_count,
+                GROUP_CONCAT(DISTINCT model) AS models,
+                GROUP_CONCAT(DISTINCT provider) AS providers
+            FROM token_usage
+        """
+        params: list[Any] = []
+        conditions: list[str] = []
+
+        if start_date:
+            conditions.append("date >= ?")
+            params.append(start_date)
+        if end_date:
+            conditions.append("date <= ?")
+            params.append(end_date)
+        elif not start_date and days > 0:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+            conditions.append("date >= ?")
+            params.append(cutoff)
+
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+
+        query += " GROUP BY date ORDER BY date DESC"
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_token_usage_summary(days: int = 30) -> Dict[str, Any]:
+    """Retrieve high-level summary metrics, breakdowns, and day-by-day data."""
+    from datetime import timedelta
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+    cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    db_path = get_db_path()
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # All-time stats
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(prompt_tokens), 0) AS total_prompt,
+                COALESCE(SUM(completion_tokens), 0) AS total_completion,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COUNT(*) AS total_requests,
+                MIN(date) AS first_date,
+                MAX(date) AS last_date,
+                COUNT(DISTINCT date) AS active_days
+            FROM token_usage
+        """)
+        all_time_row = dict(cursor.fetchone() or {})
+
+        # Today stats
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COUNT(*) AS request_count
+            FROM token_usage
+            WHERE date = ?
+        """, (today_str,))
+        today_row = dict(cursor.fetchone() or {})
+        today_row["date"] = today_str
+
+        # Yesterday stats
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COUNT(*) AS request_count
+            FROM token_usage
+            WHERE date = ?
+        """, (yesterday_str,))
+        yesterday_row = dict(cursor.fetchone() or {})
+        yesterday_row["date"] = yesterday_str
+
+        # Last 7 days stats
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COUNT(*) AS request_count,
+                COUNT(DISTINCT date) AS active_days
+            FROM token_usage
+            WHERE date >= ?
+        """, (cutoff_7d,))
+        last_7d_row = dict(cursor.fetchone() or {})
+        active_days_7 = max(1, last_7d_row.get("active_days") or 1)
+        last_7d_row["avg_daily_tokens"] = round(last_7d_row.get("total_tokens", 0) / active_days_7)
+
+        # Last 30 days stats
+        cursor.execute("""
+            SELECT 
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COUNT(*) AS request_count,
+                COUNT(DISTINCT date) AS active_days
+            FROM token_usage
+            WHERE date >= ?
+        """, (cutoff_30d,))
+        last_30d_row = dict(cursor.fetchone() or {})
+        active_days_30 = max(1, last_30d_row.get("active_days") or 1)
+        last_30d_row["avg_daily_tokens"] = round(last_30d_row.get("total_tokens", 0) / active_days_30)
+
+        # Provider breakdown
+        cursor.execute("""
+            SELECT 
+                provider,
+                SUM(prompt_tokens) AS prompt_tokens,
+                SUM(completion_tokens) AS completion_tokens,
+                SUM(total_tokens) AS total_tokens,
+                COUNT(*) AS request_count
+            FROM token_usage
+            GROUP BY provider
+            ORDER BY total_tokens DESC
+        """)
+        by_provider_rows = [dict(r) for r in cursor.fetchall()]
+        grand_total = max(1, all_time_row.get("total_tokens", 0))
+        for p in by_provider_rows:
+            p["percentage"] = round((p["total_tokens"] / grand_total) * 100, 1)
+
+        # Model breakdown
+        cursor.execute("""
+            SELECT 
+                model,
+                provider,
+                SUM(prompt_tokens) AS prompt_tokens,
+                SUM(completion_tokens) AS completion_tokens,
+                SUM(total_tokens) AS total_tokens,
+                COUNT(*) AS request_count
+            FROM token_usage
+            GROUP BY model, provider
+            ORDER BY total_tokens DESC
+            LIMIT 15
+        """)
+        by_model_rows = [dict(r) for r in cursor.fetchall()]
+        for m in by_model_rows:
+            m["percentage"] = round((m["total_tokens"] / grand_total) * 100, 1)
+
+        # Daily usage for the requested timeframe (if days <= 0, return all daily rows)
+        if days and days > 0:
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+            cursor.execute("""
+                SELECT 
+                    date,
+                    SUM(prompt_tokens) AS prompt_tokens,
+                    SUM(completion_tokens) AS completion_tokens,
+                    SUM(total_tokens) AS total_tokens,
+                    COUNT(*) AS request_count,
+                    GROUP_CONCAT(DISTINCT model) AS models,
+                    GROUP_CONCAT(DISTINCT provider) AS providers
+                FROM token_usage
+                WHERE date >= ?
+                GROUP BY date
+                ORDER BY date DESC
+            """, (cutoff_date,))
+        else:
+            cursor.execute("""
+                SELECT 
+                    date,
+                    SUM(prompt_tokens) AS prompt_tokens,
+                    SUM(completion_tokens) AS completion_tokens,
+                    SUM(total_tokens) AS total_tokens,
+                    COUNT(*) AS request_count,
+                    GROUP_CONCAT(DISTINCT model) AS models,
+                    GROUP_CONCAT(DISTINCT provider) AS providers
+                FROM token_usage
+                GROUP BY date
+                ORDER BY date DESC
+            """)
+        daily_rows = [dict(r) for r in cursor.fetchall()]
+
+        return {
+            "today": today_row,
+            "yesterday": yesterday_row,
+            "last_7_days": last_7d_row,
+            "last_30_days": last_30d_row,
+            "all_time": all_time_row,
+            "by_provider": by_provider_rows,
+            "by_model": by_model_rows,
+            "daily": daily_rows,
+        }
+
+
+def get_token_usage_logs(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    """Retrieve raw token usage event logs with pagination."""
+    db_path = get_db_path()
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, date, timestamp, model, provider, prompt_tokens, completion_tokens, total_tokens, thread_id, source
+            FROM token_usage
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+def clear_token_usage() -> bool:
+    """Clear all records from token_usage table."""
+    db_path = get_db_path()
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM token_usage")
+        conn.commit()
+        return True
+
 
 
 

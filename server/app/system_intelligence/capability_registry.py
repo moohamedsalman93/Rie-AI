@@ -448,6 +448,7 @@ class CapabilityRegistry:
 
         modes = {
             "chat_mode": settings.CHAT_MODE,
+            "coding_mode": str(settings.CODING_MODE).lower(),
             "speed_mode": settings.SPEED_MODE,
             "orchestration_mode": settings.AGENT_ORCHESTRATION_MODE,
             "hitl_mode": settings.HITL_MODE,

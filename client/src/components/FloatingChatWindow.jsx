@@ -1,4 +1,7 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { ArrowLeft, Bot } from "lucide-react";
+import { getThreadInfo } from "../services/chatApi";
 import { ChatHeader } from "./ChatHeader";
 import { FloatingScheduleSheet } from "./FloatingScheduleSheet";
 import { ChatMessages } from "./ChatMessages";
@@ -234,7 +237,23 @@ export function FloatingChatWindow({
                   )}
                 </div>
               )}
+              {parentThreadInfo && (
+                <div className="sticky top-0 z-20 flex items-center justify-between px-3 py-1.5 bg-neutral-900/90 border-b border-emerald-500/20 backdrop-blur-md shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onSelectThread(parentThreadInfo.parent_thread_id)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer"
+                  >
+                    <ArrowLeft size={13} />
+                    <span>Return to Parent Chat</span>
+                  </button>
+                  <span className="text-[10px] text-neutral-400 truncate max-w-[150px] font-mono">
+                    {parentThreadInfo.title || "Subchat"}
+                  </span>
+                </div>
+              )}
               <ChatMessages
+                onOpenSubchat={(subchatId) => onSelectThread(subchatId)}
                 isVoiceActive={Boolean(voiceControls)}
                 messages={messages}
                 isLoading={isLoading}

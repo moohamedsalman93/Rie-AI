@@ -27,7 +27,7 @@ class ModifySettingInput(BaseModel):
         ...,
         description=(
             "The setting key to modify. Tier 1 autonomous keys include: "
-            "'SPEED_MODE' ('thinking'|'flash'), 'CHAT_MODE' ('agent'|'chat'), "
+            "'SPEED_MODE' ('thinking'|'flash'), 'CHAT_MODE' ('agent'|'chat'|'coding'), 'CODING_MODE' ('true'|'false'), "
             "'AGENT_ORCHESTRATION_MODE' ('solo'|'team'), 'CAMOFOX_HEADLESS_MODE' ('headless'|'normal'|'auto'), "
             "'WEB_SEARCH_PROVIDER' ('tavily'|'brave'|'duckduckgo'), 'FLOATING_CHAT_OPACITY' (0.1-1.0), "
             "'SHOW_BUBBLE' ('true'|'false'), 'WINDOW_MODE' ('floating'|'normal'). "

@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Dict, List, Optional, AsyncIterator
 import logging
 import httpx
+from pydantic import BaseModel
 
 from fastapi import APIRouter, HTTPException, Query, File, UploadFile
 from fastapi.responses import StreamingResponse
@@ -65,6 +66,8 @@ from app.database import (
     save_message,
     get_threads,
     get_thread_messages,
+    get_subchats,
+    get_thread_info,
     fork_thread_messages,
     delete_thread,
     clear_all_history,
@@ -670,6 +673,88 @@ async def get_planner_tools():
     return PlannerToolCatalogResponse(tools=tools)
 
 
+class RecordTokenUsageRequest(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: Optional[int] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    thread_id: Optional[str] = None
+    source: str = "custom"
+
+
+@router.get("/token-usage/summary")
+async def get_token_usage_summary_endpoint(days: int = Query(default=30, ge=0, le=365)):
+    """Get summarized token usage across days, models, and providers."""
+    try:
+        from app.database import get_token_usage_summary
+        return get_token_usage_summary(days=days)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to fetch token usage summary: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/token-usage/daily")
+async def get_token_usage_daily_endpoint(
+    days: int = Query(default=30, ge=0, le=365),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """Get day-by-day aggregated token usage."""
+    try:
+        from app.database import get_daily_token_usage
+        return get_daily_token_usage(days=days, start_date=start_date, end_date=end_date)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to fetch daily token usage: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/token-usage/logs")
+async def get_token_usage_logs_endpoint(
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
+    """Get recent token usage event logs."""
+    try:
+        from app.database import get_token_usage_logs
+        return get_token_usage_logs(limit=limit, offset=offset)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to fetch token usage logs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/token-usage/clear")
+async def clear_token_usage_endpoint():
+    """Clear all recorded token usage data."""
+    try:
+        from app.database import clear_token_usage
+        clear_token_usage()
+        return {"success": True, "message": "Token usage history cleared"}
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to clear token usage: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/token-usage/record")
+async def record_token_usage_endpoint(req: RecordTokenUsageRequest):
+    """Record a token usage event."""
+    try:
+        from app.database import record_token_usage
+        row_id = record_token_usage(
+            prompt_tokens=req.prompt_tokens,
+            completion_tokens=req.completion_tokens,
+            total_tokens=req.total_tokens,
+            model=req.model,
+            provider=req.provider,
+            thread_id=req.thread_id,
+            source=req.source,
+        )
+        return {"success": True, "id": row_id}
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to record token usage: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/rie/usage")
 async def get_rie_usage():
     """
@@ -839,6 +924,7 @@ async def get_settings():
         mcp_servers=settings.MCP_SERVERS,
         window_mode=settings.WINDOW_MODE,
         chat_mode=settings.CHAT_MODE,
+        coding_mode=settings.CODING_MODE,
         speed_mode=settings.SPEED_MODE,
         agent_orchestration_mode=settings.AGENT_ORCHESTRATION_MODE,
         hitl_enabled=settings.HITL_ENABLED,
@@ -919,7 +1005,7 @@ async def update_settings(data: SettingsUpdate):
         "GROQ_MODEL", "GEMINI_MODEL", "VERTEX_MODEL", "OPENAI_MODEL", "OPENAI_BASE_URL",
         "AZURE_FOUNDRY_MODEL", "AZURE_FOUNDRY_BASE_URL", "AZURE_FOUNDRY_ENDPOINT",
         "DEEPSEEK_MODEL", "DEEPSEEK_BASE_URL", "GLM_MODEL", "GLM_BASE_URL",
-        "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
+        "MCP_SERVERS", "WINDOW_MODE", "CHAT_MODE", "CODING_MODE", "SPEED_MODE", "AGENT_ORCHESTRATION_MODE", "HITL_ENABLED", "HITL_MODE",
         "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
         "GEMINI_LIVE_VOICE", "WAKE_WORD_ENABLED", "SHARE_LOCATION", "EXCLUDE_FROM_CAPTURE", "CAPTURE_SCREEN_AS_TEXT", "FLOATING_CHAT_OPACITY", "SHOW_BUBBLE", "RIE_ACCESS_TOKEN",
 
@@ -942,7 +1028,18 @@ async def update_settings(data: SettingsUpdate):
     
     if data.key not in ALLOWED_KEYS:
         raise HTTPException(status_code=400, detail=f"Invalid setting key: {data.key}")
-    if data.key in ("CAMOFOX_HEADLESS_MODE", "BROWSER_HEADLESS_MODE"):
+    if data.key == "CHAT_MODE":
+        mode = (data.value or "").strip().lower()
+        if mode not in {"agent", "chat", "coding"}:
+            raise HTTPException(status_code=400, detail="CHAT_MODE must be 'agent', 'chat', or 'coding'")
+        value_to_store = mode
+    elif data.key == "CODING_MODE":
+        val = data.value
+        if isinstance(val, str):
+            value_to_store = val.strip().lower() in ("true", "1", "yes", "on")
+        else:
+            value_to_store = bool(val)
+    elif data.key in ("CAMOFOX_HEADLESS_MODE", "BROWSER_HEADLESS_MODE"):
         mode = (data.value or "").strip().lower()
         if mode not in {"headless", "normal", "auto"}:
             raise HTTPException(status_code=400, detail="CAMOFOX_HEADLESS_MODE must be 'headless', 'normal', or 'auto'")
@@ -2594,9 +2691,10 @@ async def get_history_threads(
     limit: Optional[int] = Query(None, ge=1),
     offset: int = Query(0, ge=0),
     search: Optional[str] = Query(None),
+    include_subchats: bool = Query(False),
 ):
     """Get list of chat history threads with pagination and search support"""
-    threads = await run_in_threadpool(get_threads, limit, offset, search)
+    threads = await run_in_threadpool(get_threads, limit, offset, search, include_subchats)
     return threads
 
 @router.get("/history/{thread_id}")
@@ -2604,6 +2702,24 @@ async def get_history_messages(thread_id: str):
     """Get messages for a specific thread"""
     messages = await run_in_threadpool(get_thread_messages, thread_id)
     return messages
+
+
+@router.get("/history/{thread_id}/subchats")
+@router.get("/threads/{thread_id}/subchats")
+async def get_thread_subchats_route(thread_id: str):
+    """Get all child subchats for a parent thread."""
+    subchats = await run_in_threadpool(get_subchats, thread_id)
+    return subchats
+
+
+@router.get("/history/{thread_id}/info")
+@router.get("/threads/{thread_id}/info")
+async def get_thread_info_route(thread_id: str):
+    """Get metadata for a specific thread (including parent link)."""
+    info = await run_in_threadpool(get_thread_info, thread_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return info
 
 
 @router.post("/history/fork")
@@ -2955,6 +3071,7 @@ async def chat_resume(data: ResumeChatRequest):
     is_voice = data.is_voice
     token = data.token
     chat_mode = data.chat_mode
+    coding_mode = getattr(data, "coding_mode", None)
     speed_mode = data.speed_mode
 
     return StreamingResponse(
@@ -2967,6 +3084,7 @@ async def chat_resume(data: ResumeChatRequest):
             decisions=decisions,
             chat_mode=chat_mode,
             speed_mode=speed_mode,
+            coding_mode=coding_mode,
             client_timezone=data.client_timezone,
             client_local_datetime_iso=data.client_local_datetime_iso,
             client_latitude=data.client_latitude,
@@ -3087,10 +3205,14 @@ def _serialize_message(msg: Any) -> Optional[Dict[str, Any]]:
                         ),
                         None,
                     )
+                    call_id = tc_data.get("id") or ""
+                    subchat_id = f"subchat_{call_id}" if call_id else f"subchat_{subagent_type}_{int(datetime.utcnow().timestamp())}"
+                    tc_data["subchat_id"] = subchat_id
                     tc_data["subagent_meta"] = {
                         "name": (node or {}).get("name") or subagent_type or "subagent",
                         "description": (node or {}).get("description") or "",
                         "logo_url": (node or {}).get("logo_url"),
+                        "subchat_id": subchat_id,
                     }
                 serialized_calls.append(tc_data or str(tc))
         
@@ -3117,6 +3239,7 @@ async def _agent_stream_generator(
     decisions: Optional[list[Dict[str, Any]]] = None,
     chat_mode: Optional[str] = None,
     speed_mode: Optional[str] = None,
+    coding_mode: Optional[bool] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
     client_latitude: Optional[float] = None,
@@ -3168,6 +3291,9 @@ async def _agent_stream_generator(
                         return
 
                 seen_token_stream = False
+                recorded_turn_tokens = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                recorded_msg_ids = set()
+                active_provider, active_model = agent_manager.get_current_model_info()
 
                 async for chunk in agent_manager.stream(
                     messages=messages, 
@@ -3178,6 +3304,7 @@ async def _agent_stream_generator(
                     decisions=decisions,
                     chat_mode=chat_mode,
                     speed_mode=speed_mode,
+                    coding_mode=coding_mode,
                     client_timezone=client_timezone,
                     client_local_datetime_iso=client_local_datetime_iso,
                     client_latitude=client_latitude,
@@ -3245,6 +3372,53 @@ async def _agent_stream_generator(
 
                             last_msg = raw_messages[-1]
 
+                            # Track token usage for AI/assistant messages
+                            try:
+                                msg_type = getattr(last_msg, "type", "")
+                                if msg_type in ("ai", "assistant") or hasattr(last_msg, "tool_calls"):
+                                    msg_id = getattr(last_msg, "id", None) or f"{step}_{len(recorded_msg_ids)}"
+                                    if msg_id not in recorded_msg_ids:
+                                        recorded_msg_ids.add(msg_id)
+                                        usage = getattr(last_msg, "usage_metadata", None)
+                                        p_tok = 0
+                                        c_tok = 0
+                                        t_tok = 0
+                                        if isinstance(usage, dict):
+                                            p_tok = usage.get("input_tokens", 0) or 0
+                                            c_tok = usage.get("output_tokens", 0) or 0
+                                            t_tok = usage.get("total_tokens", p_tok + c_tok) or (p_tok + c_tok)
+                                        if not p_tok and not c_tok:
+                                            resp_meta = getattr(last_msg, "response_metadata", {})
+                                            if isinstance(resp_meta, dict):
+                                                tok_u = resp_meta.get("token_usage") or resp_meta.get("usage")
+                                                if isinstance(tok_u, dict):
+                                                    p_tok = tok_u.get("prompt_tokens") or tok_u.get("input_tokens") or 0
+                                                    c_tok = tok_u.get("completion_tokens") or tok_u.get("output_tokens") or 0
+                                                    t_tok = tok_u.get("total_tokens") or (p_tok + c_tok)
+                                        if not p_tok and not c_tok:
+                                            content_str = str(getattr(last_msg, "content", "") or "")
+                                            c_tok = max(1, len(content_str) // 4)
+                                            b = agent_manager.get_context_breakdown(thread_id)
+                                            p_tok = b.get("total_tokens", 800) if b else 800
+                                            t_tok = p_tok + c_tok
+
+                                        if p_tok or c_tok:
+                                            recorded_turn_tokens["prompt_tokens"] += p_tok
+                                            recorded_turn_tokens["completion_tokens"] += c_tok
+                                            recorded_turn_tokens["total_tokens"] += t_tok
+                                            from app.database import record_token_usage
+                                            record_token_usage(
+                                                prompt_tokens=p_tok,
+                                                completion_tokens=c_tok,
+                                                total_tokens=t_tok,
+                                                model=active_model,
+                                                provider=active_provider,
+                                                thread_id=thread_id,
+                                                source="chat_stream",
+                                            )
+                            except Exception as rec_err:
+                                logger.debug(f"Failed to record token usage in stream: {rec_err}")
+
                             serialized = _serialize_message(last_msg)
                             if serialized is None:
                                 continue
@@ -3294,11 +3468,32 @@ async def _agent_stream_generator(
                 # Signal completion so the client can close the SSE cleanly
                 logger.info("Stream generator finished normally")
                 try:
+                    if not recorded_msg_ids and seen_token_stream:
+                        b = agent_manager.get_context_breakdown(thread_id)
+                        p_tok = b.get("total_tokens", 500) if b else 500
+                        c_tok = 50
+                        from app.database import record_token_usage
+                        record_token_usage(
+                            prompt_tokens=p_tok,
+                            completion_tokens=c_tok,
+                            total_tokens=p_tok + c_tok,
+                            model=active_model,
+                            provider=active_provider,
+                            thread_id=thread_id,
+                            source="chat_stream_fallback",
+                        )
+                        recorded_turn_tokens["prompt_tokens"] += p_tok
+                        recorded_turn_tokens["completion_tokens"] += c_tok
+                        recorded_turn_tokens["total_tokens"] += p_tok + c_tok
+
+                    if recorded_turn_tokens["total_tokens"] > 0:
+                        await sse_queue.put(f"data: {json.dumps({'step': 'token_usage', 'usage': recorded_turn_tokens, 'model': active_model, 'provider': active_provider}, default=str)}\n\n")
+
                     b = agent_manager.get_context_breakdown(thread_id)
                     if b:
                         await sse_queue.put(f"data: {json.dumps({'step': 'context_breakdown', 'breakdown': b}, default=str)}\n\n")
                 except Exception as ctx_err:
-                    logger.debug(f"Could not emit context breakdown: {ctx_err}")
+                    logger.debug(f"Could not emit context breakdown / token usage: {ctx_err}")
                 await sse_queue.put(f"data: {json.dumps({'step': 'end', 'done': True})}\n\n")
             
             except asyncio.CancelledError:
@@ -3361,6 +3556,7 @@ async def _agent_stream_generator_with_save(
     decisions: Optional[list[Dict[str, Any]]] = None,
     chat_mode: Optional[str] = None,
     speed_mode: Optional[str] = None,
+    coding_mode: Optional[bool] = None,
     client_timezone: Optional[str] = None,
     client_local_datetime_iso: Optional[str] = None,
     client_latitude: Optional[float] = None,
@@ -3387,6 +3583,7 @@ async def _agent_stream_generator_with_save(
         decisions,
         chat_mode,
         speed_mode,
+        coding_mode,
         client_timezone,
         client_local_datetime_iso,
         client_latitude,
@@ -3468,6 +3665,7 @@ async def _chat_stream_with_url_previews(
     token: Optional[str],
     chat_mode: Optional[str],
     speed_mode: Optional[str],
+    coding_mode: Optional[bool] = None,
     client_timezone: Optional[str],
     client_local_datetime_iso: Optional[str],
     client_latitude: Optional[float],
@@ -3500,6 +3698,7 @@ async def _chat_stream_with_url_previews(
         token=token,
         chat_mode=chat_mode,
         speed_mode=speed_mode,
+        coding_mode=coding_mode,
         client_timezone=client_timezone,
         client_local_datetime_iso=client_local_datetime_iso,
         client_latitude=client_latitude,
@@ -3536,6 +3735,7 @@ async def chat_stream_post(
     token = chat_message.token
     clipboard_text = chat_message.clipboard_text
     chat_mode = chat_message.chat_mode
+    coding_mode = getattr(chat_message, "coding_mode", None)
     speed_mode = chat_message.speed_mode
     friend_target_id = chat_message.friend_target_id
     friend_target_name = chat_message.friend_target_name
@@ -3596,6 +3796,7 @@ async def chat_stream_post(
             token=token,
             chat_mode=chat_mode,
             speed_mode=speed_mode,
+            coding_mode=coding_mode,
             client_timezone=chat_message.client_timezone,
             client_local_datetime_iso=chat_message.client_local_datetime_iso,
             client_latitude=chat_message.client_latitude,

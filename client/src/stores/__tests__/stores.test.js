@@ -56,6 +56,15 @@ describe('Zustand Stores Suite', () => {
 
       useChatStore.getState().setChatMode('chat');
       expect(useChatStore.getState().chatMode).toBe('chat');
+      expect(useChatStore.getState().codingMode).toBe(false);
+
+      useChatStore.getState().setChatMode('coding');
+      expect(useChatStore.getState().chatMode).toBe('coding');
+      expect(useChatStore.getState().codingMode).toBe(true);
+
+      useChatStore.getState().setCodingMode(false);
+      expect(useChatStore.getState().codingMode).toBe(false);
+      expect(useChatStore.getState().chatMode).toBe('agent');
 
       useChatStore.getState().setSpeedMode('flash');
       expect(useChatStore.getState().speedMode).toBe('flash');

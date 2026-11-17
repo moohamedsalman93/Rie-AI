@@ -22,7 +22,8 @@ class ChatMessage(BaseModel):
     project_root: Optional[str] = None
     token: Optional[str] = None
     clipboard_text: Optional[str] = None
-    chat_mode: Optional[str] = None  # "agent" or "chat"
+    chat_mode: Optional[str] = None  # "agent", "chat", or "coding"
+    coding_mode: Optional[bool] = None  # Force DeepAgent when True
     speed_mode: Optional[str] = None  # "thinking" or "flash"
     friend_target_id: Optional[str] = None
     friend_target_name: Optional[str] = None
@@ -252,6 +253,8 @@ class SettingsResponse(BaseModel):
     mcp_servers: Optional[List[Dict[str, Any]]] = None
     window_mode: str = "floating"
     chat_mode: str = "agent"
+    coding_mode: bool = False
+    CODING_MODE: Optional[bool] = None
     speed_mode: str = "thinking"
     hitl_enabled: bool = True
     hitl_mode: str = "always"
@@ -317,7 +320,8 @@ class ResumeChatRequest(BaseModel):
     project_root: Optional[str] = None
     is_voice: Optional[bool] = False
     token: Optional[str] = None
-    chat_mode: Optional[str] = None  # "agent" or "chat"
+    chat_mode: Optional[str] = None  # "agent", "chat", or "coding"
+    coding_mode: Optional[bool] = None  # Force DeepAgent when True
     speed_mode: Optional[str] = None  # "thinking" or "flash"
     client_timezone: Optional[str] = None
     client_local_datetime_iso: Optional[str] = None
@@ -332,6 +336,7 @@ class ScheduleTaskRequest(BaseModel):
     run_at: datetime = Field(..., description="ISO 8601 timestamp for when to run the task")
     thread_id: Optional[str] = None
     chat_mode: Optional[str] = "agent"
+    coding_mode: Optional[bool] = None
     speed_mode: Optional[str] = "thinking"
     # reminder: notify (OS + in-app); analysis_silent: run only, chat history only;
     # analysis_inform: run + notify with summary

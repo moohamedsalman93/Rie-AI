@@ -15,6 +15,7 @@ import BrowserSettingsSection from './BrowserSettingsSection';
 import ConnectorsManager from './tabs/ConnectorsManager';
 import WorkstreamSettingsSection from './WorkstreamSettingsSection';
 import SpeakerVoiceSettings from './SpeakerVoiceSettings';
+import TokenUsageSettingsSection from './TokenUsageSettingsSection';
 import { SidebarButton } from './Sidebar';
 import { ConfirmationModal } from '../ConfirmationModal';
 import { BetaLabel } from '../BetaLabel';
@@ -3187,13 +3188,21 @@ Separate keywords by commas. Commands containing these words will be blocked."
                 </div>
               )}
 
+              {activeTab === 'usage' && (
+                <TokenUsageSettingsSection />
+              )}
+
               {activeTab === 'diagnostics' && (
                 <div className={SL.tabStack}>
                   <div className={SL.pageHeader}>
                     <h3 className={SL.pageTitle}>Diagnostics</h3>
-                    <p className={SL.pageDesc}>Local logs and optional LangSmith tracing.</p>
+                    <p className={SL.pageDesc}>Day-to-day token usage, local logs, and tracing.</p>
                   </div>
                   <SubTabBar tabs={DIAGNOSTICS_SUB_TABS} activeId={diagnosticsSubTab} onChange={setDiagnosticsSubTab} />
+
+                  {diagnosticsSubTab === 'usage' && (
+                    <TokenUsageSettingsSection />
+                  )}
 
                   {diagnosticsSubTab === 'logs' && (
                     <div className="space-y-4 flex flex-col max-h-[520px]">

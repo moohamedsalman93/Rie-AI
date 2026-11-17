@@ -165,6 +165,7 @@ export async function resumeChat(
     is_voice: isVoice,
     token: token,
     chat_mode: chatMode,
+    coding_mode: chatMode === "coding",
     speed_mode: speedMode,
     ...(await getClientContextPayload()),
   };
@@ -274,6 +275,7 @@ export async function streamChat(
     token: token,
     clipboard_text: clipboardText,
     chat_mode: chatMode,
+    coding_mode: chatMode === "coding",
     speed_mode: speedMode,
     friend_target_id: friendTarget?.id || null,
     friend_target_name: friendTarget?.name || null,
@@ -414,6 +416,81 @@ export async function updateSetting(key, value) {
 
   if (!response.ok) {
     await throwHttpError(response, "Failed to update setting");
+  }
+  return response.json();
+}
+
+/**
+ * Fetch summarized token usage metrics and daily history
+ * @param {number} days
+ * @returns {Promise<Object>}
+ */
+export async function getTokenUsageSummary(days = 30) {
+  const response = await fetch(`${API_BASE_URL}/token-usage/summary?days=${days}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to load token usage summary");
+  }
+  return response.json();
+}
+
+/**
+ * Fetch daily token usage records
+ * @param {number} days
+ * @param {string|null} startDate
+ * @param {string|null} endDate
+ * @returns {Promise<Array>}
+ */
+export async function getDailyTokenUsage(days = 30, startDate = null, endDate = null) {
+  const params = new URLSearchParams();
+  if (days) params.set("days", String(days));
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+
+  const response = await fetch(`${API_BASE_URL}/token-usage/daily?${params.toString()}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to load daily token usage");
+  }
+  return response.json();
+}
+
+/**
+ * Fetch raw token usage logs
+ * @param {number} limit
+ * @param {number} offset
+ * @returns {Promise<Array>}
+ */
+export async function getTokenUsageLogs(limit = 50, offset = 0) {
+  const response = await fetch(`${API_BASE_URL}/token-usage/logs?limit=${limit}&offset=${offset}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to load token usage logs");
+  }
+  return response.json();
+}
+
+/**
+ * Clear all token usage history
+ * @returns {Promise<Object>}
+ */
+export async function clearTokenUsage() {
+  const response = await fetch(`${API_BASE_URL}/token-usage/clear`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Failed to clear token usage");
   }
   return response.json();
 }
@@ -828,6 +905,46 @@ export async function getThreadMessages(threadId) {
     await throwHttpError(response, "Failed to fetch messages");
   }
   return response.json();
+}
+
+/**
+ * Get subchats for a parent thread
+ * @param {string} threadId
+ * @returns {Promise<Array>}
+ */
+export async function getSubchats(threadId) {
+  if (!threadId) return [];
+  try {
+    const response = await fetch(`${API_BASE_URL}/history/${encodeURIComponent(threadId)}/subchats`, {
+      method: "GET",
+      headers: getHeaders(),
+    });
+    if (!response.ok) return [];
+    return await response.json();
+  } catch (e) {
+    console.debug("Failed to fetch subchats:", e);
+    return [];
+  }
+}
+
+/**
+ * Get thread metadata (title, parent_thread_id, subagent_type)
+ * @param {string} threadId
+ * @returns {Promise<Object|null>}
+ */
+export async function getThreadInfo(threadId) {
+  if (!threadId) return null;
+  try {
+    const response = await fetch(`${API_BASE_URL}/history/${encodeURIComponent(threadId)}/info`, {
+      method: "GET",
+      headers: getHeaders(),
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (e) {
+    console.debug("Failed to fetch thread info:", e);
+    return null;
+  }
 }
 
 export async function getThreadContext(threadId) {

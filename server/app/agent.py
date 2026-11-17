@@ -32,6 +32,7 @@ from langchain.agents.middleware import (
 )
 from langchain.tools import tool, ToolRuntime
 from langchain_core.tools import InjectedToolArg
+from deepagents import create_deep_agent
 from deepagents.middleware.subagents import SubAgentMiddleware
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
@@ -70,6 +71,210 @@ def _patch_deepagents_filesystem_for_windows() -> None:
     _DFSB._resolve_path = _windows_safe_resolve_path
 
 _patch_deepagents_filesystem_for_windows()
+
+
+def _patch_deepagents_subagents_for_subchat() -> None:
+    """Patch deepagents SubAgentMiddleware task tool to persist executions into child subchats."""
+    import json
+    import deepagents.middleware.subagents as _dms
+    from deepagents.middleware.subagents import (
+        _get_subagents,
+        _EXCLUDED_STATE_KEYS,
+        TASK_TOOL_DESCRIPTION,
+        HumanMessage,
+        ToolMessage,
+        StructuredTool,
+        InjectedToolArg,
+        Command,
+    )
+
+    def _custom_create_task_tool(
+        *,
+        default_model,
+        default_tools,
+        default_middleware,
+        default_interrupt_on,
+        subagents,
+        general_purpose_agent,
+        task_description=None,
+    ):
+        subagent_graphs, subagent_descriptions = _get_subagents(
+            default_model=default_model,
+            default_tools=default_tools,
+            default_middleware=default_middleware,
+            default_interrupt_on=default_interrupt_on,
+            subagents=subagents,
+            general_purpose_agent=general_purpose_agent,
+        )
+        subagent_description_str = "\n".join(subagent_descriptions)
+
+        def _return_command_with_state_update(result: dict, tool_call_id: str) -> Command:
+            state_update = {k: v for k, v in result.items() if k not in _EXCLUDED_STATE_KEYS}
+            message_text = result["messages"][-1].text.rstrip() if result["messages"][-1].text else ""
+            return Command(
+                update={
+                    **state_update,
+                    "messages": [ToolMessage(message_text, tool_call_id=tool_call_id)],
+                }
+            )
+
+        def _validate_and_prepare_state(subagent_type: str, description: str, runtime: Any) -> tuple[Any, dict]:
+            subagent = subagent_graphs[subagent_type]
+            subagent_state = {k: v for k, v in runtime.state.items() if k not in _EXCLUDED_STATE_KEYS}
+            subagent_state["messages"] = [HumanMessage(content=description)]
+            return subagent, subagent_state
+
+        if task_description is None:
+            formatted_task_description = TASK_TOOL_DESCRIPTION.format(available_agents=subagent_description_str)
+        elif "{available_agents}" in task_description:
+            formatted_task_description = task_description.format(available_agents=subagent_description_str)
+        else:
+            formatted_task_description = task_description
+
+        class TaskInput(BaseModel):
+            description: str = Field(description="The task description or prompt for the subagent.")
+            subagent_type: str = Field(description="The type of subagent to invoke.")
+
+        def _persist_subchat_state(subagent_type: str, description: str, runtime: Any, result: Optional[dict] = None, error: Optional[Exception] = None):
+            try:
+                from app.database import create_subchat_thread, save_message, update_subagent_status
+                parent_thread_id = None
+                if hasattr(runtime, "config") and isinstance(runtime.config, dict):
+                    parent_thread_id = (runtime.config.get("configurable") or {}).get("thread_id")
+                tool_call_id = getattr(runtime, "tool_call_id", None) or uuid.uuid4().hex[:12]
+                subchat_id = f"subchat_{tool_call_id}"
+
+                if parent_thread_id:
+                    clean_type = subagent_type.replace('_', ' ').title()
+                    create_subchat_thread(
+                        parent_thread_id=parent_thread_id,
+                        title=f"{clean_type}: {description[:40]}",
+                        subagent_type=subagent_type,
+                        thread_id=subchat_id,
+                    )
+                    # Save initial prompt as user message
+                    save_message(subchat_id, "user", description)
+
+                    if error:
+                        save_message(subchat_id, "assistant", f"Subagent error: {str(error)}")
+                        update_subagent_status(subchat_id, "failed")
+                        return
+
+                    if result and isinstance(result, dict):
+                        msgs = result.get("messages", [])
+                        # Save subagent execution turns
+                        for m in msgs[1:] if len(msgs) > 1 else msgs:
+                            m_type = getattr(m, "type", "")
+                            m_content = getattr(m, "content", "")
+                            tool_calls = getattr(m, "tool_calls", None)
+
+                            if tool_calls and isinstance(tool_calls, list):
+                                for tc in tool_calls:
+                                    tc_name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "tool")
+                                    tc_args = tc.get("args") if isinstance(tc, dict) else getattr(tc, "args", {})
+                                    tc_str = f"[Tool Call: {tc_name}]: {json.dumps(tc_args, default=str)}"
+                                    save_message(subchat_id, "assistant", tc_str)
+
+                            if m_type in ("ai", "assistant") and m_content:
+                                text_content = m_content if isinstance(m_content, str) else str(m_content)
+                                if text_content.strip():
+                                    save_message(subchat_id, "assistant", text_content)
+                            elif m_type in ("tool", "tool_result") and m_content:
+                                t_name = getattr(m, "name", "tool")
+                                text_content = m_content if isinstance(m_content, str) else str(m_content)
+                                save_message(subchat_id, "tool", f"[{t_name} output]: {text_content[:2000]}")
+                            elif m_type not in ("human", "user") and m_content:
+                                save_message(subchat_id, "assistant", str(m_content))
+
+                        update_subagent_status(subchat_id, "completed")
+            except Exception as e:
+                logging.warning("Failed persisting subchat state: %s", e)
+
+        def task(
+            description: str,
+            subagent_type: str,
+            runtime: Annotated[Any, InjectedToolArg],
+        ) -> str | Command:
+            if subagent_type not in subagent_graphs:
+                allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
+                return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
+
+            tool_call_id = getattr(runtime, "tool_call_id", None) or uuid.uuid4().hex[:12]
+            parent_thread_id = (getattr(runtime, "config", {}) or {}).get("configurable", {}).get("thread_id")
+            if parent_thread_id:
+                try:
+                    from app.database import create_subchat_thread, update_subagent_status
+                    create_subchat_thread(
+                        parent_thread_id=parent_thread_id,
+                        title=f"{subagent_type.replace('_', ' ').title()}: {description[:40]}",
+                        subagent_type=subagent_type,
+                        thread_id=f"subchat_{tool_call_id}",
+                    )
+                    update_subagent_status(f"subchat_{tool_call_id}", "running")
+                except Exception as pe:
+                    logging.warning("Pre-register subchat error: %s", pe)
+
+            subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
+            try:
+                result = subagent.invoke(subagent_state, runtime.config)
+                _persist_subchat_state(subagent_type, description, runtime, result=result)
+            except Exception as exc:
+                _persist_subchat_state(subagent_type, description, runtime, error=exc)
+                raise exc
+
+            if not runtime.tool_call_id:
+                value_error_msg = "Tool call ID is required for subagent invocation"
+                raise ValueError(value_error_msg)
+            return _return_command_with_state_update(result, runtime.tool_call_id)
+
+        async def atask(
+            description: str,
+            subagent_type: str,
+            runtime: Annotated[Any, InjectedToolArg],
+        ) -> str | Command:
+            if subagent_type not in subagent_graphs:
+                allowed_types = ", ".join([f"`{k}`" for k in subagent_graphs])
+                return f"We cannot invoke subagent {subagent_type} because it does not exist, the only allowed types are {allowed_types}"
+
+            tool_call_id = getattr(runtime, "tool_call_id", None) or uuid.uuid4().hex[:12]
+            parent_thread_id = (getattr(runtime, "config", {}) or {}).get("configurable", {}).get("thread_id")
+            if parent_thread_id:
+                try:
+                    from app.database import create_subchat_thread, update_subagent_status
+                    create_subchat_thread(
+                        parent_thread_id=parent_thread_id,
+                        title=f"{subagent_type.replace('_', ' ').title()}: {description[:40]}",
+                        subagent_type=subagent_type,
+                        thread_id=f"subchat_{tool_call_id}",
+                    )
+                    update_subagent_status(f"subchat_{tool_call_id}", "running")
+                except Exception as pe:
+                    logging.warning("Pre-register subchat error: %s", pe)
+
+            subagent, subagent_state = _validate_and_prepare_state(subagent_type, description, runtime)
+            try:
+                result = await subagent.ainvoke(subagent_state, runtime.config)
+                _persist_subchat_state(subagent_type, description, runtime, result=result)
+            except Exception as exc:
+                _persist_subchat_state(subagent_type, description, runtime, error=exc)
+                raise exc
+
+            if not runtime.tool_call_id:
+                value_error_msg = "Tool call ID is required for subagent invocation"
+                raise ValueError(value_error_msg)
+            return _return_command_with_state_update(result, runtime.tool_call_id)
+
+        return StructuredTool.from_function(
+            name="task",
+            func=task,
+            coroutine=atask,
+            description=formatted_task_description,
+            args_schema=TaskInput,
+        )
+
+    _dms._create_task_tool = _custom_create_task_tool
+
+_patch_deepagents_subagents_for_subchat()
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from app.database import get_checkpoint_db_path
@@ -2683,6 +2888,8 @@ class AgentManager:
         self._store: Optional[Any] = None
         self._current_chat_mode: Optional[str] = None
         self._current_speed_mode: Optional[str] = None
+        self._current_coding_mode: Optional[bool] = None
+        self._current_agent_type: Optional[str] = None
         self._peer_inbound_cache: "OrderedDict[tuple[Any, ...], Any]" = OrderedDict()
         self._peer_cache_max: int = 16
         self._thread_context_breakdowns: dict[str, dict[str, Any]] = {}
@@ -3615,6 +3822,7 @@ class AgentManager:
                     "name": name,
                     "description": description,
                     "system_prompt": system_prompt,
+                    "prompt": system_prompt,
                     "model": self._llm,
                     "tools": resolved_tools,
                     "middleware": subagent_middleware,
@@ -3624,8 +3832,13 @@ class AgentManager:
         return built_subagents
 
 
-    async def _initialize_agent_async(self, chat_mode: Optional[str] = None, speed_mode: Optional[str] = None) -> None:
-        """Initialize the Deep Agent if API keys are configured (Async)"""
+    async def _initialize_agent_async(
+        self,
+        chat_mode: Optional[str] = None,
+        speed_mode: Optional[str] = None,
+        coding_mode: Optional[bool] = None,
+    ) -> None:
+        """Initialize the agent (or Deep Agent when coding mode is enabled) if API keys are configured (Async)"""
         
         # Ensure singleton checkpointer and LTM store are initialized
         await self._ensure_checkpoint_and_store()
@@ -3666,19 +3879,33 @@ class AgentManager:
         print(f"DEBUG: Selected LLM Provider: {provider}")
 
         # Resolve effective modes early (used by prompt construction and tool policy).
-        effective_chat_mode = chat_mode or "agent"
+        is_coding_mode = (
+            (chat_mode == "coding")
+            or bool(coding_mode)
+            or bool(settings.CODING_MODE)
+        )
+        effective_chat_mode = "coding" if is_coding_mode else (chat_mode or "agent")
         if provider == "rie":
             effective_chat_mode = "chat"
+            is_coding_mode = False
             
         effective_speed_mode = speed_mode or "thinking"
         orchestration_mode = settings.AGENT_ORCHESTRATION_MODE
         self._current_chat_mode = effective_chat_mode
         self._current_speed_mode = effective_speed_mode
+        self._current_coding_mode = is_coding_mode
 
         # Build context-aware system prompt
         mode_instructions = ""
         if effective_chat_mode == "chat":
             mode_instructions += "\n- CURRENT MODE: Chat Mode. You are acting as a conversational assistant. Keep answers concise. Do not attempt complex multi-step technical workflows unless requested."
+        elif effective_chat_mode == "coding":
+            mode_instructions += (
+                "\n- CURRENT MODE: Coding Mode (Deep Agent). You are an expert software engineer and autonomous deep agent. "
+                "You have direct access to workspace filesystem tools (ls, read_file, write_file, edit_file, glob, grep), "
+                "terminal execution (run_terminal_command), and deep technical planning. Analyze codebases systematically, "
+                "make precise edits, write clean bug-free code, and verify your changes with tests or terminal commands."
+            )
         else:
             mode_instructions += "\n- CURRENT MODE: Agent Mode. You are acting as an autonomous technical agent. Use your tools extensively to accomplish the user's goal."
             
@@ -3716,14 +3943,23 @@ class AgentManager:
                     tools_str = f" [Assigned Tools: {', '.join(s_tools)}]" if s_tools else ""
                     team_members_section += f"- **`{s_name}`**: {s_desc}{tools_str}\n"
 
-                team_members_section += (
-                    "\n### Strict Delegation Protocol:\n"
-                    "- **Code, File, and Workspace Tasks**: Delegate to `coding_specialist` using `task(subagent_type=\"coding_specialist\", description=\"...\")`. Do NOT attempt to read files in chunks or run terminal scripts in the coordinator thread.\n"
-                    "- **Web Search, Scraping, and Online Research**: Delegate to `web_researcher` using `task(subagent_type=\"web_researcher\", description=\"...\")` for search, browser navigation, or online content extraction.\n"
-                    "- **Desktop Applications & Windows GUI Automation**: Delegate to `desktop_controller` using `task(subagent_type=\"desktop_controller\", description=\"...\")` for interacting with desktop software, mouse clicks, keyboard typing, or window operations.\n"
-                    "- **MCP Server Management**: Delegate to `mcp_registry` using `task(subagent_type=\"mcp_registry\", description=\"...\")` for listing, adding, updating, or deleting MCP servers.\n"
-                    "- **Parallel Execution**: Launch independent subagent tasks concurrently in a single turn using the `task` tool, then synthesize their reports for the user.\n"
-                )
+                if effective_chat_mode == "coding":
+                    team_members_section += (
+                        "\n### Coding Mode Delegation Protocol:\n"
+                        "- **Coding & Workspace Tasks**: You are in Deep Agent Coding Mode with direct access to filesystem tools (ls, read_file, write_file, edit_file, glob, grep) and terminal execution. Handle coding, debugging, refactoring, and file modifications directly yourself.\n"
+                        "- **Web Search & Online Research**: You may delegate research to `web_researcher` using `task(subagent_type=\"web_researcher\", description=\"...\")` when needed.\n"
+                        "- **Desktop Applications**: Delegate GUI automation to `desktop_controller` using `task(subagent_type=\"desktop_controller\", description=\"...\")` when needed.\n"
+                        "- **MCP Server Management**: Delegate to `mcp_registry` using `task(subagent_type=\"mcp_registry\", description=\"...\")` when needed.\n"
+                    )
+                else:
+                    team_members_section += (
+                        "\n### Strict Delegation Protocol:\n"
+                        "- **Code, File, and Workspace Tasks**: Delegate to `coding_specialist` using `task(subagent_type=\"coding_specialist\", description=\"...\")`. Do NOT attempt to read files in chunks or run terminal scripts in the coordinator thread.\n"
+                        "- **Web Search, Scraping, and Online Research**: Delegate to `web_researcher` using `task(subagent_type=\"web_researcher\", description=\"...\")` for search, browser navigation, or online content extraction.\n"
+                        "- **Desktop Applications & Windows GUI Automation**: Delegate to `desktop_controller` using `task(subagent_type=\"desktop_controller\", description=\"...\")` for interacting with desktop software, mouse clicks, keyboard typing, or window operations.\n"
+                        "- **MCP Server Management**: Delegate to `mcp_registry` using `task(subagent_type=\"mcp_registry\", description=\"...\")` for listing, adding, updating, or deleting MCP servers.\n"
+                        "- **Parallel Execution**: Launch independent subagent tasks concurrently in a single turn using the `task` tool, then synthesize their reports for the user.\n"
+                    )
 
         # Compact Ambient System Intelligence Snapshot
         ambient_system_snapshot = (
@@ -3864,6 +4100,25 @@ class AgentManager:
                     tools_to_use.append(extra_tool)
                     existing_tool_names.add(t_name)
             print(f"DEBUG: Chat mode active - using limited tools + plugins: {[getattr(t, 'name', getattr(t, '__name__', str(t))) for t in tools_to_use]}")
+        elif effective_chat_mode == "coding":
+            # Coding mode: ensure terminal command, batched execution, search, questions, knowledge, skills, MCP, plugins are included
+            coding_tool_ids = [
+                "run_terminal_command",
+                "internet_search",
+                "ask_question",
+                "render_ui",
+                "read_knowledge_asset",
+                "load_skill",
+                "schedule_chat_task",
+                "execute_batched_plan",
+            ]
+            tools_to_use = _resolve_tools_from_ids(coding_tool_ids)
+            existing_tool_names = {getattr(x, "name", getattr(x, "__name__", str(x))) for x in tools_to_use}
+            for extra_tool in loaded_mcp_tools + loaded_external_tools + loaded_plugin_tools:
+                t_name = getattr(extra_tool, "name", getattr(extra_tool, "__name__", str(extra_tool)))
+                if t_name and t_name not in existing_tool_names:
+                    tools_to_use.append(extra_tool)
+                    existing_tool_names.add(t_name)
         elif orchestration_mode == "team":
             planner_graph = settings.SUBAGENT_PLANNER_GRAPH or {}
             main_tool_ids = planner_graph.get("main_tool_ids") if isinstance(planner_graph, dict) else []
@@ -4021,70 +4276,78 @@ class AgentManager:
             # Human‑in‑the‑Loop middleware based on settings
             from app.config import settings as _settings
             hitl_mode = _settings.HITL_MODE
+            interrupt_on = {}
             
             if hitl_mode != "disable":
-                if hitl_mode == "always":
-                    # For "Always Ask", we interrupt on all tools except safe/read-only ones.
-                    safe_tools = {
-                        "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file", 
-                        "save_memory", "get_memory", "delete_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
-                        "schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task",
-                        "read_knowledge_asset", "load_skill"
-                    }
-                    interrupt_on = {}
-                    for tool in tools_to_use:
-                        tool_name = getattr(tool, "name", None)
-                        if tool_name and tool_name not in safe_tools:
-                            interrupt_on[tool_name] = True
-                    
-                    if not interrupt_on:
-                        # Fallback if no specific tools found but mode is always
-                        interrupt_on = {"run_terminal_command": True}
-                        
-                    middleware_stack.append(
-                        HumanInTheLoopMiddleware(interrupt_on=interrupt_on)
-                    )
-                    print(f"DEBUG: HITL enabled in 'always' mode for {len(interrupt_on)} tools")
-                
-                elif hitl_mode == "let_decide":
-                    # NOTE: InterruptOnConfig is a config TypedDict, not middleware.
-                    # Build a regular HITL middleware map to avoid passing raw dicts
-                    # into create_agent(..., middleware=[...]), which crashes.
-                    safe_tools = {
-                        "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file",
-                        "save_memory", "get_memory", "delete_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
-                        "schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task",
-                        "read_knowledge_asset", "load_skill"
-                    }
-                    interrupt_on = {}
-                    for tool in tools_to_use:
-                        tool_name = getattr(tool, "name", None)
-                        if tool_name:
+                safe_tools = {
+                    "internet_search", "ask_question", "get_desktop_state", "list_dir", "read_file", 
+                    "ls", "glob", "grep",
+                    "save_memory", "get_memory", "delete_memory", "search_memory", "list_mcp_servers", "get_mcp_tool_info",
+                    "schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task",
+                    "read_knowledge_asset", "load_skill"
+                }
+                for tool in tools_to_use:
+                    tool_name = getattr(tool, "name", None)
+                    if tool_name:
+                        if hitl_mode == "always":
+                            if tool_name not in safe_tools:
+                                interrupt_on[tool_name] = True
+                        elif hitl_mode == "let_decide":
                             interrupt_on[tool_name] = tool_name not in safe_tools
+                
+                if hitl_mode == "always" and not interrupt_on:
+                    interrupt_on = {"run_terminal_command": True}
 
+            if is_coding_mode:
+                print(f"DEBUG: Coding mode active - forcing use of create_deep_agent (Deep Agent) with {provider}...")
+                self._current_agent_type = "deepagent"
 
-                    middleware_stack.append(
-                        HumanInTheLoopMiddleware(interrupt_on=interrupt_on)
-                    )
-                    print(
-                        "DEBUG: HITL enabled in 'let_decide' mode "
-                        "(safe tools auto-approved, others require approval)"
-                    )
+                # create_deep_agent automatically includes TodoListMiddleware, FilesystemMiddleware,
+                # SubAgentMiddleware, SummarizationMiddleware, AnthropicPromptCachingMiddleware, PatchToolCallsMiddleware
+                deepagent_extra_middleware = [
+                    ToolNeedMiddleware(),
+                    ContextProjectionMiddleware(),
+                    SkillMiddleware(),
+                    MemoryRetrievalMiddleware(),
+                    TaskExecutionAccountingMiddleware(),
+                ]
+                if hitl_mode != "disable" and interrupt_on:
+                    deepagent_extra_middleware.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
 
-            # Prompt & token composition diagnostic middleware placed at the end so it sees all injected tools & prompts
-            middleware_stack.append(PromptCompositionDiagnosticMiddleware())
+                deepagent_extra_middleware.append(PromptCompositionDiagnosticMiddleware())
 
-            self._agent = create_agent(
-                model=self._llm,
-                tools=tools_to_use,
-                system_prompt=system_prompt,
-                debug=True,
-                checkpointer=self._checkpointer,
-                store=self._store,
-                context_schema=Context,
-                middleware=middleware_stack,
-            )
-            print(f"DEBUG: Deep agent created successfully with {provider}")
+                subagents = self._build_subagents(all_tools_map=all_tools_map) if orchestration_mode == "team" else []
+
+                self._agent = create_deep_agent(
+                    model=self._llm,
+                    tools=tools_to_use,
+                    system_prompt=system_prompt,
+                    middleware=deepagent_extra_middleware,
+                    subagents=subagents,
+                    context_schema=Context,
+                    checkpointer=self._checkpointer,
+                    store=self._store,
+                    backend=self.dynamic_backend,
+                    debug=True,
+                )
+                print(f"DEBUG: Deep agent created successfully with {provider}")
+            else:
+                self._current_agent_type = "standard"
+                if hitl_mode != "disable" and interrupt_on:
+                    middleware_stack.append(HumanInTheLoopMiddleware(interrupt_on=interrupt_on))
+                middleware_stack.append(PromptCompositionDiagnosticMiddleware())
+
+                self._agent = create_agent(
+                    model=self._llm,
+                    tools=tools_to_use,
+                    system_prompt=system_prompt,
+                    debug=True,
+                    checkpointer=self._checkpointer,
+                    store=self._store,
+                    context_schema=Context,
+                    middleware=middleware_stack,
+                )
+                print(f"DEBUG: Standard agent created successfully with {provider}")
         except Exception as e:
             print(f"ERROR: Failed to initialize agent with {provider}: {e}")
             import traceback
@@ -4115,6 +4378,16 @@ class AgentManager:
         print(f"DEBUG: agent_manager.is_configured check: {configured}")
         print(f"DEBUG: settings keys: {settings.GROQ_API_KEYS}")
         return configured
+
+    @property
+    def is_deepagent(self) -> bool:
+        """Return True if the current active agent was created using DeepAgent."""
+        return getattr(self, "_current_agent_type", None) == "deepagent"
+
+    @property
+    def is_coding_mode(self) -> bool:
+        """Return True if coding mode is currently active."""
+        return bool(getattr(self, "_current_coding_mode", False))
 
     def get_key_rotation_stats(self) -> Optional[dict]:
         """Return rotation stats for the currently active LLM, or None if not rotating."""
@@ -4284,6 +4557,7 @@ class AgentManager:
         decisions: Optional[list] = None,
         chat_mode: Optional[str] = None,
         speed_mode: Optional[str] = None,
+        coding_mode: Optional[bool] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
         client_latitude: Optional[float] = None,
@@ -4297,16 +4571,27 @@ class AgentManager:
         """
         # Check if modes changed and re-initialize if needed
         provider = self._resolve_provider()
-        effective_chat_mode = chat_mode or "agent"
+        is_coding_mode = (
+            (chat_mode == "coding")
+            or bool(coding_mode)
+            or bool(settings.CODING_MODE)
+        )
+        effective_chat_mode = "coding" if is_coding_mode else (chat_mode or "agent")
         if provider == "rie":
             effective_chat_mode = "chat"
+            is_coding_mode = False
             
         effective_speed_mode = speed_mode or "thinking"
         if (self._agent is None or 
             self._current_chat_mode != effective_chat_mode or 
-            self._current_speed_mode != effective_speed_mode):
+            self._current_speed_mode != effective_speed_mode or
+            self._current_coding_mode != is_coding_mode):
             self._agent = None
-            await self._initialize_agent_async(chat_mode=chat_mode, speed_mode=speed_mode)
+            await self._initialize_agent_async(
+                chat_mode=effective_chat_mode, 
+                speed_mode=effective_speed_mode,
+                coding_mode=is_coding_mode,
+            )
             if not self._agent:
                 raise RuntimeError(
                     "Agent not configured. Please check your API keys and try again."
@@ -4348,6 +4633,7 @@ class AgentManager:
             effective_speed_mode,
             friend_target_id=friend_target_id,
             friend_target_name=friend_target_name,
+            coding_mode=is_coding_mode,
         )
         try:
             return await self._agent.ainvoke(input_data, config=config, context=context)
@@ -4402,6 +4688,7 @@ class AgentManager:
         decisions: Optional[list] = None,
         chat_mode: Optional[str] = None,
         speed_mode: Optional[str] = None,
+        coding_mode: Optional[bool] = None,
         client_timezone: Optional[str] = None,
         client_local_datetime_iso: Optional[str] = None,
         client_latitude: Optional[float] = None,
@@ -4414,13 +4701,27 @@ class AgentManager:
     ) -> AsyncIterator[dict]:
         """Stream the agent with messages or resume with decisions (Async/thread-aware)."""
         # Check if modes changed and re-initialize if needed
-        effective_chat_mode = chat_mode or "agent"
+        is_coding_mode = (
+            (chat_mode == "coding")
+            or bool(coding_mode)
+            or bool(settings.CODING_MODE)
+        )
+        effective_chat_mode = "coding" if is_coding_mode else (chat_mode or "agent")
+        if self._resolve_provider() == "rie":
+            effective_chat_mode = "chat"
+            is_coding_mode = False
+
         effective_speed_mode = speed_mode or "thinking"
         if (self._agent is None or 
             self._current_chat_mode != effective_chat_mode or 
-            self._current_speed_mode != effective_speed_mode):
+            self._current_speed_mode != effective_speed_mode or
+            self._current_coding_mode != is_coding_mode):
             self._agent = None
-            await self._initialize_agent_async(chat_mode=chat_mode, speed_mode=speed_mode)
+            await self._initialize_agent_async(
+                chat_mode=effective_chat_mode, 
+                speed_mode=effective_speed_mode,
+                coding_mode=is_coding_mode,
+            )
             if not self._agent:
                 raise RuntimeError(
                     "Agent not configured. Please check your API keys and try again."
@@ -4544,6 +4845,7 @@ class AgentManager:
             effective_speed_mode,
             friend_target_id=friend_target_id,
             friend_target_name=friend_target_name,
+            coding_mode=is_coding_mode,
         )
         try:
             async for chunk in stream_gen:
@@ -4619,6 +4921,30 @@ class AgentManager:
             logging.getLogger(__name__).info(f"Requested cancellation for thread_id={thread_id}")
             return True
         return False
+
+    def get_current_model_info(self) -> tuple[str, str]:
+        """Returns (provider, model_name) currently configured."""
+        provider = (self._resolve_provider() if hasattr(self, "_resolve_provider") else settings.LLM_PROVIDER) or "rie"
+        model = ""
+        if provider == "openai":
+            model = settings.OPENAI_MODEL or "gpt-4o-mini"
+        elif provider in ("azure_foundry", "azure"):
+            model = settings.AZURE_FOUNDRY_MODEL or "gpt-6-luna"
+        elif provider == "gemini":
+            model = settings.GEMINI_MODEL or "gemini-2.5-flash"
+        elif provider == "vertex":
+            model = settings.VERTEX_MODEL or "gemini-2.5-flash"
+        elif provider == "groq":
+            model = settings.GROQ_MODEL or "openai/gpt-oss-120b"
+        elif provider == "deepseek":
+            model = settings.DEEPSEEK_MODEL or "deepseek-chat"
+        elif provider == "glm":
+            model = settings.GLM_MODEL or "glm-4.7-flash"
+        elif provider == "ollama":
+            model = settings.OLLAMA_MODEL or "llama3"
+        elif provider == "rie":
+            model = settings.RIE_MODEL or "rie-standard"
+        return provider, model
 
     def get_model_context_window(self) -> int:
         """Returns the maximum context window for the currently configured provider/model."""

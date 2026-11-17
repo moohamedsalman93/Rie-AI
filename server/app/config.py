@@ -31,6 +31,11 @@ class Settings:
     def _get(self, key: str, default: Any = None) -> Any:
         return self._settings.get(key, default)
 
+    def _set(self, key: str, value: Any) -> None:
+        if not hasattr(self, "_settings") or self._settings is None:
+            self._settings = {}
+        self._settings[key] = value
+
     @property
     def GROQ_API_KEY_STRING(self) -> Optional[str]:
         """Raw string of Groq API keys as stored in DB"""
@@ -383,9 +388,30 @@ class Settings:
     @property
     def CHAT_MODE(self) -> str:
         """
-        Chat mode: 'agent' or 'chat'
+        Chat mode: 'agent', 'chat', or 'coding'
         """
-        return self._get("CHAT_MODE", "agent")
+        mode = (self._get("CHAT_MODE", "agent") or "agent").strip().lower()
+        return mode if mode in {"agent", "chat", "coding"} else "agent"
+
+    @CHAT_MODE.setter
+    def CHAT_MODE(self, value: str) -> None:
+        self._set("CHAT_MODE", value)
+
+    @property
+    def CODING_MODE(self) -> bool:
+        """
+        Coding mode: whether coding mode (forcing deepagent) is enabled.
+        """
+        val = self._get("CODING_MODE", False)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.strip().lower() in ("true", "1", "yes", "on")
+        return bool(val)
+
+    @CODING_MODE.setter
+    def CODING_MODE(self, value: Any) -> None:
+        self._set("CODING_MODE", bool(value))
 
     @property
     def SPEED_MODE(self) -> str:

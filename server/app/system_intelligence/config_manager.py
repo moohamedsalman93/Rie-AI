@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 # Tier 1: Autonomous operational and non-destructive settings
 TIER_1_AUTONOMOUS_KEYS: Dict[str, Any] = {
     "SPEED_MODE": {"thinking", "flash"},
-    "CHAT_MODE": {"agent", "chat"},
+    "CHAT_MODE": {"agent", "chat", "coding"},
+    "CODING_MODE": {"true", "false", True, False},
     "AGENT_ORCHESTRATION_MODE": {"solo", "team"},
     "CAMOFOX_HEADLESS_MODE": {"headless", "normal", "auto"},
     "BROWSER_HEADLESS_MODE": {"headless", "normal", "auto"},
