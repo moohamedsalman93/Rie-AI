@@ -9,6 +9,33 @@ import { parseMessageContentToBlocks } from "../../../utils/messageParser";
 import { MarkdownMessage } from "../../MarkdownMessage";
 
 describe("Custom UI Components", () => {
+  it("renders CustomCard with multi-word textual takeaways without truncation", () => {
+    const cardData = {
+      title: "Industrial output & the stock market",
+      subtitle: "Quick takeaway",
+      badge: "POTENTIALLY SUPPORTIVE",
+      badgeVariant: "info",
+      description: "Stronger industrial output can support stocks by indicating improving economic activity.",
+      metrics: [
+        { label: "WHAT IT MAY SIGNAL", value: "More economic activity and corporate demand" },
+        { label: "WHY STOCKS MAY STILL FALL", value: "Expectations, earnings and bond yields" },
+        { label: "CONFIDENCE IN THE ARTICLE'S SAMPLE", value: "Not verified from the source text" },
+      ],
+      buttons: [
+        { label: "Verify article and market reaction", action: "message", value: "Verify article" },
+      ],
+    };
+
+    const html = renderToStaticMarkup(<CustomUiContainer data={cardData} type="card" />);
+    expect(html).toContain("Industrial output &amp; the stock market");
+    expect(html).toContain("More economic activity and corporate demand");
+    expect(html).toContain("Expectations, earnings and bond yields");
+    expect(html).toContain("Not verified from the source text");
+    expect(html).toContain("Verify article and market reaction");
+    // Verify container header avoids duplicate badge text
+    expect(html).toContain("Interactive Card");
+  });
+
   it("renders a CustomCard with title, badge, metrics, and items", () => {
     const cardData = {
       title: "Cluster Overview",

@@ -231,7 +231,9 @@ export const CustomUiContainer = React.memo(function CustomUiContainer({
 
   const titleBadge =
     parsedData?.titleBadge ||
-    parsedData?.badge ||
+    (resolvedType === 'card' && parsedData?.badge
+      ? 'Interactive Card'
+      : parsedData?.badge) ||
     (resolvedType === 'chart'
       ? 'Interactive Chart'
       : resolvedType === 'card'
@@ -247,37 +249,37 @@ export const CustomUiContainer = React.memo(function CustomUiContainer({
       initial={{ opacity: 0, y: 3 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
-      className={`my-3 w-full rounded-2xl border border-neutral-700/70 bg-gradient-to-b from-neutral-900/95 to-neutral-950/95 p-4 shadow-2xl backdrop-blur-md ${className}`}
+      className={`group/custom-ui relative my-3 w-full rounded-2xl border border-white/[0.08] bg-neutral-900/60 p-4 shadow-xl shadow-black/20 backdrop-blur-md transition-all ${className}`}
     >
-      {/* Top action toolbar */}
-      <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-neutral-800/80">
-        <div className="flex items-center gap-1.5">
-          <span className="flex h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+      {/* Top action toolbar - sleek, modern, non-redundant */}
+      <div className="flex items-center justify-between pb-2 mb-3 border-b border-white/[0.06]">
+        <div className="flex items-center gap-2">
+          <span className="flex h-1.5 w-1.5 rounded-full bg-blue-500 ring-2 ring-blue-500/20" />
           <span className="text-[10px] font-semibold tracking-wider text-neutral-400 uppercase">
             {titleBadge}
           </span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 opacity-75 group-hover/custom-ui:opacity-100 transition-opacity">
           <button
             type="button"
             onClick={handleCopyRaw}
-            className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors"
+            className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-800/80 transition-colors"
             title="Copy JSON data"
           >
-            {copied ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
+            {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
           </button>
           <button
             type="button"
             onClick={() => setShowRaw((prev) => !prev)}
             className={`px-1.5 py-0.5 rounded-md text-[10px] font-medium transition-colors flex items-center gap-1 ${
               showRaw
-                ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40'
-                : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                ? 'bg-blue-600/25 text-blue-300 border border-blue-500/40'
+                : 'text-neutral-400 hover:text-white hover:bg-neutral-800/80'
             }`}
             title="Toggle preview / JSON code"
           >
-            {showRaw ? <Eye size={12} /> : <Code2 size={12} />}
+            {showRaw ? <Eye size={11} /> : <Code2 size={11} />}
             <span>{showRaw ? 'Preview' : 'Code'}</span>
           </button>
         </div>
