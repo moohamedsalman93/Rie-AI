@@ -100,6 +100,9 @@ export function FloatingChatWindow({
   activeFriendMeta = null,
   onSelectFriendChat = () => {},
   onStartFriendChat = () => {},
+  connectionRequests = { incoming: [], outgoing: [] },
+  onAcceptConnectionRequest = () => {},
+  onDeclineConnectionRequest = () => {},
   isFriendsQuickOpen = false,
   onToggleFriendsQuick = () => {},
   attachedKnowledge = [],
@@ -243,6 +246,9 @@ export function FloatingChatWindow({
               friendThreadMeta={friendThreadMeta}
               onSelectFriendChat={onSelectFriendChat}
               onStartFriendChat={onStartFriendChat}
+              connectionRequests={connectionRequests}
+              onAcceptConnectionRequest={onAcceptConnectionRequest}
+              onDeclineConnectionRequest={onDeclineConnectionRequest}
               sessionsByThread={sessionsByThread}
               apiStatus={apiStatus}
             />
@@ -250,7 +256,35 @@ export function FloatingChatWindow({
               {isFriendsQuickOpen && (
                 <div className="absolute left-3 top-12 z-30 max-h-72 w-72 overflow-y-auto rounded-xl border border-white/10 bg-neutral-900/95 p-2 shadow-xl backdrop-blur">
                   <div className="mb-1 px-1 text-[11px] font-semibold text-neutral-300">Connections</div>
-                  {friends.length === 0 ? (
+                  {connectionRequests?.incoming?.length > 0 && (
+                    <div className="mb-2 space-y-1.5 pb-2 border-b border-white/10">
+                      <div className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider px-1">
+                        Requests ({connectionRequests.incoming.length})
+                      </div>
+                      {connectionRequests.incoming.map((req) => (
+                        <div key={req.id} className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-2 space-y-1.5">
+                          <div className="text-xs font-medium text-white truncate">{req.sender_email}</div>
+                          <div className="flex items-center gap-1.5 pt-0.5">
+                            <button
+                              type="button"
+                              onClick={() => onAcceptConnectionRequest(req.id)}
+                              className="flex-1 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-[10px] font-semibold text-white transition-colors cursor-pointer text-center"
+                            >
+                              Accept
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDeclineConnectionRequest(req.id)}
+                              className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-[10px] font-medium text-neutral-300 transition-colors cursor-pointer text-center"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {friends.length === 0 && (!connectionRequests?.incoming || connectionRequests.incoming.length === 0) ? (
                     <div className="px-2 py-2 text-xs text-neutral-500">No connections.</div>
                   ) : (
                     friends.map((friend) => {

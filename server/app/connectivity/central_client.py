@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import httpx
@@ -23,6 +24,7 @@ from app.database import (
     save_message,
     upsert_friend_thread,
     append_peer_query_event,
+    insert_schedule_notification,
 )
 from app.peer_access import (
     compute_effective_tool_ids,
@@ -192,9 +194,35 @@ class CentralGatewayClient:
             await self._handle_inbound_query(msg)
         elif msg_type == "peer_query_stream":
             await self._handle_inbound_stream(msg)
-        elif msg_type == "connection_request_accepted":
-            logger.info("Connection request was accepted by peer: %s", msg.get("connection_email"))
+        elif msg_type == "connection_request_received":
+            sender_email = msg.get("sender_email") or "Someone"
+            req_id = msg.get("request_id") or uuid.uuid4().hex[:8]
+            logger.info("Connection request received from: %s", sender_email)
             try:
+                await asyncio.to_thread(
+                    insert_schedule_notification,
+                    f"conn-req-{req_id}",
+                    None,
+                    None,
+                    "connection_request",
+                    "New Connection Request",
+                    f"{sender_email} wants to connect with you on Rie.",
+                )
+            except Exception as e:
+                logger.warning("Failed to insert notification for connection request: %s", e)
+        elif msg_type == "connection_request_accepted":
+            connection_email = msg.get("connection_email") or "Your contact"
+            logger.info("Connection request was accepted by peer: %s", connection_email)
+            try:
+                await asyncio.to_thread(
+                    insert_schedule_notification,
+                    f"conn-acc-{uuid.uuid4().hex[:8]}",
+                    None,
+                    None,
+                    "connection_accepted",
+                    "Connection Accepted",
+                    f"{connection_email} accepted your connection request!",
+                )
                 await self.list_connections()
             except Exception as e:
                 logger.warning("Failed to refresh connections after acceptance: %s", e)
@@ -229,6 +257,18 @@ class CentralGatewayClient:
             # Save inbound message locally
             await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email)
             await asyncio.to_thread(save_message, thread_id, "user", query)
+            try:
+                await asyncio.to_thread(
+                    insert_schedule_notification,
+                    f"peer-msg-{req_id or uuid.uuid4().hex[:8]}",
+                    thread_id,
+                    None,
+                    "peer_message",
+                    f"Message from {from_email}",
+                    query[:150],
+                )
+            except Exception as notif_err:
+                logger.warning("Failed to insert peer_message notification: %s", notif_err)
 
             agent_result = await agent_manager.invoke_peer_inbound(
                 messages=[{"role": "user", "content": query}],
@@ -294,6 +334,18 @@ class CentralGatewayClient:
         try:
             await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email)
             await asyncio.to_thread(save_message, thread_id, "user", query)
+            try:
+                await asyncio.to_thread(
+                    insert_schedule_notification,
+                    f"peer-msg-{req_id or uuid.uuid4().hex[:8]}",
+                    thread_id,
+                    None,
+                    "peer_message",
+                    f"Message from {from_email}",
+                    query[:150],
+                )
+            except Exception as notif_err:
+                logger.warning("Failed to insert peer_message notification in stream: %s", notif_err)
 
             stream_gen = agent_manager.stream_peer_inbound(
                 messages=[{"role": "user", "content": query}],

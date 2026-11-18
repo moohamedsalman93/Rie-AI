@@ -701,6 +701,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       setFriendActionMsg({ type: 'success', text: `Connection request sent to ${email}!` });
       setTargetFriendEmail('');
       await loadFriendRequests();
+      notifyConnectionsChanged();
     } catch (err) {
       setFriendActionMsg({ type: 'error', text: err.message || 'Failed to send connection request' });
     }
@@ -724,6 +725,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       setFriendActionMsg(null);
       await declineConnectionRequest(requestId);
       await loadFriendRequests();
+      notifyConnectionsChanged();
       setFriendActionMsg({ type: 'info', text: 'Connection request declined' });
     } catch (err) {
       setFriendActionMsg({ type: 'error', text: err.message || 'Failed to decline request' });

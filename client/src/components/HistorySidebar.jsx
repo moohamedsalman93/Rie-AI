@@ -6,6 +6,7 @@ import {
     X,
     Plus,
     Users,
+    Mail,
     CalendarClock,
     Trash2,
     PanelLeftClose,
@@ -48,6 +49,9 @@ export function HistorySidebar({
     friends = [],
     friendThreadMeta = {},
     onStartFriendChat = () => {},
+    connectionRequests = { incoming: [], outgoing: [] },
+    onAcceptConnectionRequest = () => {},
+    onDeclineConnectionRequest = () => {},
     sessionsByThread = {},
     apiStatus = 'online',
 }) {
@@ -105,11 +109,14 @@ export function HistorySidebar({
     const [friendsOpen, setFriendsOpen] = useState(true);
     const [scheduledOpen, setScheduledOpen] = useState(false);
 
+    const incomingRequests = Array.isArray(connectionRequests?.incoming) ? connectionRequests.incoming : [];
+    const incomingCount = incomingRequests.length;
+
     useEffect(() => {
-        if (friends && friends.length > 0) {
+        if ((friends && friends.length > 0) || incomingCount > 0) {
             setFriendsOpen(true);
         }
-    }, [friends?.length]);
+    }, [friends?.length, incomingCount]);
 
     // Scheduled tasks
     const [scheduledTasks, setScheduledTasks] = useState([]);
@@ -367,17 +374,22 @@ export function HistorySidebar({
                 <Search size={16} />
             </button>
 
-            {/* 4. Friend */}
+            {/* 4. Connections */}
             <button
                 type="button"
                 onClick={handleFriendClick}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 relative cursor-pointer"
-                title={friends.length > 0 ? `Connections (${friends.length})` : "Connections"}
+                title={incomingCount > 0 ? `${incomingCount} incoming connection request${incomingCount > 1 ? 's' : ''}` : friends.length > 0 ? `Connections (${friends.length})` : "Connections"}
             >
                 <Users size={16} />
-                {friends.length > 0 && (
+                {incomingCount > 0 ? (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" />
+                    </span>
+                ) : friends.length > 0 ? (
                     <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-emerald-500 ring-2 ring-neutral-900" />
-                )}
+                ) : null}
             </button>
 
             {/* 5. Schedule */}
@@ -459,16 +471,21 @@ export function HistorySidebar({
                 className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2"
                 onScroll={handleScroll}
             >
-                {/* 1. Friends Accordion */}
+                {/* 1. Connections Accordion */}
                 <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 overflow-hidden">
                     <button
                         type="button"
                         onClick={() => setFriendsOpen((prev) => !prev)}
-                        className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800/40 transition-colors"
+                        className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800/40 transition-colors cursor-pointer"
                     >
                         <span className="flex items-center gap-2">
                             <Users size={13} className="text-neutral-400" />
                             <span className="font-medium text-[11px]">Connections</span>
+                            {incomingCount > 0 && (
+                                <span className="rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-bold text-black animate-pulse">
+                                    {incomingCount} new
+                                </span>
+                            )}
                             {friends.length > 0 && (
                                 <span className="text-[10px] text-neutral-500 font-mono">
                                     ({friends.length})
@@ -482,8 +499,52 @@ export function HistorySidebar({
                     </button>
 
                     {friendsOpen && (
-                        <div className="border-t border-neutral-800/70 p-1.5 space-y-1 bg-neutral-950/30">
-                            {friends.length === 0 ? (
+                        <div className="border-t border-neutral-800/70 p-1.5 space-y-1.5 bg-neutral-950/30">
+                            {/* Pending Incoming Connection Requests */}
+                            {incomingRequests.length > 0 && (
+                                <div className="space-y-1.5 pb-1 border-b border-neutral-800/60">
+                                    <div className="px-1 text-[10px] font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                                        <Mail size={11} /> Requests ({incomingRequests.length})
+                                    </div>
+                                    {incomingRequests.map((req) => (
+                                        <div
+                                            key={req.id}
+                                            className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-2 space-y-1.5"
+                                        >
+                                            <div className="text-xs font-medium text-white truncate" title={req.sender_email}>
+                                                {req.sender_email}
+                                            </div>
+                                            <div className="text-[10px] text-neutral-400">
+                                                Wants to connect with you
+                                            </div>
+                                            <div className="flex items-center gap-1.5 pt-0.5">
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onAcceptConnectionRequest(req.id);
+                                                    }}
+                                                    className="flex-1 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-[11px] font-semibold text-white transition-colors cursor-pointer text-center"
+                                                >
+                                                    Accept
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onDeclineConnectionRequest(req.id);
+                                                    }}
+                                                    className="px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-[11px] font-medium text-neutral-300 transition-colors cursor-pointer text-center"
+                                                >
+                                                    Decline
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {friends.length === 0 && incomingRequests.length === 0 ? (
                                 <div className="px-2 py-1.5 text-[11px] text-neutral-500 text-center">
                                     No connections yet.
                                 </div>

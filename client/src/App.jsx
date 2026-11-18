@@ -7,7 +7,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { listen } from "@tauri-apps/api/event";
 
 import { motion, AnimatePresence, animate } from "framer-motion";
-import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getFriendApproval, approveFriendForThread, deleteThread, forkThread, clearAllHistory, getThreadContext } from "./services/chatApi";
+import { checkApiHealth, getSettings, updateSetting, getThreadMessages, getHistory, streamChat, streamFriendChat, cancelFriendStream, getScreenshot, getDesktopText, cancelChat, setAppToken, resumeChat, getScheduleNotifications, markScheduleNotificationRead, markAllScheduleNotificationsRead, getFriends, getConnectionRequests, acceptConnectionRequest, declineConnectionRequest, getFriendApproval, approveFriendForThread, deleteThread, forkThread, clearAllHistory, getThreadContext } from "./services/chatApi";
 import { sliceMessagesForBranch, messagesToForkPayloads } from "./utils/branchUtils";
 import { setShareLocationEnabled, prefetchClientLocation } from "./utils/locationUtils";
 import { isTauri } from "./utils/tauriNative";
@@ -163,6 +163,7 @@ function MainApp() {
   const [isFloatingScheduleOpen, setIsFloatingScheduleOpen] = useState(false);
   const [isFloatingFriendsOpen, setIsFloatingFriendsOpen] = useState(false);
   const [friends, setFriends] = useState([]);
+  const [connectionRequests, setConnectionRequests] = useState({ incoming: [], outgoing: [] });
   const [friendThreadMeta, setFriendThreadMeta] = useState({});
   const [privacyToast, setPrivacyToast] = useState(null);
   const privacyHoldTimerRef = useRef(null);
@@ -359,6 +360,51 @@ function MainApp() {
       console.error("Failed to load friends:", err);
     }
   }, []);
+
+  const loadConnectionRequests = useCallback(async () => {
+    try {
+      const data = await getConnectionRequests();
+      if (data && typeof data === "object") {
+        setConnectionRequests({
+          incoming: Array.isArray(data.incoming) ? data.incoming : [],
+          outgoing: Array.isArray(data.outgoing) ? data.outgoing : [],
+        });
+      }
+    } catch (err) {
+      console.warn("Failed to load connection requests:", err);
+    }
+  }, []);
+
+  const handleAcceptConnectionRequest = useCallback(async (requestId) => {
+    try {
+      await acceptConnectionRequest(requestId);
+      await loadConnectionRequests();
+      await loadFriends();
+      window.dispatchEvent(new CustomEvent("rie-connections-refresh"));
+      try {
+        const bc = new BroadcastChannel("rie-sync");
+        bc.postMessage({ type: "connections-refresh" });
+        bc.close();
+      } catch {}
+    } catch (err) {
+      console.error("Failed to accept connection request:", err);
+    }
+  }, [loadConnectionRequests, loadFriends]);
+
+  const handleDeclineConnectionRequest = useCallback(async (requestId) => {
+    try {
+      await declineConnectionRequest(requestId);
+      await loadConnectionRequests();
+      window.dispatchEvent(new CustomEvent("rie-connections-refresh"));
+      try {
+        const bc = new BroadcastChannel("rie-sync");
+        bc.postMessage({ type: "connections-refresh" });
+        bc.close();
+      } catch {}
+    } catch (err) {
+      console.error("Failed to decline connection request:", err);
+    }
+  }, [loadConnectionRequests]);
 
   const persistFriendMeta = useCallback((updater) => {
     setFriendThreadMeta((prev) => {
@@ -2205,6 +2251,14 @@ function MainApp() {
             } catch (e) {
               console.warn("Desktop notification failed:", e);
             }
+
+            // Real-time synchronization for connections & peer chats
+            if (n.intent === "peer_message") {
+              loadFriends();
+            } else if (n.intent === "connection_request" || n.intent === "connection_accepted") {
+              loadConnectionRequests();
+              loadFriends();
+            }
           }
         }
 
@@ -2829,9 +2883,11 @@ function MainApp() {
   // Real-time synchronization for connections (Settings changes, window focus, cross-window events, presence polling)
   useEffect(() => {
     loadFriends();
+    loadConnectionRequests();
 
     const handleRefresh = () => {
       loadFriends();
+      loadConnectionRequests();
     };
 
     // 1. In-window CustomEvent
@@ -2841,6 +2897,7 @@ function MainApp() {
     const handleStorage = (e) => {
       if (e.key === "rie_connections_updated_at") {
         loadFriends();
+        loadConnectionRequests();
       }
     };
     window.addEventListener("storage", handleStorage);
@@ -2853,6 +2910,7 @@ function MainApp() {
         bc.onmessage = (event) => {
           if (event.data?.type === "connections-refresh") {
             loadFriends();
+            loadConnectionRequests();
           }
         };
       }
@@ -2866,6 +2924,7 @@ function MainApp() {
         if (isCancelled) return;
         listen("rie-connections-refresh", () => {
           loadFriends();
+          loadConnectionRequests();
         }).then((unlisten) => {
           if (isCancelled) unlisten();
           else unlistenTauri = unlisten;
@@ -2877,7 +2936,10 @@ function MainApp() {
     window.addEventListener("focus", handleRefresh);
 
     // 6. Polling every 15 seconds to keep presence/online status and connections up-to-date
-    const intervalId = setInterval(loadFriends, 15000);
+    const intervalId = setInterval(() => {
+      loadFriends();
+      loadConnectionRequests();
+    }, 15000);
 
     return () => {
       isCancelled = true;
@@ -2892,7 +2954,7 @@ function MainApp() {
         try { unlistenTauri(); } catch {}
       }
     };
-  }, [loadFriends]);
+  }, [loadFriends, loadConnectionRequests]);
 
   useEffect(() => {
     if (input.includes("/") && friends.length === 0) {
@@ -3857,6 +3919,9 @@ function MainApp() {
                     activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
                     onSelectFriendChat={handleSelectFriendChat}
                     onStartFriendChat={handleStartFriendChat}
+                    connectionRequests={connectionRequests}
+                    onAcceptConnectionRequest={handleAcceptConnectionRequest}
+                    onDeclineConnectionRequest={handleDeclineConnectionRequest}
                     attachedKnowledge={attachedKnowledge}
                     onAttachKnowledge={attachKnowledge}
                     onDetachKnowledge={detachKnowledge}
@@ -3988,6 +4053,9 @@ function MainApp() {
               activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
               onSelectFriendChat={handleSelectFriendChat}
               onStartFriendChat={handleStartFriendChat}
+              connectionRequests={connectionRequests}
+              onAcceptConnectionRequest={handleAcceptConnectionRequest}
+              onDeclineConnectionRequest={handleDeclineConnectionRequest}
               attachedKnowledge={attachedKnowledge}
               onAttachKnowledge={attachKnowledge}
               onDetachKnowledge={detachKnowledge}

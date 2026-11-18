@@ -215,6 +215,9 @@ export function NormalModeLayout({
     activeFriendMeta = null,
     onSelectFriendChat = () => { },
     onStartFriendChat = () => { },
+    connectionRequests = { incoming: [], outgoing: [] },
+    onAcceptConnectionRequest = () => { },
+    onDeclineConnectionRequest = () => { },
     attachedKnowledge = [],
     onAttachKnowledge = () => { },
     onDetachKnowledge = () => { },
@@ -558,6 +561,9 @@ export function NormalModeLayout({
                         friends={friends}
                         friendThreadMeta={friendThreadMeta}
                         onStartFriendChat={onStartFriendChat}
+                        connectionRequests={connectionRequests}
+                        onAcceptConnectionRequest={onAcceptConnectionRequest}
+                        onDeclineConnectionRequest={onDeclineConnectionRequest}
                         sessionsByThread={sessionsByThread}
                         apiStatus={apiStatus}
                     />
