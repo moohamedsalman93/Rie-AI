@@ -19,6 +19,7 @@ from app.database import (
     get_or_create_device_identity,
     get_friend_by_id,
     upsert_friend,
+    delete_friend,
     save_message,
     upsert_friend_thread,
     append_peer_query_event,
@@ -30,6 +31,39 @@ from app.peer_access import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_stream_chunk(chunk: Any) -> Optional[Dict[str, Any]]:
+    """Convert raw LangGraph / LangChain stream chunks to JSON-serializable payloads."""
+    if not isinstance(chunk, dict):
+        return None
+
+    if "__lg_messages__" in chunk:
+        pair = chunk["__lg_messages__"]
+        msg = pair[0] if isinstance(pair, tuple) and len(pair) >= 1 else pair
+        content = getattr(msg, "content", "")
+        if isinstance(content, list):
+            parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
+            content = "".join(parts)
+        elif not isinstance(content, str):
+            content = str(content) if content is not None else ""
+        if content:
+            return {"message": {"content": content, "type": "ai"}}
+        return None
+
+    if "agent" in chunk and isinstance(chunk["agent"], dict):
+        messages = chunk["agent"].get("messages", [])
+        if messages:
+            last = messages[-1]
+            content = getattr(last, "content", "") if hasattr(last, "content") else str(last)
+            if content:
+                return {"message": {"content": content, "type": "ai"}}
+
+    try:
+        json.dumps(chunk)
+        return chunk
+    except (TypeError, ValueError):
+        return None
 
 
 class CentralGatewayClient:
@@ -158,6 +192,19 @@ class CentralGatewayClient:
             await self._handle_inbound_query(msg)
         elif msg_type == "peer_query_stream":
             await self._handle_inbound_stream(msg)
+        elif msg_type == "connection_request_accepted":
+            logger.info("Connection request was accepted by peer: %s", msg.get("connection_email"))
+            try:
+                await self.list_connections()
+            except Exception as e:
+                logger.warning("Failed to refresh connections after acceptance: %s", e)
+        elif msg_type == "connection_removed":
+            user_id = msg.get("user_id")
+            if user_id:
+                try:
+                    delete_friend(user_id)
+                except Exception:
+                    pass
 
     async def _handle_inbound_query(self, msg: Dict[str, Any]) -> None:
         """Handle incoming query forwarded from central server."""
@@ -256,13 +303,32 @@ class CentralGatewayClient:
                 memory_user_id=memory_user_id,
             )
 
+            accumulated_response = []
             async for chunk in stream_gen:
-                if self._ws:
-                    await self._ws.send(json.dumps({
-                        "type": "peer_stream_chunk",
-                        "request_id": req_id,
-                        "data": chunk,
-                    }))
+                serialized = _serialize_stream_chunk(chunk)
+                if serialized:
+                    msg_content = serialized.get("message", {}).get("content", "")
+                    if msg_content:
+                        accumulated_response.append(msg_content)
+                    if self._ws:
+                        await self._ws.send(json.dumps({
+                            "type": "peer_stream_chunk",
+                            "request_id": req_id,
+                            "data": serialized,
+                        }))
+
+            final_reply = "".join(accumulated_response).strip() or "Task completed."
+            await asyncio.to_thread(save_message, thread_id, "assistant", final_reply)
+            await asyncio.to_thread(
+                append_peer_query_event,
+                "inbound",
+                from_user,
+                from_email,
+                query,
+                "ok",
+                final_reply,
+                None,
+            )
 
             if self._ws:
                 await self._ws.send(json.dumps({

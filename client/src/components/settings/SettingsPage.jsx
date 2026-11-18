@@ -84,6 +84,27 @@ import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart';
 import { listen, emit } from '@tauri-apps/api/event';
 import { WINDOW_SIZES } from '../../constants/appConfig';
 
+export const notifyConnectionsChanged = async () => {
+  try {
+    localStorage.setItem('rie_connections_updated_at', String(Date.now()));
+  } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent('rie-connections-refresh'));
+  } catch {}
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel('rie-sync');
+      bc.postMessage({ type: 'connections-refresh' });
+      bc.close();
+    }
+  } catch {}
+  try {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+      await emit('rie-connections-refresh', { timestamp: Date.now() });
+    }
+  } catch {}
+};
+
 function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory }) {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
@@ -278,7 +299,10 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       setBrowserEngine(localStorage.getItem("rie_browser_engine") || "default");
     };
     window.addEventListener("rie_browser_engine_change", handleEngineChange);
-    return () => window.removeEventListener("rie_browser_engine_change", handleEngineChange);
+    return () => {
+      window.removeEventListener("rie_browser_engine_change", handleEngineChange);
+      notifyConnectionsChanged();
+    };
   }, []);
 
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
@@ -688,6 +712,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       await acceptConnectionRequest(requestId);
       await loadFriendRequests();
       await loadConnectivityData();
+      notifyConnectionsChanged();
       setFriendActionMsg({ type: 'success', text: 'Connection request accepted!' });
     } catch (err) {
       setFriendActionMsg({ type: 'error', text: err.message || 'Failed to accept connection request' });
@@ -921,6 +946,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
   };
 
   const handleClose = () => {
+    notifyConnectionsChanged();
     const isDirty = Object.keys(pendingChanges).length > 0 || pendingAutoStart !== null;
     if (isDirty) {
       setDiscardConfirmOpen(true);
@@ -1042,6 +1068,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
         return next;
       });
       await loadConnectivityData();
+      notifyConnectionsChanged();
     } catch (err) {
       setError(`Failed to remove connection: ${err.message}`);
     } finally {
@@ -1137,6 +1164,7 @@ function SettingsPage({ onClose, initialTab, initialSubTab, onClearAllHistory })
       setFriends((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
       setPeerAccessOpen(false);
       setPeerAccessFriend(null);
+      notifyConnectionsChanged();
     } catch (err) {
       setError(err.message || 'Failed to save peer access');
     } finally {
@@ -2192,8 +2220,8 @@ key2,
                               const hasStatus = !!statusRow;
                               const isStale = hasStatus && !isFresh;
                               const reachable = statusRow?.reachable === true && !isStale;
-                              const isOnline = hasStatus && !isStale && reachable;
-                              const initials = (friend.name || '?')
+                              const isOnline = hasStatus ? (!isStale && reachable) : (friend.is_online ?? false);
+                              const initials = (friend.name || friend.email || '?')
                                 .trim()
                                 .split(/\s+/)
                                 .filter(Boolean)
@@ -2216,8 +2244,8 @@ key2,
                                       </div>
                                       <div className="min-w-0">
                                         <div className="flex items-center gap-2">
-                                          <span className="truncate text-sm font-semibold text-white" title={friend.name || 'Connection'}>
-                                            {friend.name || 'Connection'}
+                                          <span className="truncate text-sm font-semibold text-white" title={friend.name || friend.email || 'Connection'}>
+                                            {friend.name || friend.email || 'Connection'}
                                           </span>
                                           <span
                                             className={`rounded-full px-2 py-0.2 text-[10px] font-medium ${
@@ -2230,7 +2258,7 @@ key2,
                                           </span>
                                         </div>
                                         <p className="truncate text-xs text-neutral-400 mt-0.5">
-                                          {friend.email || friend.device_id || 'Connected collaborator'}
+                                          {friend.device_name ? `Device: ${friend.device_name}` : (friend.email && friend.email !== friend.name ? friend.email : 'Connected collaborator')}
                                         </p>
                                       </div>
                                     </div>

@@ -102,8 +102,14 @@ export function HistorySidebar({
     const [threadToDelete, setThreadToDelete] = useState(null);
 
     // Accordions (Friends & Scheduled)
-    const [friendsOpen, setFriendsOpen] = useState(false);
+    const [friendsOpen, setFriendsOpen] = useState(true);
     const [scheduledOpen, setScheduledOpen] = useState(false);
+
+    useEffect(() => {
+        if (friends && friends.length > 0) {
+            setFriendsOpen(true);
+        }
+    }, [friends?.length]);
 
     // Scheduled tasks
     const [scheduledTasks, setScheduledTasks] = useState([]);
@@ -366,7 +372,7 @@ export function HistorySidebar({
                 type="button"
                 onClick={handleFriendClick}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 relative cursor-pointer"
-                title={friends.length > 0 ? `Friends (${friends.length})` : "Friends"}
+                title={friends.length > 0 ? `Connections (${friends.length})` : "Connections"}
             >
                 <Users size={16} />
                 {friends.length > 0 && (
@@ -482,26 +488,55 @@ export function HistorySidebar({
                                     No connections yet.
                                 </div>
                             ) : (
-                                friends.map((friend) => (
-                                    <div
-                                        key={friend.id}
-                                        className="flex items-center justify-between px-2 py-1 rounded bg-neutral-800/40 hover:bg-neutral-800/70 transition-colors"
-                                    >
-                                        <span className="text-xs text-neutral-300 truncate">
-                                            {friend.name || "Connection"}
-                                        </span>
-                                        <button
-                                            type="button"
+                                friends.map((friend) => {
+                                    const displayName = friend.email || friend.name || "Connection";
+                                    const isOnline = Boolean(friend.is_online);
+                                    return (
+                                        <div
+                                            key={friend.id}
                                             onClick={() => {
                                                 onStartFriendChat(friend);
                                                 if (closeOnSelect) onClose();
                                             }}
-                                            className="text-[10px] text-emerald-400 hover:text-emerald-300 font-medium px-1.5 py-0.5 rounded hover:bg-emerald-500/10 transition-colors shrink-0"
+                                            className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-neutral-800/40 hover:bg-neutral-800/80 cursor-pointer transition-colors border border-transparent hover:border-neutral-700/60"
+                                            title={`${displayName}${friend.device_name ? ` (${friend.device_name})` : ""} - ${isOnline ? "Online" : "Offline"}`}
                                         >
-                                            Chat
-                                        </button>
-                                    </div>
-                                ))
+                                            <div className="flex items-center gap-2 min-w-0 pr-2">
+                                                <span className="relative flex h-2 w-2 shrink-0">
+                                                    {isOnline && (
+                                                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                                    )}
+                                                    <span
+                                                        className={`relative inline-flex rounded-full h-2 w-2 ${
+                                                            isOnline ? "bg-emerald-500" : "bg-neutral-600"
+                                                        }`}
+                                                    />
+                                                </span>
+                                                <div className="min-w-0">
+                                                    <p className="text-xs text-neutral-200 truncate group-hover:text-emerald-300 transition-colors font-medium">
+                                                        {displayName}
+                                                    </p>
+                                                    {friend.device_name && (
+                                                        <p className="text-[10px] text-neutral-500 truncate font-mono">
+                                                            {friend.device_name}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onStartFriendChat(friend);
+                                                    if (closeOnSelect) onClose();
+                                                }}
+                                                className="text-[10px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all shrink-0 cursor-pointer"
+                                            >
+                                                Chat
+                                            </button>
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
                     )}
@@ -626,7 +661,7 @@ export function HistorySidebar({
                                                                 </span>
                                                                 {Boolean(friendMeta?.isFriendChat || friendMeta?.friendId) && (
                                                                     <span className="rounded bg-emerald-500/10 text-emerald-400 text-[9px] px-1 py-0.2 shrink-0">
-                                                                        Friend
+                                                                        Connection
                                                                     </span>
                                                                 )}
                                                                 <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />

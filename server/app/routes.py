@@ -1340,20 +1340,75 @@ async def connectivity_cancel_connection_request(request_id: str):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@router.get("/connectivity/connections", response_model=List[FriendRecord])
-async def connectivity_friends():
+async def _ensure_friend(friend_id: str) -> Optional[Dict[str, Any]]:
+    friend = get_friend_by_id(friend_id)
+    if friend:
+        return friend
     if settings.RIE_ACCESS_TOKEN:
         try:
             from app.connectivity.central_client import gateway_client
             await gateway_client.list_connections()
+            friend = get_friend_by_id(friend_id)
+            if friend:
+                return friend
         except Exception:
             pass
-    return [_friend_record_from_row(item) for item in list_friends()]
+    return None
+
+
+@router.get("/connectivity/connections", response_model=List[FriendRecord])
+async def connectivity_friends():
+    cloud_map: Dict[str, Any] = {}
+    if settings.RIE_ACCESS_TOKEN:
+        try:
+            from app.connectivity.central_client import gateway_client
+            cloud_connections = await gateway_client.list_connections()
+            for cc in cloud_connections:
+                uid = cc.get("user_id") or cc.get("id")
+                if uid:
+                    cloud_map[uid] = cc
+        except Exception:
+            pass
+
+    results = []
+    seen_ids = set()
+    for row in list_friends():
+        rec = _friend_record_from_row(row)
+        seen_ids.add(rec.id)
+        cc = cloud_map.get(rec.id)
+        if cc:
+            rec.email = cc.get("email")
+            rec.device_name = cc.get("device_name")
+            rec.is_online = bool(cc.get("is_online"))
+            if (not rec.name or rec.name == "Connection") and cc.get("email"):
+                rec.name = cc.get("email")
+        results.append(rec)
+
+    for uid, cc in cloud_map.items():
+        if uid not in seen_ids:
+            rec = FriendRecord(
+                id=uid,
+                name=cc.get("email") or cc.get("device_name") or "Connection",
+                device_id=cc.get("device_id") or f"cloud-{uid[:8]}",
+                fingerprint=cc.get("fingerprint") or f"SHA256:{uid}",
+                public_key=cc.get("public_key") or uid,
+                public_url=None,
+                created_at=datetime.utcnow().isoformat(),
+                updated_at=datetime.utcnow().isoformat(),
+                peer_access=None,
+                email=cc.get("email"),
+                device_name=cc.get("device_name"),
+                is_online=bool(cc.get("is_online")),
+            )
+            results.append(rec)
+            seen_ids.add(uid)
+
+    return results
 
 
 @router.delete("/connectivity/connections/{friend_id}")
 async def connectivity_friend_delete(friend_id: str):
-    friend = get_friend_by_id(friend_id)
+    friend = await _ensure_friend(friend_id)
     if not friend:
         raise HTTPException(status_code=404, detail="Connection not found")
     if settings.RIE_ACCESS_TOKEN:
@@ -1372,7 +1427,7 @@ async def connectivity_friend_delete(friend_id: str):
 async def connectivity_ask_friend(friend_id: str, data: PeerAskRequest):
     if friend_id != data.friend_id:
         raise HTTPException(status_code=400, detail="Connection ID mismatch")
-    friend = get_friend_by_id(friend_id)
+    friend = await _ensure_friend(friend_id)
     if not friend:
         raise HTTPException(status_code=404, detail="Connection not found")
 
@@ -1448,7 +1503,7 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
             }
             yield f"data: {json.dumps(start_payload)}\n\n"
 
-            friend = await run_in_threadpool(get_friend_by_id, friend_id)
+            friend = await _ensure_friend(friend_id)
             if not friend:
                 stream_error = "Connection not found"
                 yield f"data: {json.dumps({'error': 'friend_not_found', 'details': stream_error})}\n\n"
@@ -1483,8 +1538,15 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
                 async with httpx.AsyncClient(timeout=180.0) as client:
                     async with client.stream("POST", cloud_stream_url, json=cloud_payload, headers=cloud_headers) as cloud_resp:
                         if cloud_resp.status_code >= 400:
-                            err_text = await cloud_resp.aread()
-                            stream_error = f"Gateway stream failed ({cloud_resp.status_code}): {err_text.decode('utf-8', errors='ignore')}"
+                            err_text = (await cloud_resp.aread()).decode('utf-8', errors='ignore')
+                            if cloud_resp.status_code == 503:
+                                target_label = fname if fname != "Connection" else "Your connection"
+                                offline_msg = f"{target_label} is currently offline.\n\nFor your connection to receive and reply to messages, their Rie app must be running and connected to the internet on their device."
+                                yield f"data: {json.dumps({'message': {'content': offline_msg}})}\n\n"
+                                yield f"data: {json.dumps({'step': 'end', 'done': True})}\n\n"
+                                await run_in_threadpool(save_message, thread_id, "assistant", offline_msg)
+                                return
+                            stream_error = f"Gateway stream failed ({cloud_resp.status_code}): {err_text}"
                             yield f"data: {json.dumps({'error': 'gateway_stream_failed', 'details': stream_error})}\n\n"
                             return
                         async for line in cloud_resp.aiter_lines():
@@ -1502,12 +1564,17 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
                                 except Exception:
                                     pass
                             yield f"{line}\n\n"
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, GeneratorExit):
                 stream_error = "Connection stream cancelled"
                 raise
             except Exception as exc:
+                if not str(exc).strip():
+                    return
                 stream_error = f"Error in connection stream: {exc}"
-                yield f"data: {json.dumps({'error': 'gateway_stream_error', 'details': stream_error})}\n\n"
+                try:
+                    yield f"data: {json.dumps({'error': 'gateway_stream_error', 'details': stream_error})}\n\n"
+                except Exception:
+                    pass
                 return
 
         finally:

@@ -422,6 +422,9 @@ class FriendRecord(BaseModel):
     created_at: str
     updated_at: str
     peer_access: Optional[FriendPeerAccessPolicy] = None
+    email: Optional[str] = None
+    device_name: Optional[str] = None
+    is_online: Optional[bool] = None
 
 
 class PairingRequest(BaseModel):

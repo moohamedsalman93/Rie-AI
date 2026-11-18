@@ -444,6 +444,9 @@ function MainApp() {
           // no-op
         }
       });
+      settingsWindow.once("tauri://destroyed", () => {
+        loadFriends();
+      });
       settingsWindow.once("tauri://error", (e) => {
         console.error("Failed to create settings window:", e);
         setShowWelcome(false);
@@ -2819,11 +2822,76 @@ function MainApp() {
         }
       };
       reloadSettings();
+      loadFriends();
     }
-  }, [isSettingsOpen, isAppInitializing]);
+  }, [isSettingsOpen, isAppInitializing, loadFriends]);
 
+  // Real-time synchronization for connections (Settings changes, window focus, cross-window events, presence polling)
   useEffect(() => {
     loadFriends();
+
+    const handleRefresh = () => {
+      loadFriends();
+    };
+
+    // 1. In-window CustomEvent
+    window.addEventListener("rie-connections-refresh", handleRefresh);
+
+    // 2. Storage event (fires across tabs/windows)
+    const handleStorage = (e) => {
+      if (e.key === "rie_connections_updated_at") {
+        loadFriends();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+
+    // 3. BroadcastChannel across tabs/windows
+    let bc = null;
+    try {
+      if (typeof BroadcastChannel !== "undefined") {
+        bc = new BroadcastChannel("rie-sync");
+        bc.onmessage = (event) => {
+          if (event.data?.type === "connections-refresh") {
+            loadFriends();
+          }
+        };
+      }
+    } catch {}
+
+    // 4. Tauri event across separate WebviewWindows
+    let unlistenTauri = null;
+    let isCancelled = false;
+    if (typeof window !== "undefined" && window.__TAURI_INTERNALS__) {
+      import("@tauri-apps/api/event").then(({ listen }) => {
+        if (isCancelled) return;
+        listen("rie-connections-refresh", () => {
+          loadFriends();
+        }).then((unlisten) => {
+          if (isCancelled) unlisten();
+          else unlistenTauri = unlisten;
+        }).catch((err) => console.warn("Failed to listen for rie-connections-refresh:", err));
+      }).catch(() => {});
+    }
+
+    // 5. Window focus (when user switches back from Settings window or browser to Rie window)
+    window.addEventListener("focus", handleRefresh);
+
+    // 6. Polling every 15 seconds to keep presence/online status and connections up-to-date
+    const intervalId = setInterval(loadFriends, 15000);
+
+    return () => {
+      isCancelled = true;
+      window.removeEventListener("rie-connections-refresh", handleRefresh);
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener("focus", handleRefresh);
+      clearInterval(intervalId);
+      if (bc) {
+        try { bc.close(); } catch {}
+      }
+      if (unlistenTauri) {
+        try { unlistenTauri(); } catch {}
+      }
+    };
   }, [loadFriends]);
 
   useEffect(() => {
