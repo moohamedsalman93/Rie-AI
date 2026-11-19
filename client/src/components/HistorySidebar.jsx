@@ -10,7 +10,13 @@ import {
     CalendarClock,
     Trash2,
     PanelLeftClose,
-    PanelLeftOpen
+    PanelLeftOpen,
+    MessageSquare,
+    RefreshCw,
+    Clock,
+    Laptop,
+    ArrowDownLeft,
+    ArrowUpRight,
 } from 'lucide-react';
 import { getHistory, listScheduledTasks, cancelScheduledTask, getSubchats } from '../services/chatApi';
 import { ConfirmationModal } from './ConfirmationModal';
@@ -41,23 +47,40 @@ export function HistorySidebar({
     onExpand,
     onToggleCollapse = null,
     onSelectThread,
-    onDeleteThread = () => {},
+    onDeleteThread = () => { },
     onNewChat,
     currentThreadId,
     streamingThreads = new Set(),
     windowMode,
     friends = [],
     friendThreadMeta = {},
-    onStartFriendChat = () => {},
+    onStartFriendChat = () => { },
     connectionRequests = { incoming: [], outgoing: [] },
-    onAcceptConnectionRequest = () => {},
-    onDeclineConnectionRequest = () => {},
+    onAcceptConnectionRequest = () => { },
+    onDeclineConnectionRequest = () => { },
     sessionsByThread = {},
     apiStatus = 'online',
+    activeView: controlledActiveView,
+    defaultView = 'chats',
+    onViewChange,
 }) {
     const [internalCollapsed, setInternalCollapsed] = useState(false);
     const isCollapsed = controlledIsCollapsed !== undefined ? controlledIsCollapsed : internalCollapsed;
     const searchInputRef = useRef(null);
+
+    // Sidebar Views: 'chats' | 'connections' | 'scheduled'
+    const [internalActiveView, setInternalActiveView] = useState(() => {
+        return localStorage.getItem("rie_sidebar_view") || defaultView;
+    });
+    const activeView = controlledActiveView !== undefined ? controlledActiveView : internalActiveView;
+
+    const handleViewChange = useCallback((newView) => {
+        setInternalActiveView(newView);
+        try {
+            localStorage.setItem("rie_sidebar_view", newView);
+        } catch (_) { }
+        if (onViewChange) onViewChange(newView);
+    }, [onViewChange]);
 
     const [threads, setThreads] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -65,8 +88,15 @@ export function HistorySidebar({
     const [hasMore, setHasMore] = useState(true);
     const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState("");
+    const [connectionSearch, setConnectionSearch] = useState("");
+    const [chatsOpen, setChatsOpen] = useState(true);
+    const [knowledgeOpen, setKnowledgeOpen] = useState(true);
     const [isConfirmOpen, setIsConfirmOpen] = useState(false);
     const [threadSubchatsMap, setThreadSubchatsMap] = useState({});
+    const [collapsedDevices, setCollapsedDevices] = useState({});
+    const toggleDeviceCollapse = useCallback((deviceName) => {
+        setCollapsedDevices((prev) => ({ ...prev, [deviceName]: !prev[deviceName] }));
+    }, []);
 
     // Automatically load child subchats for threads that have subchats
     useEffect(() => {
@@ -100,23 +130,26 @@ export function HistorySidebar({
                 if (Array.isArray(subs) && subs.length > 0) {
                     setThreadSubchatsMap((prev) => ({ ...prev, [currentThreadId]: subs }));
                 }
-            }).catch(() => {});
+            }).catch(() => { });
         }
     }, [currentThreadId]);
     const [threadToDelete, setThreadToDelete] = useState(null);
 
-    // Accordions (Friends & Scheduled)
-    const [friendsOpen, setFriendsOpen] = useState(true);
-    const [scheduledOpen, setScheduledOpen] = useState(false);
-
     const incomingRequests = Array.isArray(connectionRequests?.incoming) ? connectionRequests.incoming : [];
     const incomingCount = incomingRequests.length;
+    const onlineFriendsCount = useMemo(() => {
+        return (friends || []).filter((f) => Boolean(f.is_online)).length;
+    }, [friends]);
 
-    useEffect(() => {
-        if ((friends && friends.length > 0) || incomingCount > 0) {
-            setFriendsOpen(true);
-        }
-    }, [friends?.length, incomingCount]);
+    const filteredFriends = useMemo(() => {
+        if (!connectionSearch.trim()) return friends || [];
+        const q = connectionSearch.toLowerCase();
+        return (friends || []).filter((friend) => {
+            const name = (friend.email || friend.name || "").toLowerCase();
+            const device = (friend.device_name || "").toLowerCase();
+            return name.includes(q) || device.includes(q);
+        });
+    }, [friends, connectionSearch]);
 
     // Scheduled tasks
     const [scheduledTasks, setScheduledTasks] = useState([]);
@@ -126,43 +159,18 @@ export function HistorySidebar({
     const showSidebar = isOpen || isPersistent;
     const PAGE_SIZE = 18;
 
-    const handleExpand = () => {
-        if (onExpand) {
-            onExpand();
-        } else if (onToggleCollapse) {
-            onToggleCollapse();
-        } else {
-            setInternalCollapsed(false);
+    const loadScheduledTasks = useCallback(async () => {
+        if (apiStatus !== 'online') return;
+        setLoadingTasks(true);
+        try {
+            const data = await listScheduledTasks();
+            setScheduledTasks(Array.isArray(data) ? data : []);
+        } catch (err) {
+            console.error("Failed to load scheduled tasks:", err);
+        } finally {
+            setLoadingTasks(false);
         }
-    };
-
-    const handleCollapse = () => {
-        if (onToggleCollapse) {
-            onToggleCollapse();
-        } else if (onClose) {
-            onClose();
-        } else {
-            setInternalCollapsed(true);
-        }
-    };
-
-    const handleSearchClick = () => {
-        handleExpand();
-        setTimeout(() => {
-            searchInputRef.current?.focus();
-        }, 120);
-    };
-
-    const handleFriendClick = () => {
-        handleExpand();
-        setFriendsOpen(true);
-    };
-
-    const handleScheduleClick = () => {
-        handleExpand();
-        setScheduledOpen(true);
-        loadScheduledTasks();
-    };
+    }, [apiStatus]);
 
     const loadInitialHistory = useCallback(async () => {
         if (!showSidebar) return;
@@ -181,6 +189,74 @@ export function HistorySidebar({
         }
     }, [showSidebar, searchTerm]);
 
+    const handleExpand = useCallback(() => {
+        if (onExpand) {
+            onExpand();
+        } else if (onToggleCollapse) {
+            onToggleCollapse();
+        } else {
+            setInternalCollapsed(false);
+        }
+    }, [onExpand, onToggleCollapse]);
+
+    const handleCollapse = useCallback(() => {
+        if (onToggleCollapse) {
+            onToggleCollapse();
+        } else if (onClose) {
+            onClose();
+        } else {
+            setInternalCollapsed(true);
+        }
+    }, [onToggleCollapse, onClose]);
+
+    const handleSearchClick = () => {
+        handleViewChange('chats');
+        handleExpand();
+        setTimeout(() => {
+            searchInputRef.current?.focus();
+        }, 120);
+    };
+
+    const handleFriendClick = () => {
+        handleViewChange('connections');
+        handleExpand();
+    };
+
+    const handleScheduleClick = () => {
+        handleViewChange('scheduled');
+        handleExpand();
+        loadScheduledTasks();
+    };
+
+    const handleNewChat = () => {
+        handleViewChange('chats');
+        onNewChat();
+    };
+
+    useEffect(() => {
+        const handleOpenConnections = () => {
+            handleViewChange('connections');
+            handleExpand();
+        };
+        const handleOpenScheduled = () => {
+            handleViewChange('scheduled');
+            handleExpand();
+            loadScheduledTasks();
+        };
+        const handleOpenChats = () => {
+            handleViewChange('chats');
+            handleExpand();
+        };
+        window.addEventListener('rie-open-connections', handleOpenConnections);
+        window.addEventListener('rie-open-scheduled', handleOpenScheduled);
+        window.addEventListener('rie-open-chats', handleOpenChats);
+        return () => {
+            window.removeEventListener('rie-open-connections', handleOpenConnections);
+            window.removeEventListener('rie-open-scheduled', handleOpenScheduled);
+            window.removeEventListener('rie-open-chats', handleOpenChats);
+        };
+    }, [handleViewChange, handleExpand, loadScheduledTasks]);
+
     useEffect(() => {
         loadInitialHistory();
     }, [loadInitialHistory]);
@@ -190,19 +266,6 @@ export function HistorySidebar({
         window.addEventListener('rie-history-refresh', refresh);
         return () => window.removeEventListener('rie-history-refresh', refresh);
     }, [loadInitialHistory]);
-
-    const loadScheduledTasks = useCallback(async () => {
-        if (apiStatus !== 'online') return;
-        setLoadingTasks(true);
-        try {
-            const data = await listScheduledTasks();
-            setScheduledTasks(Array.isArray(data) ? data : []);
-        } catch (err) {
-            console.error("Failed to load scheduled tasks:", err);
-        } finally {
-            setLoadingTasks(false);
-        }
-    }, [apiStatus]);
 
     useEffect(() => {
         if (!showSidebar) return;
@@ -300,11 +363,147 @@ export function HistorySidebar({
         return [...localOnly, ...(threads || [])];
     }, [threads, sessionsByThread]);
 
+    const getMatchedFriend = useCallback((thread, friendMeta) => {
+        const friendId = thread?.friend_id || friendMeta?.friendId;
+        if (!friendId) return null;
+        return (friends || []).find((f) => f.id === friendId) || null;
+    }, [friends]);
+
+    const isThreadInbound = useCallback((t) => {
+        if (!t) return false;
+        if (t.direction === 'inbound') return true;
+        const fMeta = getThreadFriendMeta(t.id);
+        if (fMeta?.direction === 'inbound') return true;
+        const strId = String(t.id || '');
+        return strId.startsWith('cloud-peer:') || strId.includes('inbound');
+    }, [getThreadFriendMeta]);
+
+    const getThreadDisplayTitle = useCallback((thread, friendMeta) => {
+        const isConn = Boolean(thread.is_friend_chat || thread.friend_id || friendMeta?.isFriendChat || friendMeta?.friendId);
+        if (isConn) {
+            const matchedFriend = getMatchedFriend(thread, friendMeta);
+            const peerIdentifier = matchedFriend?.name || matchedFriend?.email || friendMeta?.friendEmail || thread.friend_name || friendMeta?.friendName;
+            if (!thread.title || thread.title === "Untitled Chat" || thread.title.startsWith("Chat with")) {
+                return peerIdentifier ? `Chat with ${peerIdentifier}` : "Connection Chat";
+            }
+            return thread.title;
+        }
+        return thread.title || "Untitled Chat";
+    }, [getMatchedFriend]);
+
+    const getThreadCategory = useCallback((thread) => {
+        const friendMeta = getThreadFriendMeta(thread.id);
+        const isConn = Boolean(thread.is_friend_chat || thread.friend_id || friendMeta?.isFriendChat || friendMeta?.friendId);
+        if (isConn) return 'connections';
+
+        const isKnow = Boolean(thread.is_knowledge_chat || (Array.isArray(thread.knowledge_names) && thread.knowledge_names.length > 0));
+        if (isKnow) return 'knowledge';
+
+        const titleLower = (thread.title || "").toLowerCase();
+        const isSched = Boolean(thread.intent || thread.task_id || titleLower.includes("[scheduled]") || titleLower.includes("scheduled"));
+        if (isSched) return 'scheduled';
+
+        return 'chats';
+    }, [friendThreadMeta]);
+
+    const normalThreads = useMemo(() => {
+        return mergedThreads.filter((t) => getThreadCategory(t) === 'chats');
+    }, [mergedThreads, getThreadCategory]);
+
+    const connectionThreads = useMemo(() => {
+        return mergedThreads.filter((t) => getThreadCategory(t) === 'connections');
+    }, [mergedThreads, getThreadCategory]);
+
+    const knowledgeThreads = useMemo(() => {
+        return mergedThreads.filter((t) => getThreadCategory(t) === 'knowledge');
+    }, [mergedThreads, getThreadCategory]);
+
+    const scheduledRunThreads = useMemo(() => {
+        return mergedThreads.filter((t) => getThreadCategory(t) === 'scheduled');
+    }, [mergedThreads, getThreadCategory]);
+
+    const searchResults = useMemo(() => {
+        if (!searchTerm) return [];
+        const term = searchTerm.toLowerCase();
+        return mergedThreads.filter((t) => {
+            const friendMeta = getThreadFriendMeta(t.id);
+            const title = getThreadDisplayTitle(t, friendMeta).toLowerCase();
+            const matchedFriend = getMatchedFriend(t, friendMeta);
+            const email = (matchedFriend?.email || friendMeta?.friendEmail || "").toLowerCase();
+            const device = (matchedFriend?.device_name || friendMeta?.deviceName || "").toLowerCase();
+            return title.includes(term) || email.includes(term) || device.includes(term);
+        });
+    }, [mergedThreads, searchTerm, getThreadDisplayTitle, getMatchedFriend, friendThreadMeta]);
+
+    const handleFriendChatClick = (friend, forceNew = false) => {
+        handleViewChange("chats");
+        if (!forceNew) {
+            const existing = mergedThreads.find((t) => {
+                const fMeta = getThreadFriendMeta(t.id);
+                return t.friend_id === friend.id || fMeta?.friendId === friend.id;
+            });
+            if (existing) {
+                onSelectThread(existing.id);
+                return;
+            }
+        }
+        onStartFriendChat(friend, forceNew);
+    };
+
+    const chatViewThreads = useMemo(() => {
+        return mergedThreads.filter((t) => {
+            const cat = getThreadCategory(t);
+            return cat === 'chats' || cat === 'connections' || cat === 'knowledge';
+        });
+    }, [mergedThreads, getThreadCategory]);
+
     const filteredThreads = useMemo(() => {
-        return mergedThreads.filter((t) =>
-            (t.title || "Untitled Chat").toLowerCase().includes(searchTerm.toLowerCase())
-        );
-    }, [mergedThreads, searchTerm]);
+        if (!searchTerm.trim()) return chatViewThreads;
+        const q = searchTerm.toLowerCase();
+        return chatViewThreads.filter((t) => {
+            const friendMeta = getThreadFriendMeta(t.id);
+            const matchedFriend = getMatchedFriend(t, friendMeta);
+            const devName = (matchedFriend?.device_name || friendMeta?.deviceName || t.device_name || "").toLowerCase();
+            const title = (t.title || "Untitled Chat").toLowerCase();
+            return title.includes(q) || devName.includes(q);
+        });
+    }, [chatViewThreads, searchTerm, getThreadFriendMeta, getMatchedFriend]);
+
+    const getDeviceMeta = useCallback((thread) => {
+        const friendMeta = getThreadFriendMeta(thread.id);
+        const matchedFriend = getMatchedFriend(thread, friendMeta);
+        const isConn = Boolean(thread.is_friend_chat || thread.friend_id || friendMeta?.isFriendChat || friendMeta?.friendId);
+        const deviceName = matchedFriend?.device_name || friendMeta?.deviceName || thread.device_name || thread.friend_name || (matchedFriend ? (matchedFriend.name || matchedFriend.email) : (isConn ? "Peer Device" : null));
+        return { isConn, deviceName, matchedFriend, friendMeta };
+    }, [getThreadFriendMeta, getMatchedFriend]);
+
+    const organizeThreadsWithDeviceGrouping = useCallback((threadList) => {
+        const items = [];
+        const deviceMap = new Map();
+
+        for (const thread of threadList) {
+            const meta = getDeviceMeta(thread);
+            if (meta.isConn && meta.deviceName) {
+                if (!deviceMap.has(meta.deviceName)) {
+                    const groupObj = {
+                        type: 'device_group',
+                        deviceName: meta.deviceName,
+                        friend: meta.matchedFriend,
+                        threads: [],
+                    };
+                    deviceMap.set(meta.deviceName, groupObj);
+                    items.push(groupObj);
+                }
+                deviceMap.get(meta.deviceName).threads.push(thread);
+            } else {
+                items.push({
+                    type: 'thread',
+                    thread,
+                });
+            }
+        }
+        return items;
+    }, [getDeviceMeta]);
 
     const groupedThreads = useMemo(() => {
         const groups = {
@@ -342,6 +541,208 @@ export function HistorySidebar({
         return Object.values(groups).filter((g) => g.threads.length > 0);
     }, [filteredThreads]);
 
+    const groupedNormalThreads = groupedThreads;
+
+    const renderThreadItem = (thread, closeOnSelect = false) => {
+        const isActive = thread.id === currentThreadId;
+        const isStreaming = streamingThreads.has(thread.id);
+        const friendMeta = getThreadFriendMeta(thread.id);
+        const matchedFriend = getMatchedFriend(thread, friendMeta);
+        const isConn = Boolean(thread.is_friend_chat || thread.friend_id || friendMeta?.isFriendChat || friendMeta?.friendId);
+        const isKnow = Boolean(thread.is_knowledge_chat || (Array.isArray(thread.knowledge_names) && thread.knowledge_names.length > 0));
+        const isSched = Boolean(thread.intent || thread.task_id || (thread.title || "").toLowerCase().includes("scheduled"));
+        const displayTitle = getThreadDisplayTitle(thread, friendMeta);
+        const childSubchats = threadSubchatsMap[thread.id] || [];
+
+        return (
+            <div key={thread.id} className="space-y-0.5">
+                <button
+                    onClick={() => {
+                        onSelectThread(thread.id);
+                        if (closeOnSelect) onClose();
+                    }}
+                    className={`w-full text-left px-2 py-1.5 rounded-lg transition-colors group relative flex items-center justify-between ${isActive
+                        ? "bg-neutral-800 text-white font-medium shadow-xs"
+                        : "text-neutral-400 hover:bg-neutral-800/40 hover:text-neutral-200"
+                        }`}
+                >
+                    <div className="pr-5 min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                            {isConn ? (
+                                <span className="flex items-center gap-1 shrink-0">
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${matchedFriend?.is_online ? "bg-emerald-400" : "bg-neutral-500"}`} />
+                                    {isThreadInbound(thread) ? (
+                                        <ArrowDownLeft size={11} className="text-neutral-400 shrink-0" title="Inbound" />
+                                    ) : (
+                                        <ArrowUpRight size={11} className="text-neutral-400 shrink-0" title="Outbound" />
+                                    )}
+                                </span>
+                            ) : isKnow ? (
+                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                            ) : isSched ? (
+                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />
+                            ) : null}
+                            <span className="text-xs truncate font-medium">
+                                {displayTitle}
+                            </span>
+                            {isConn && (matchedFriend?.device_name || friendMeta?.deviceName) && (
+                                <span className="rounded bg-neutral-800 text-neutral-300 text-[9px] px-1 py-0.2 shrink-0 border border-neutral-700/60 font-mono">
+                                    {matchedFriend?.device_name || friendMeta?.deviceName}
+                                </span>
+                            )}
+                            <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
+                            {isStreaming && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 text-[10px] text-neutral-500">
+                            <span className="opacity-70">
+                                {formatDate(thread.updated_at || thread.created_at)}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setThreadToDelete(thread.id);
+                            setIsConfirmOpen(true);
+                        }}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all cursor-pointer"
+                        title="Delete conversation"
+                    >
+                        <Trash2 size={12} />
+                    </div>
+                </button>
+
+                {/* Subchats */}
+                {childSubchats.length > 0 && (
+                    <div className="ml-3 pl-2 border-l border-neutral-800 space-y-0.5 py-0.5">
+                        {childSubchats.map((sub) => {
+                            const isSubActive = sub.id === currentThreadId;
+                            const subClean = (sub.title || sub.subagent_type || "Subchat").replace(/_/g, " ");
+                            return (
+                                <button
+                                    key={sub.id}
+                                    onClick={() => {
+                                        onSelectThread(sub.id);
+                                        if (closeOnSelect) onClose();
+                                    }}
+                                    className={`w-full text-left px-2 py-1 rounded text-xs transition-colors flex items-center justify-between group/sub ${isSubActive
+                                        ? "bg-neutral-800 text-emerald-400 font-medium"
+                                        : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
+                                        }`}
+                                >
+                                    <span className="truncate flex items-center gap-1.5 min-w-0">
+                                        <span className="text-[10px] text-emerald-500/70 font-mono">↳</span>
+                                        <span className="truncate text-[11px]">{subClean}</span>
+                                    </span>
+                                    <span className="text-[9px] text-neutral-500 font-mono shrink-0 ml-1">
+                                        {sub.message_count || 1} msg
+                                    </span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const renderDeviceGroupItem = (deviceGroup, closeOnSelect = false) => {
+        const isDeviceCollapsed = Boolean(collapsedDevices[deviceGroup.deviceName]);
+        const hasActiveThread = deviceGroup.threads.some((t) => t.id === currentThreadId);
+        const isOnline = Boolean(deviceGroup.friend?.is_online);
+
+        return (
+            <div key={`device-group-${deviceGroup.deviceName}`} className="space-y-0.5">
+                <button
+                    type="button"
+                    onClick={() => toggleDeviceCollapse(deviceGroup.deviceName)}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition-colors group cursor-pointer ${
+                        hasActiveThread
+                            ? "bg-neutral-800 text-white font-medium shadow-xs"
+                            : "text-neutral-300 hover:text-white hover:bg-neutral-800/40"
+                    }`}
+                    title={`Device: ${deviceGroup.deviceName}`}
+                >
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                        <span className="relative flex h-2 w-2 shrink-0">
+                            {isOnline && (
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                            )}
+                            <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-neutral-600"}`} />
+                        </span>
+                        <Laptop size={13} className="text-emerald-400 shrink-0" />
+                        <span className="text-xs truncate font-medium group-hover:text-emerald-300 transition-colors">
+                            {deviceGroup.deviceName}
+                        </span>
+                        <span className="rounded bg-emerald-500/10 text-emerald-400 text-[9px] px-1 py-0.2 shrink-0 font-mono">
+                            {deviceGroup.threads.length}
+                        </span>
+                    </div>
+                    <ChevronDown
+                        size={12}
+                        className={`text-neutral-500 transition-transform ${isDeviceCollapsed ? "-rotate-90" : ""}`}
+                    />
+                </button>
+
+                {!isDeviceCollapsed && (
+                    <div className="ml-3 pl-2.5 border-l border-white/[0.08] space-y-0.5 py-0.5">
+                        {deviceGroup.threads.map((thread) => {
+                            const isActive = thread.id === currentThreadId;
+                            const isStreaming = streamingThreads.has(thread.id);
+                            return (
+                                <div key={thread.id} className="relative group/devicechat flex items-center">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            onSelectThread(thread.id);
+                                            if (closeOnSelect) onClose();
+                                        }}
+                                        className={`w-full text-left px-2 py-1.5 rounded-md text-xs transition-colors flex items-center justify-between cursor-pointer ${
+                                            isActive
+                                                ? "bg-neutral-800 text-emerald-400 font-medium"
+                                                : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
+                                        }`}
+                                    >
+                                        <span className="truncate flex items-center gap-1.5 min-w-0 pr-4">
+                                            <span className="text-[10px] text-emerald-500/70 font-mono">↳</span>
+                                            {isThreadInbound(thread) ? (
+                                                <ArrowDownLeft size={11} className="text-neutral-400 shrink-0" title="Inbound" />
+                                            ) : (
+                                                <ArrowUpRight size={11} className="text-neutral-400 shrink-0" title="Outbound" />
+                                            )}
+                                            <span className="truncate text-[11px]">{thread.title || "Untitled Chat"}</span>
+                                            {isStreaming && (
+                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                                            )}
+                                        </span>
+                                        <span className="text-[9px] text-neutral-500 font-mono shrink-0 ml-1">
+                                            {formatDate(thread.updated_at || thread.created_at)}
+                                        </span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setThreadToDelete(thread.id);
+                                            setIsConfirmOpen(true);
+                                        }}
+                                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/devicechat:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all cursor-pointer"
+                                        title="Delete conversation"
+                                    >
+                                        <Trash2 size={11} />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     const renderCollapsedBar = () => (
         <div className="w-12 h-full flex flex-col items-center py-2.5 space-y-2 select-none bg-neutral-900 shrink-0">
             {/* 1. Expand Icon */}
@@ -357,28 +758,38 @@ export function HistorySidebar({
             {/* 2. New Chat */}
             <button
                 type="button"
-                onClick={onNewChat}
+                onClick={handleNewChat}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
                 title="New Chat (Ctrl+N)"
             >
                 <Plus size={16} />
             </button>
 
-            {/* 3. Search */}
+            <div className="w-5 h-[1px] bg-neutral-800 my-0.5" />
+
+            {/* 3. Chats View */}
             <button
                 type="button"
                 onClick={handleSearchClick}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
-                title="Search Chats"
+                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 cursor-pointer ${
+                    activeView === 'chats'
+                        ? 'text-white bg-neutral-800 ring-1 ring-neutral-700/60'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                }`}
+                title="Chats"
             >
-                <Search size={16} />
+                <MessageSquare size={16} />
             </button>
 
-            {/* 4. Connections */}
+            {/* 4. Connections View */}
             <button
                 type="button"
                 onClick={handleFriendClick}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 relative cursor-pointer"
+                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 relative cursor-pointer ${
+                    activeView === 'connections'
+                        ? 'text-white bg-neutral-800 ring-1 ring-neutral-700/60'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                }`}
                 title={incomingCount > 0 ? `${incomingCount} incoming connection request${incomingCount > 1 ? 's' : ''}` : friends.length > 0 ? `Connections (${friends.length})` : "Connections"}
             >
                 <Users size={16} />
@@ -392,11 +803,15 @@ export function HistorySidebar({
                 ) : null}
             </button>
 
-            {/* 5. Schedule */}
+            {/* 5. Schedule View */}
             <button
                 type="button"
                 onClick={handleScheduleClick}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 relative cursor-pointer"
+                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 relative cursor-pointer ${
+                    activeView === 'scheduled'
+                        ? 'text-white bg-neutral-800 ring-1 ring-neutral-700/60'
+                        : 'text-neutral-400 hover:text-white hover:bg-neutral-800'
+                }`}
                 title={scheduledTasks.length > 0 ? `Scheduled Tasks (${scheduledTasks.length})` : "Scheduled Tasks"}
             >
                 <CalendarClock size={16} />
@@ -409,107 +824,229 @@ export function HistorySidebar({
 
     const renderContent = (closeOnSelect = false) => (
         <div className="flex flex-col h-full w-full min-w-[240px] overflow-hidden select-none bg-neutral-900 text-neutral-100">
-            {/* Top Row: Search + New Chat + Collapse */}
-            <div className="p-2.5 pb-2 shrink-0 border-b border-neutral-800">
-                <div className="flex items-center gap-1.5">
-                    <div className="relative flex-1">
-                        <Search
-                            size={13}
-                            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none"
-                        />
-                        <input
-                            ref={searchInputRef}
-                            type="text"
-                            placeholder="Search chats..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full bg-neutral-800/70 border border-neutral-700/50 hover:border-neutral-600 focus:border-neutral-500 rounded-lg pl-8 pr-6 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-500 outline-none transition-colors"
-                        />
-                        {searchTerm && (
-                            <button
-                                onClick={() => setSearchTerm("")}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 transition-colors"
-                            >
-                                <X size={12} />
-                            </button>
-                        )}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => {
-                            onNewChat();
-                            if (closeOnSelect) onClose();
+            {/* ROW 1: Search + New Chat (+) + Open/Close Icon */}
+            <div className="px-3 pt-3 pb-2 shrink-0 bg-neutral-900 flex items-center gap-2">
+                <div className="relative flex-1 min-w-0">
+                    <Search
+                        size={13}
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500 pointer-events-none"
+                    />
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        placeholder={
+                            activeView === 'connections'
+                                ? "Filter connections..."
+                                : activeView === 'scheduled'
+                                    ? "Search tasks..."
+                                    : "Search chats..."
+                        }
+                        value={activeView === 'connections' ? connectionSearch : searchTerm}
+                        onChange={(e) => {
+                            if (activeView === 'connections') {
+                                setConnectionSearch(e.target.value);
+                            } else {
+                                setSearchTerm(e.target.value);
+                            }
                         }}
-                        className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-300 hover:text-white border border-neutral-700/50 transition-colors shrink-0"
-                        title="New Chat (Ctrl+N)"
-                    >
-                        <Plus size={15} />
-                    </button>
-                    {isPersistent && (
+                        className="w-full bg-neutral-800/70 border border-neutral-700/50 hover:border-neutral-600 focus:border-neutral-500 rounded-lg pl-8 pr-6 py-1.5 text-xs text-neutral-200 placeholder:text-neutral-500 outline-none transition-colors"
+                    />
+                    {((activeView === 'connections' && connectionSearch) || (activeView !== 'connections' && searchTerm)) && (
                         <button
-                            onClick={handleCollapse}
-                            className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
-                            title="Collapse Sidebar"
+                            onClick={() => {
+                                if (activeView === 'connections') setConnectionSearch("");
+                                else setSearchTerm("");
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
                         >
-                            <PanelLeftClose size={15} />
-                        </button>
-                    )}
-                    {!isPersistent && (
-                        <button
-                            onClick={onClose}
-                            className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
-                            title="Close"
-                        >
-                            <X size={15} />
+                            <X size={12} />
                         </button>
                     )}
                 </div>
+                <button
+                    type="button"
+                    onClick={() => {
+                        onNewChat();
+                        if (closeOnSelect) onClose();
+                    }}
+                    className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-300 hover:text-white border border-neutral-700/50 transition-colors shrink-0 cursor-pointer"
+                    title="New Chat (Ctrl+N)"
+                >
+                    <Plus size={15} />
+                </button>
+                {isPersistent ? (
+                    <button
+                        onClick={handleCollapse}
+                        className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                        title="Collapse Sidebar"
+                    >
+                        <PanelLeftClose size={15} />
+                    </button>
+                ) : (
+                    <button
+                        onClick={onClose}
+                        className="p-1.5 rounded-lg text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                        title="Close"
+                    >
+                        <X size={15} />
+                    </button>
+                )}
             </div>
 
-            {/* Scrollable Center: Friends & Scheduled Accordions + Chat Threads */}
-            <div
-                className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2"
-                onScroll={handleScroll}
-            >
-                {/* 1. Connections Accordion */}
-                <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 overflow-hidden">
+            {/* ROW 2: View Switcher Tabs (Chats / Connections / Scheduled) */}
+            <div className="px-3 pb-2.5 shrink-0 border-b border-neutral-800/80 bg-neutral-900">
+                <div className="flex items-center gap-1 p-1 rounded-lg bg-neutral-950/80 border border-neutral-800/80 w-full">
+                    {/* Chats Tab */}
                     <button
                         type="button"
-                        onClick={() => setFriendsOpen((prev) => !prev)}
-                        className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800/40 transition-colors cursor-pointer"
+                        onClick={() => handleViewChange('chats')}
+                        className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-[11px] font-medium transition-all cursor-pointer ${activeView === 'chats'
+                            ? 'bg-neutral-800 text-neutral-100 shadow-sm border border-neutral-700/60 font-semibold'
+                            : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-850'
+                            }`}
+                        title="Chats History"
                     >
-                        <span className="flex items-center gap-2">
-                            <Users size={13} className="text-neutral-400" />
-                            <span className="font-medium text-[11px]">Connections</span>
-                            {incomingCount > 0 && (
-                                <span className="rounded-full bg-amber-500 px-1.5 py-0.2 text-[10px] font-bold text-black animate-pulse">
-                                    {incomingCount} new
-                                </span>
-                            )}
-                            {friends.length > 0 && (
-                                <span className="text-[10px] text-neutral-500 font-mono">
-                                    ({friends.length})
-                                </span>
-                            )}
-                        </span>
-                        <ChevronDown
-                            size={12}
-                            className={`text-neutral-500 transition-transform duration-150 ${friendsOpen ? "rotate-180" : ""}`}
-                        />
+                        <MessageSquare size={13} className="shrink-0" />
+                        <span className="truncate">Chats</span>
                     </button>
 
-                    {friendsOpen && (
-                        <div className="border-t border-neutral-800/70 p-1.5 space-y-1.5 bg-neutral-950/30">
+                    {/* Connections Tab */}
+                    <button
+                        type="button"
+                        onClick={() => handleViewChange('connections')}
+                        className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-1.5 px-2 rounded-md text-[11px] font-medium transition-all relative cursor-pointer ${activeView === 'connections'
+                            ? 'bg-neutral-800 text-neutral-100 shadow-sm border border-neutral-700/60 font-semibold'
+                            : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-850'
+                            }`}
+                        title="Connections"
+                    >
+                        <Users size={13} className="shrink-0" />
+                        <span className="truncate">Connections</span>
+                        {incomingCount > 0 ? (
+                            <span className="rounded-full bg-amber-500 px-1 py-0.2 text-[9px] font-bold text-black animate-pulse leading-none">
+                                {incomingCount}
+                            </span>
+                        ) : friends.length > 0 ? (
+                            <span className="text-[9px] text-neutral-500 font-mono">
+                                ({friends.length})
+                            </span>
+                        ) : null}
+                    </button>
+
+                    {/* Scheduled Tab */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            handleViewChange('scheduled');
+                            loadScheduledTasks();
+                        }}
+                        className={`flex-1 min-w-0 flex items-center justify-center gap-1 py-1.5 px-2 rounded-md text-[11px] font-medium transition-all relative cursor-pointer ${activeView === 'scheduled'
+                            ? 'bg-neutral-800 text-neutral-100 shadow-sm border border-neutral-700/60 font-semibold'
+                            : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-850'
+                            }`}
+                        title="Scheduled Tasks"
+                    >
+                        <CalendarClock size={13} className="shrink-0" />
+                        <span className="truncate">Scheduled</span>
+                        {scheduledTasks.length > 0 && (
+                            <span className="text-[9px] text-neutral-500 font-mono">
+                                ({scheduledTasks.length})
+                            </span>
+                        )}
+                    </button>
+                </div>
+            </div>
+
+            {/* VIEW 1: CHATS VIEW */}
+            {activeView === 'chats' && (
+                <>
+                    {/* Chat History List */}
+                    <div
+                        className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2"
+                        onScroll={handleScroll}
+                    >
+                        <div className="pt-0.5">
+                            {loading ? (
+                                <div className="flex justify-center py-8">
+                                    <div className="animate-spin rounded-full h-5 w-5 border-2 border-emerald-500 border-t-transparent" />
+                                </div>
+                            ) : error ? (
+                                <div className="py-6 text-center text-xs text-red-400 space-y-1">
+                                    <p>{error}</p>
+                                    <button
+                                        onClick={loadInitialHistory}
+                                        className="text-[11px] text-neutral-400 hover:text-neutral-200 underline cursor-pointer"
+                                    >
+                                        Retry
+                                    </button>
+                                </div>
+                            ) : filteredThreads.length === 0 ? (
+                                <div className="py-8 text-center text-xs text-neutral-500">
+                                    {searchTerm ? "No chats match." : "No chats yet."}
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {groupedThreads.map((group) => {
+                                        const organizedItems = organizeThreadsWithDeviceGrouping(group.threads);
+                                        return (
+                                            <div key={group.title} className="space-y-0.5">
+                                                <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-200 tracking-wider">
+                                                    {group.title}
+                                                </div>
+                                                <div className="space-y-1 pl-1">
+                                                    {organizedItems.map((item) =>
+                                                        item.type === 'device_group'
+                                                            ? renderDeviceGroupItem(item, closeOnSelect)
+                                                            : renderThreadItem(item.thread, closeOnSelect)
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+
+                                        {loadingMore && (
+                                            <div className="flex justify-center py-2">
+                                                <div className="animate-spin rounded-full h-4 w-4 border-2 border-emerald-500 border-t-transparent" />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </>
+                )}
+
+                {/* VIEW 2: CONNECTIONS VIEW */}
+                {activeView === 'connections' && (
+                    <>
+                        {/* Connections Subheader */}
+                        <div className="px-3 py-2.5 shrink-0 border-b border-neutral-800/60 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-semibold text-neutral-200">Connections</span>
+                                {friends.length > 0 && (
+                                    <span className="text-[10px] text-neutral-400 bg-neutral-800 px-1.5 py-0.2 rounded-full font-mono">
+                                        {friends.length}
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-neutral-400">
+                                <span className={`flex h-1.5 w-1.5 rounded-full ${onlineFriendsCount > 0 ? "bg-emerald-500 animate-pulse" : "bg-neutral-600"}`} />
+                                <span>{onlineFriendsCount} online</span>
+                            </div>
+                        </div>
+
+                        {/* Connections List */}
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-3">
                             {/* Pending Incoming Connection Requests */}
                             {incomingRequests.length > 0 && (
-                                <div className="space-y-1.5 pb-1 border-b border-neutral-800/60">
+                                <div className="space-y-1.5 pb-2 border-b border-neutral-800/60">
                                     <div className="px-1 text-[10px] font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1">
                                         <Mail size={11} /> Requests ({incomingRequests.length})
                                     </div>
                                     {incomingRequests.map((req) => (
                                         <div
                                             key={req.id}
-                                            className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-2 space-y-1.5"
+                                            className="rounded-lg border border-amber-500/30 bg-amber-950/20 p-2 space-y-1.5 shadow-sm"
                                         >
                                             <div className="text-xs font-medium text-white truncate" title={req.sender_email}>
                                                 {req.sender_email}
@@ -534,7 +1071,7 @@ export function HistorySidebar({
                                                         e.stopPropagation();
                                                         onDeclineConnectionRequest(req.id);
                                                     }}
-                                                    className="px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-[11px] font-medium text-neutral-300 transition-colors cursor-pointer text-center"
+                                                    className="px-2.5 py-1 rounded bg-neutral-800 hover:bg-neutral-750 text-[11px] font-medium text-neutral-300 transition-colors cursor-pointer text-center border border-neutral-700/50"
                                                 >
                                                     Decline
                                                 </button>
@@ -544,259 +1081,190 @@ export function HistorySidebar({
                                 </div>
                             )}
 
-                            {friends.length === 0 && incomingRequests.length === 0 ? (
-                                <div className="px-2 py-1.5 text-[11px] text-neutral-500 text-center">
-                                    No connections yet.
+                        {/* Connected Friends List */}
+                        <div className="space-y-1">
+                            {filteredFriends.length === 0 ? (
+                                <div className="px-2 py-4 text-[11px] text-neutral-500 text-center">
+                                    {connectionSearch ? "No connections match." : "No connections yet. Add friends in Settings > Connectivity."}
                                 </div>
                             ) : (
-                                friends.map((friend) => {
-                                    const displayName = friend.email || friend.name || "Connection";
+                                filteredFriends.map((friend) => {
+                                    const displayName = friend.name || friend.email || "Connection";
                                     const isOnline = Boolean(friend.is_online);
                                     return (
                                         <div
                                             key={friend.id}
                                             onClick={() => {
-                                                onStartFriendChat(friend);
+                                                handleFriendChatClick(friend);
                                                 if (closeOnSelect) onClose();
                                             }}
-                                            className="group flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-neutral-800/40 hover:bg-neutral-800/80 cursor-pointer transition-colors border border-transparent hover:border-neutral-700/60"
-                                            title={`${displayName}${friend.device_name ? ` (${friend.device_name})` : ""} - ${isOnline ? "Online" : "Offline"}`}
+                                            className="group flex items-center justify-between p-2 rounded-lg bg-neutral-800/40 hover:bg-neutral-800/80 cursor-pointer transition-colors border border-transparent hover:border-emerald-500/25"
+                                            title={friend.email || displayName}
                                         >
-                                            <div className="flex items-center gap-2 min-w-0 pr-2">
+                                            <div className="flex items-center gap-2 min-w-0 pr-1.5">
                                                 <span className="relative flex h-2 w-2 shrink-0">
                                                     {isOnline && (
                                                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                                                     )}
-                                                    <span
-                                                        className={`relative inline-flex rounded-full h-2 w-2 ${
-                                                            isOnline ? "bg-emerald-500" : "bg-neutral-600"
-                                                        }`}
-                                                    />
+                                                    <span className={`relative inline-flex rounded-full h-2 w-2 ${isOnline ? "bg-emerald-500" : "bg-neutral-600"}`} />
                                                 </span>
                                                 <div className="min-w-0">
                                                     <p className="text-xs text-neutral-200 truncate group-hover:text-emerald-300 transition-colors font-medium">
                                                         {displayName}
                                                     </p>
-                                                    {friend.device_name && (
-                                                        <p className="text-[10px] text-neutral-500 truncate font-mono">
-                                                            {friend.device_name}
-                                                        </p>
-                                                    )}
                                                 </div>
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onStartFriendChat(friend);
-                                                    if (closeOnSelect) onClose();
-                                                }}
-                                                className="text-[10px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all shrink-0 cursor-pointer"
-                                            >
-                                                Chat
-                                            </button>
+                                            <div className="flex items-center gap-1 shrink-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleFriendChatClick(friend);
+                                                        if (closeOnSelect) onClose();
+                                                    }}
+                                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                                                    title="Inbound communication"
+                                                >
+                                                    <ArrowDownLeft size={13} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleFriendChatClick(friend);
+                                                        if (closeOnSelect) onClose();
+                                                    }}
+                                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                                                    title="Outbound communication"
+                                                >
+                                                    <ArrowUpRight size={13} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleFriendChatClick(friend);
+                                                        if (closeOnSelect) onClose();
+                                                    }}
+                                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                                                    title={`Chat with ${displayName}`}
+                                                >
+                                                    <MessageSquare size={14} />
+                                                </button>
+                                            </div>
                                         </div>
                                     );
                                 })
                             )}
                         </div>
-                    )}
-                </div>
 
-                {/* 2. Scheduled Tasks Accordion (Modeled identically to Friends) */}
-                <div className="rounded-lg border border-neutral-800 bg-neutral-900/50 overflow-hidden">
-                    <button
-                        type="button"
-                        onClick={() => setScheduledOpen((prev) => !prev)}
-                        className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800/40 transition-colors"
-                    >
-                        <span className="flex items-center gap-2">
-                            <CalendarClock size={13} className="text-neutral-400" />
-                            <span className="font-medium text-[11px]">Scheduled</span>
+                            {/* Past Peer Conversations */}
+                            {connectionThreads.length > 0 && (
+                                <div className="space-y-1 pt-2 border-t border-neutral-800/60">
+                                    <div className="px-1 text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
+                                        Past Peer Chats ({connectionThreads.length})
+                                    </div>
+                                    <div className="space-y-0.5">
+                                        {organizeThreadsWithDeviceGrouping(connectionThreads).map((item) =>
+                                            item.type === 'device_group'
+                                                ? renderDeviceGroupItem(item, closeOnSelect)
+                                                : renderThreadItem(item.thread, closeOnSelect)
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
+
+            {/* VIEW 3: SCHEDULED VIEW */}
+            {activeView === 'scheduled' && (
+                <>
+                    {/* Scheduled Subheader */}
+                    <div className="px-3 py-2.5 shrink-0 border-b border-neutral-800/60 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-neutral-200">Scheduled Tasks</span>
                             {scheduledTasks.length > 0 && (
-                                <span className="text-[10px] text-neutral-500 font-mono">
-                                    ({scheduledTasks.length})
+                                <span className="text-[10px] text-neutral-400 bg-neutral-800 px-1.5 py-0.2 rounded-full font-mono">
+                                    {scheduledTasks.length}
                                 </span>
                             )}
-                        </span>
-                        <ChevronDown
-                            size={12}
-                            className={`text-neutral-500 transition-transform duration-150 ${scheduledOpen ? "rotate-180" : ""}`}
-                        />
-                    </button>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={loadScheduledTasks}
+                            className="p-1 rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                            title="Refresh tasks"
+                        >
+                            <RefreshCw size={13} className={loadingTasks ? "animate-spin text-emerald-400" : ""} />
+                        </button>
+                    </div>
 
-                    {scheduledOpen && (
-                        <div className="border-t border-neutral-800/70 p-1.5 space-y-1 bg-neutral-950/30">
-                            {loadingTasks && scheduledTasks.length === 0 ? (
-                                <div className="px-2 py-1.5 text-[11px] text-neutral-500 text-center">
-                                    Loading…
+                    {/* Scheduled Tasks List */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1.5">
+                        {loadingTasks && scheduledTasks.length === 0 ? (
+                            <div className="flex justify-center py-8">
+                                <div className="animate-spin rounded-full h-5 w-5 border-2 border-emerald-500 border-t-transparent" />
+                            </div>
+                        ) : scheduledTasks.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center text-center py-12 px-4 space-y-2">
+                                <div className="w-10 h-10 rounded-xl bg-neutral-800/50 border border-neutral-800 flex items-center justify-center text-neutral-500">
+                                    <CalendarClock size={20} />
                                 </div>
-                            ) : scheduledTasks.length === 0 ? (
-                                <div className="px-2 py-1.5 text-[11px] text-neutral-500 text-center">
-                                    No scheduled tasks.
-                                </div>
-                            ) : (
-                                scheduledTasks.map((t) => (
-                                    <div
-                                        key={t.id}
-                                        className="group relative rounded bg-neutral-800/40 hover:bg-neutral-800/70 p-1.5 transition-colors"
-                                    >
-                                        <div className="flex items-center justify-between gap-1">
-                                            <span className="text-[9px] uppercase font-mono text-neutral-400">
-                                                {INTENT_LABEL[t.intent] || t.intent || "Task"}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={(e) => handleCancelScheduledTask(e, t.id)}
-                                                className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-red-400 transition-opacity p-0.5"
-                                                title="Cancel"
-                                            >
-                                                <Trash2 size={11} />
-                                            </button>
-                                        </div>
-                                        <div className="text-xs text-neutral-300 truncate mt-0.5">
-                                            {t.title || t.text}
-                                        </div>
-                                        <div className="text-[10px] text-neutral-500 mt-0.5">
-                                            {formatRunAt(t.run_at)}
-                                        </div>
+                                <div className="text-xs font-medium text-neutral-300">No scheduled tasks</div>
+                                <p className="text-[11px] text-neutral-500 max-w-[200px]">
+                                    Ask Rie to remind you of tasks or schedule actions (e.g. &quot;Remind me at 5 PM&quot;).
+                                </p>
+                            </div>
+                        ) : (
+                            scheduledTasks.map((t) => (
+                                <div
+                                    key={t.id}
+                                    className="group relative rounded-lg border border-neutral-800/80 bg-neutral-800/40 hover:bg-neutral-800/70 p-2.5 transition-colors space-y-1"
+                                >
+                                    <div className="flex items-center justify-between gap-1">
+                                        <span className={`text-[9px] uppercase font-mono px-1.5 py-0.5 rounded ${t.intent === 'reminder'
+                                            ? 'bg-amber-500/15 text-amber-300 border border-amber-500/20'
+                                            : t.intent === 'analysis_inform'
+                                                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
+                                                : 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/20'
+                                            }`}>
+                                            {INTENT_LABEL[t.intent] || t.intent || "Task"}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => handleCancelScheduledTask(e, t.id)}
+                                            className="opacity-0 group-hover:opacity-100 text-neutral-500 hover:text-red-400 transition-opacity p-0.5 cursor-pointer"
+                                            title="Cancel"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
                                     </div>
-                                ))
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                {/* 3. Chat History List */}
-                <div className="pt-1">
-                    {loading ? (
-                        <div className="flex justify-center py-8">
-                            <div className="animate-spin rounded-full h-5 w-5 border-2 border-emerald-500 border-t-transparent" />
-                        </div>
-                    ) : error ? (
-                        <div className="py-6 text-center text-xs text-red-400 space-y-1">
-                            <p>{error}</p>
-                            <button
-                                onClick={loadInitialHistory}
-                                className="text-[11px] text-neutral-400 hover:text-neutral-200 underline"
-                            >
-                                Retry
-                            </button>
-                        </div>
-                    ) : filteredThreads.length === 0 ? (
-                        <div className="py-8 text-center text-xs text-neutral-500">
-                            {searchTerm ? "No chats match." : "No chats yet."}
-                        </div>
-                    ) : (
-                        <div className="space-y-5">
-                            {groupedThreads.map((group) => (
-                                <div key={group.title} className="space-y-0.5">
-                                    <div className="px-2.5 py-1 text-[10px] font-semibold text-neutral-200  tracking-wider">
-                                        {group.title}
+                                    <div className="text-xs text-neutral-200 truncate font-medium">
+                                        {t.title || t.text}
                                     </div>
-                                    <div className="space-y-3/4 pl-2">
-                                        {group.threads.map((thread) => {
-                                            const isActive = thread.id === currentThreadId;
-                                            const isStreaming = streamingThreads.has(thread.id);
-                                            const friendMeta = getThreadFriendMeta(thread.id);
-
-                                            const childSubchats = threadSubchatsMap[thread.id] || [];
-
-                                            return (
-                                                <div key={thread.id} className="space-y-0.5">
-                                                    <button
-                                                        onClick={() => {
-                                                            onSelectThread(thread.id);
-                                                            if (closeOnSelect) onClose();
-                                                        }}
-                                                        className={`w-full text-left px-2.5 py-2 rounded-lg transition-colors group relative flex items-center justify-between ${
-                                                            isActive
-                                                                ? "bg-neutral-800 text-neutral-100 font-medium"
-                                                                : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
-                                                        }`}
-                                                    >
-                                                        <div className="pr-5 min-w-0">
-                                                            <div className="flex items-center gap-1.5">
-                                                                <span className="text-xs truncate">
-                                                                    {thread.title || "Untitled Chat"}
-                                                                </span>
-                                                                {Boolean(friendMeta?.isFriendChat || friendMeta?.friendId) && (
-                                                                    <span className="rounded bg-emerald-500/10 text-emerald-400 text-[9px] px-1 py-0.2 shrink-0">
-                                                                        Connection
-                                                                    </span>
-                                                                )}
-                                                                <KnowledgeHistoryBadge knowledgeNames={thread.knowledge_names} />
-                                                                {isStreaming && (
-                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center gap-2 mt-0.5">
-                                                                <span className="text-[10px] opacity-50">
-                                                                    {formatDate(thread.updated_at || thread.created_at)}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-
-                                                        <div
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                setThreadToDelete(thread.id);
-                                                                setIsConfirmOpen(true);
-                                                            }}
-                                                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all cursor-pointer"
-                                                            title="Delete conversation"
-                                                        >
-                                                            <Trash2 size={12} />
-                                                        </div>
-                                                    </button>
-
-                                                    {/* Nested Subchats Tree */}
-                                                    {childSubchats.length > 0 && (
-                                                        <div className="ml-3 pl-2.5 border-l border-white/[0.08] space-y-0.5 py-0.5">
-                                                            {childSubchats.map((sub) => {
-                                                                const isSubActive = sub.id === currentThreadId;
-                                                                const subClean = (sub.title || sub.subagent_type || "Subchat").replace(/_/g, " ");
-                                                                return (
-                                                                    <button
-                                                                        key={sub.id}
-                                                                        onClick={() => {
-                                                                            onSelectThread(sub.id);
-                                                                            if (closeOnSelect) onClose();
-                                                                        }}
-                                                                        className={`w-full text-left px-2 py-1.5 rounded-md text-xs transition-colors flex items-center justify-between group/sub ${
-                                                                            isSubActive
-                                                                                ? "bg-neutral-800 text-emerald-400 font-medium"
-                                                                                : "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40"
-                                                                        }`}
-                                                                    >
-                                                                        <span className="truncate flex items-center gap-1.5 min-w-0">
-                                                                            <span className="text-[10px] text-emerald-500/70 font-mono">↳</span>
-                                                                            <span className="truncate text-[11px]">{subClean}</span>
-                                                                        </span>
-                                                                        <span className="text-[9px] text-neutral-500 font-mono shrink-0 ml-1">
-                                                                            {sub.message_count || 1} msg
-                                                                        </span>
-                                                                    </button>
-                                                                );
-                                                            })}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                    <div className="flex items-center gap-1.5 text-[10px] text-neutral-500 font-mono">
+                                        <Clock size={11} className="shrink-0" />
+                                        <span>{formatRunAt(t.run_at)}</span>
                                     </div>
                                 </div>
-                            ))}
+                            ))
+                        )}
 
-                            {loadingMore && (
-                                <div className="flex justify-center py-2">
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-emerald-500 border-t-transparent" />
+                        {/* Past Scheduled Run Conversations */}
+                        {scheduledRunThreads.length > 0 && (
+                            <div className="space-y-1 pt-2 border-t border-neutral-800/60">
+                                <div className="px-1 text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">
+                                    Past Scheduled Chats ({scheduledRunThreads.length})
                                 </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
+                                <div className="space-y-0.5">
+                                    {scheduledRunThreads.map((thread) => renderThreadItem(thread, closeOnSelect))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
 
             <ConfirmationModal
                 isOpen={isConfirmOpen}
@@ -810,12 +1278,12 @@ export function HistorySidebar({
     );
 
     // Persistent Docked Mode
-    if (isPersistent) {
+            if (isPersistent) {
         return (
             <aside className="w-full bg-neutral-900 border-r border-neutral-800 flex flex-col h-full shrink-0 relative z-20">
                 {isCollapsed ? renderCollapsedBar() : renderContent(false)}
             </aside>
-        );
+            );
     }
 
     // Floating Drawer Mode
@@ -835,7 +1303,7 @@ export function HistorySidebar({
                         animate={{ x: 0 }}
                         exit={{ x: "-100%" }}
                         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                        className="fixed left-0 top-0 bottom-0 w-64 bg-neutral-900 border-r border-neutral-800 z-50 flex flex-col shadow-2xl"
+                        className="fixed left-0 top-0 bottom-0 w-72 bg-neutral-900 border-r border-neutral-800 z-50 flex flex-col shadow-2xl"
                     >
                         {renderContent(true)}
                     </motion.aside>

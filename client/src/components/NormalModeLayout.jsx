@@ -271,6 +271,14 @@ export function NormalModeLayout({
         return hasActiveBlocks || (msg.text && msg.text.trim());
     });
     const shouldShowThinkingShimmer = Boolean((isLoading && !hasStreamingContent) || retryStatus?.message);
+    const isConnectionChat = Boolean(
+        activeFriendMeta?.isFriendChat ||
+        activeFriendMeta?.friendId ||
+        friendThreadMeta?.[currentThreadId]?.isFriendChat ||
+        friendThreadMeta?.[currentThreadId]?.friendId ||
+        friendThreadMeta?.[String(currentThreadId)]?.isFriendChat ||
+        friendThreadMeta?.[String(currentThreadId)]?.friendId
+    );
 
     useEffect(() => {
         const checkBrowserStatus = async () => {
@@ -370,7 +378,7 @@ export function NormalModeLayout({
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const sidebarWidth = isFullWindow ? 300 : 240;
+    const sidebarWidth = isFullWindow ? 320 : 288;
     const COLLAPSED_SIDEBAR_WIDTH = 48;
     const currentSidebarWidth = isSidebarCollapsed ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
 
@@ -412,7 +420,7 @@ export function NormalModeLayout({
             {/* Title Bar */}
             <header
                 data-tauri-drag-region
-                className="h-11 flex items-center justify-between px-3 bg-neutral-900 border-b border-neutral-800 shrink-0  "
+                className="h-12 flex items-center justify-between px-4 bg-neutral-900 border-b border-neutral-800 shrink-0 select-none"
             >
                 {/* Left: Logo + Title (+ Pipe, Add & History Buttons only when sidebar closed) */}
                 <div data-tauri-drag-region className="flex items-center gap-2 w-[33.3%]">
@@ -421,7 +429,7 @@ export function NormalModeLayout({
                         <span className="text-sm font-semibold text-neutral-200">Rie-AI</span>
                     </div>
 
-                                    </div>
+                </div>
 
                 {/* Center: Action Icons */}
                 <div data-tauri-drag-region className="flex items-center gap-1 w-[33.3%] justify-center" />
@@ -454,10 +462,10 @@ export function NormalModeLayout({
                                 disabled={isBrowserDisabled}
                                 onMouseDown={(e) => e.stopPropagation()}
                                 className={`p-2 rounded-lg transition-colors ${isBrowserDisabled
-                                        ? 'text-neutral-600 opacity-35 cursor-not-allowed'
-                                        : isBrowserPanelOpen
-                                            ? 'bg-neutral-700 text-white'
-                                            : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
+                                    ? 'text-neutral-600 opacity-35 cursor-not-allowed'
+                                    : isBrowserPanelOpen
+                                        ? 'bg-neutral-700 text-white'
+                                        : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200'
                                     }`}
                                 title={browserTitle}
                             >
@@ -575,16 +583,64 @@ export function NormalModeLayout({
                     style={isBrowserPanelOpen ? { width: `${100 - browserPanelWidth}%` } : undefined}
                     className={`flex flex-col min-w-[380px] bg-neutral-950 relative ${isBrowserPanelOpen ? "shrink-0 border-r border-neutral-800/80" : "flex-1"}`}
                 >
+                    {/* Messenger Direct Header */}
+                    {activeFriendMeta?.isFriendChat && (
+                        <div className="shrink-0 px-5 py-3.5 bg-neutral-900/90 border-b border-neutral-800/90 backdrop-blur-md flex items-center justify-between gap-3 select-none z-10">
+                            <div className="flex items-center gap-3.5 min-w-0">
+                                <div className="relative shrink-0">
+                                    <div className="w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-xs uppercase shadow-xs">
+                                        {(activeFriendMeta.friendEmail || activeFriendMeta.friendName || "P").substring(0, 2)}
+                                    </div>
+                                    <span className="absolute -bottom-0.5 -right-0.5 flex h-2.5 w-2.5">
+                                        {activeFriendMeta.isOnline && (
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                        )}
+                                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 border-2 border-neutral-900 ${activeFriendMeta.isOnline ? "bg-emerald-500" : "bg-neutral-600"}`} />
+                                    </span>
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-sm font-semibold text-neutral-100 truncate">
+                                            {activeFriendMeta.friendEmail || activeFriendMeta.friendName || "Peer Connection"}
+                                        </span>
+                                        {activeFriendMeta.deviceName && (
+                                            <span className="text-[10px] text-emerald-300 font-mono bg-emerald-950/60 border border-emerald-500/25 px-1.5 py-0.5 rounded shrink-0">
+                                                💻 {activeFriendMeta.deviceName}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-[11px] text-neutral-400 mt-0.5">
+                                        <span className={`font-medium ${activeFriendMeta.isOnline ? "text-emerald-400" : "text-neutral-500"}`}>
+                                            {activeFriendMeta.isOnline ? "Online" : "Offline"}
+                                        </span>
+                                        <span className="text-neutral-600">•</span>
+                                        <span>End-to-End Mesh Relay</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const matchedFriend = (friends || []).find((f) => f.id === activeFriendMeta.friendId);
+                                        if (matchedFriend) {
+                                            onStartFriendChat(matchedFriend, true);
+                                        }
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-750 text-neutral-200 hover:text-white border border-neutral-700/60 text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                    title="Start a fresh chat thread with this connection"
+                                >
+                                    <Plus size={14} />
+                                    <span>New Thread</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Messages */}
                     {!isNewChat || voiceControls ? (
                         <main className={`flex-1 min-h-0 transition-transform duration-300 py-4 ${isBrowserPanelOpen ? "px-3" : (!isSidebarCollapsed ? "px-4" : "px-12")} overflow-y-auto overflow-x-hidden custom-scrollbar`}>
                             <div className="max-w-3xl mx-auto w-full space-y-3">
-                                {activeFriendMeta?.isFriendChat && (
-                                    <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-                                        <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
-                                        <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
-                                    </div>
-                                )}
                                 <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
                                 <SkillsChatBanner activeSkills={activeSkillsList} />
                                 {isNewChat && voiceControls && <div className="py-12 text-center">
@@ -749,10 +805,10 @@ export function NormalModeLayout({
                                     className="flex flex-col items-center text-center mb-6 space-y-1.5 select-none"
                                 >
                                     <h1 className={`font-bold text-white font-sans tracking-tight ${chatPanelWidthPx < 480
-                                            ? 'text-xl'
-                                            : chatPanelWidthPx < 640
-                                                ? 'text-2xl'
-                                                : 'text-3xl'
+                                        ? 'text-xl'
+                                        : chatPanelWidthPx < 640
+                                            ? 'text-2xl'
+                                            : 'text-3xl'
                                         }`}>
                                         How can I help you today?
                                     </h1>
@@ -768,10 +824,10 @@ export function NormalModeLayout({
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: 0.05 }}
                                     className={`grid gap-2.5 w-full mb-6 ${chatPanelWidthPx < 400
+                                        ? 'grid-cols-2'
+                                        : chatPanelWidthPx < 640
                                             ? 'grid-cols-2'
-                                            : chatPanelWidthPx < 640
-                                                ? 'grid-cols-2'
-                                                : 'grid-cols-4'
+                                            : 'grid-cols-4'
                                         }`}
                                 >
                                     <button
@@ -781,8 +837,8 @@ export function NormalModeLayout({
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-teal-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
-                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
-                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                            ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                            : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
                                             } shadow-md hover:shadow-teal-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-teal-950/80 border border-teal-500/40 text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
@@ -800,8 +856,8 @@ export function NormalModeLayout({
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-purple-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
-                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
-                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                            ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                            : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
                                             } shadow-md hover:shadow-purple-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-purple-950/80 border border-purple-500/40 text-purple-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
@@ -819,8 +875,8 @@ export function NormalModeLayout({
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-emerald-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
-                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
-                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                            ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                            : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
                                             } shadow-md hover:shadow-emerald-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
@@ -838,8 +894,8 @@ export function NormalModeLayout({
                                             textareaRef?.current?.focus();
                                         }}
                                         className={`group relative rounded-xl bg-neutral-900/60 hover:bg-neutral-900 border border-neutral-800/80 hover:border-amber-500/30 transition-all duration-200 cursor-pointer text-left flex ${chatPanelWidthPx < 400
-                                                ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
-                                                : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
+                                            ? 'flex-row items-center gap-3 min-h-[3.25rem] p-3'
+                                            : 'flex-col justify-between min-h-[5.75rem] p-3.5 gap-2.5'
                                             } shadow-md hover:shadow-amber-500/10 hover:-translate-y-0.5`}
                                     >
                                         <div className="w-7 h-7 rounded-full bg-amber-950/80 border border-amber-500/40 text-amber-400 flex items-center justify-center group-hover:scale-110 transition-transform shrink-0">
@@ -890,7 +946,10 @@ export function NormalModeLayout({
                         className={`py-3 absolute bottom-0 left-0 w-full z-10 transition-all ${chatPanelWidthPx < 420 ? "px-2" : chatPanelWidthPx < 580 ? "px-3" : chatPanelWidthPx < 760 ? "px-4" : !isSidebarCollapsed ? "px-6" : "px-10 xl:px-16"}`}
                     >
                         <div className="w-full max-w-xl xl:max-w-3xl mx-auto">
-                            <div className="w-full rounded-2xl bg-neutral-900 border border-neutral-800/90 focus-within:border-neutral-700/80 shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all">
+                            <div className={`w-full rounded-2xl bg-neutral-900 border ${activeFriendMeta?.isFriendChat
+                                ? "border-emerald-500/40 focus-within:border-emerald-400 focus-within:ring-1 focus-within:ring-emerald-500/20 shadow-emerald-950/20"
+                                : "border-neutral-800/90 focus-within:border-neutral-700/80"
+                                } shadow-2xl px-3.5 py-1.5 flex flex-col gap-2.5 transition-all`}>
                                 {/* Inline Attachments (if any attached) */}
                                 {(attachedImage || isScreenAttached || projectRoot || attachedClipboardText || (attachedKnowledge && attachedKnowledge.length > 0) || attachedFiles.length > 0) && (
                                     <div className="flex items-center gap-2 flex-wrap px-1">
@@ -963,7 +1022,11 @@ export function NormalModeLayout({
                                                     }
                                                 }
                                             }}
-                                            placeholder={isNewChat ? 'Do anything' : 'Type a message...'}
+                                            placeholder={
+                                                activeFriendMeta?.isFriendChat
+                                                    ? `Message ${activeFriendMeta.deviceName || activeFriendMeta.friendName || "Peer"}...`
+                                                    : (isNewChat ? 'Do anything' : 'Type a message...')
+                                            }
                                             className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
                                             disabled={isLoading}
                                         />
@@ -979,8 +1042,8 @@ export function NormalModeLayout({
                                                     onClick={() => setIsAttachmentPopoverOpen(!isAttachmentPopoverOpen)}
                                                     disabled={isLoading || isCapturing}
                                                     className={`p-1.5 rounded-lg transition-colors ${isAttachmentPopoverOpen
-                                                            ? "bg-neutral-700/80 text-white"
-                                                            : "text-neutral-400 hover:text-white hover:bg-neutral-800"
+                                                        ? "bg-neutral-700/80 text-white"
+                                                        : "text-neutral-400 hover:text-white hover:bg-neutral-800"
                                                         } disabled:opacity-50`}
                                                     title="Attach"
                                                 >
@@ -1017,33 +1080,39 @@ export function NormalModeLayout({
                                                 />
                                             </div>
 
-                                            <div className="flex items-center gap-1 shrink-0">
-                                                <ModeToggle
-                                                    chatMode={chatMode}
-                                                    setChatMode={setChatMode}
-                                                    speedMode={speedMode}
-                                                    setSpeedMode={setSpeedMode}
-                                                    provider={provider}
-                                                />
-                                            </div>
+                                            {!isConnectionChat && (
+                                                <div className="flex items-center gap-1 shrink-0">
+                                                    <ModeToggle
+                                                        chatMode={chatMode}
+                                                        setChatMode={setChatMode}
+                                                        speedMode={speedMode}
+                                                        setSpeedMode={setSpeedMode}
+                                                        provider={provider}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="flex items-center gap-1.5 min-w-0 shrink-0">
-                                            <ContextCircleBar
-                                                threadId={currentThreadId}
-                                                contextData={contextBreakdown}
-                                                messages={messages}
-                                                provider={provider}
-                                                settings={settings}
-                                            />
+                                            {!isConnectionChat && (
+                                                <>
+                                                    <ContextCircleBar
+                                                        threadId={currentThreadId}
+                                                        contextData={contextBreakdown}
+                                                        messages={messages}
+                                                        provider={provider}
+                                                        settings={settings}
+                                                    />
 
-                                            <LlmProviderSelector
-                                                provider={provider}
-                                                onSelectProvider={onSelectProvider}
-                                                settings={settings}
-                                                onOpenSettings={onOpenSettings}
-                                                onUpdateSetting={onUpdateSetting}
-                                            />
+                                                    <LlmProviderSelector
+                                                        provider={provider}
+                                                        onSelectProvider={onSelectProvider}
+                                                        settings={settings}
+                                                        onOpenSettings={onOpenSettings}
+                                                        onUpdateSetting={onUpdateSetting}
+                                                    />
+                                                </>
+                                            )}
 
                                             {/* Unified Action Button */}
                                             <AnimatePresence mode="wait" initial={false}>
@@ -1056,7 +1125,7 @@ export function NormalModeLayout({
                                                         transition={{ duration: 0.12 }}
                                                         type="button"
                                                         onClick={() => onCancel?.()}
-                                                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 active:scale-95 transition-all"
+                                                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 active:scale-95 transition-all cursor-pointer"
                                                         title="Stop generating"
                                                     >
                                                         <Square size={11} fill="currentColor" />
@@ -1070,11 +1139,21 @@ export function NormalModeLayout({
                                                         transition={{ duration: 0.12 }}
                                                         type="button"
                                                         onClick={onSend}
-                                                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-white text-neutral-900 hover:bg-neutral-200 active:scale-95 shadow-sm transition-all"
+                                                        className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 active:scale-95 shadow-sm transition-all cursor-pointer ${activeFriendMeta?.isFriendChat
+                                                            ? "bg-emerald-500 text-neutral-950 hover:bg-emerald-400 font-bold shadow-emerald-950/40"
+                                                            : "bg-white text-neutral-900 hover:bg-neutral-200"
+                                                            }`}
                                                         title="Send message (Enter)"
                                                     >
                                                         <ArrowUp size={15} strokeWidth={2.5} />
                                                     </motion.button>
+                                                ) : activeFriendMeta?.isFriendChat ? (
+                                                    <div
+                                                        className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-neutral-500 bg-neutral-800/40 opacity-50 cursor-not-allowed select-none"
+                                                        title="Type a message to send"
+                                                    >
+                                                        <ArrowUp size={15} strokeWidth={2} />
+                                                    </div>
                                                 ) : (
                                                     <motion.button
                                                         key="btn-live-voice"

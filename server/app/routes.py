@@ -1561,9 +1561,13 @@ async def connectivity_ask_friend_stream(friend_id: str, data: PeerAskRequest):
                                         full_response.append(msg_content)
                                     elif isinstance(chunk_obj.get("token"), str):
                                         full_response.append(chunk_obj["token"])
+                                    if chunk_obj.get("step") in ("complete", "end"):
+                                        yield f"data: {json.dumps({'step': 'end', 'done': True})}\n\n"
+                                        continue
                                 except Exception:
                                     pass
                             yield f"{line}\n\n"
+                        yield f"data: {json.dumps({'step': 'end', 'done': True})}\n\n"
             except (asyncio.CancelledError, GeneratorExit):
                 stream_error = "Connection stream cancelled"
                 raise

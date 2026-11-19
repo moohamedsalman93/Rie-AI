@@ -189,71 +189,94 @@ class CentralGatewayClient:
     # ── Inbound Dispatchers ────────────────────────────────────────────────────────
 
     async def _dispatch_inbound_message(self, msg: Dict[str, Any]) -> None:
-        msg_type = msg.get("type")
-        if msg_type == "peer_query":
-            await self._handle_inbound_query(msg)
-        elif msg_type == "peer_query_stream":
-            await self._handle_inbound_stream(msg)
-        elif msg_type == "connection_request_received":
-            sender_email = msg.get("sender_email") or "Someone"
-            req_id = msg.get("request_id") or uuid.uuid4().hex[:8]
-            logger.info("Connection request received from: %s", sender_email)
-            try:
-                await asyncio.to_thread(
-                    insert_schedule_notification,
-                    f"conn-req-{req_id}",
-                    None,
-                    None,
-                    "connection_request",
-                    "New Connection Request",
-                    f"{sender_email} wants to connect with you on Rie.",
-                )
-            except Exception as e:
-                logger.warning("Failed to insert notification for connection request: %s", e)
-        elif msg_type == "connection_request_accepted":
-            connection_email = msg.get("connection_email") or "Your contact"
-            logger.info("Connection request was accepted by peer: %s", connection_email)
-            try:
-                await asyncio.to_thread(
-                    insert_schedule_notification,
-                    f"conn-acc-{uuid.uuid4().hex[:8]}",
-                    None,
-                    None,
-                    "connection_accepted",
-                    "Connection Accepted",
-                    f"{connection_email} accepted your connection request!",
-                )
-                await self.list_connections()
-            except Exception as e:
-                logger.warning("Failed to refresh connections after acceptance: %s", e)
-        elif msg_type == "connection_removed":
-            user_id = msg.get("user_id")
-            if user_id:
+        try:
+            msg_type = msg.get("type")
+            if msg_type == "peer_query":
+                await self._handle_inbound_query(msg)
+            elif msg_type == "peer_query_stream":
+                await self._handle_inbound_stream(msg)
+            elif msg_type == "connection_request_received":
+                sender_email = msg.get("sender_email") or "Someone"
+                req_id = msg.get("request_id") or uuid.uuid4().hex[:8]
+                logger.info("Connection request received from: %s", sender_email)
                 try:
-                    delete_friend(user_id)
+                    await asyncio.to_thread(
+                        insert_schedule_notification,
+                        f"conn-req-{req_id}",
+                        None,
+                        None,
+                        "connection_request",
+                        "New Connection Request",
+                        f"{sender_email} wants to connect with you on Rie.",
+                    )
+                except Exception as e:
+                    logger.warning("Failed to insert notification for connection request: %s", e)
+            elif msg_type == "connection_request_accepted":
+                connection_email = msg.get("connection_email") or "Your contact"
+                logger.info("Connection request was accepted by peer: %s", connection_email)
+                try:
+                    await asyncio.to_thread(
+                        insert_schedule_notification,
+                        f"conn-acc-{uuid.uuid4().hex[:8]}",
+                        None,
+                        None,
+                        "connection_accepted",
+                        "Connection Accepted",
+                        f"{connection_email} accepted your connection request!",
+                    )
+                    await self.list_connections()
+                except Exception as e:
+                    logger.warning("Failed to refresh connections after acceptance: %s", e)
+            elif msg_type == "connection_removed":
+                user_id = msg.get("user_id")
+                if user_id:
+                    try:
+                        delete_friend(user_id)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.exception("Unhandled error in _dispatch_inbound_message: %s", exc)
+            if msg.get("type") == "peer_query_stream" and msg.get("request_id") and self._ws:
+                try:
+                    await self._ws.send(json.dumps({
+                        "type": "peer_stream_error",
+                        "request_id": msg["request_id"],
+                        "error": str(exc),
+                    }))
                 except Exception:
                     pass
 
     async def _handle_inbound_query(self, msg: Dict[str, Any]) -> None:
         """Handle incoming query forwarded from central server."""
-        from app.agent import agent_manager, _get_runtime_tool_catalog_ids, _extract_peer_assistant_text
-
         req_id = msg.get("request_id")
-        from_user = msg.get("from_user_id", "unknown")
-        from_email = msg.get("from_email", "Friend")
-        query = (msg.get("query") or "").strip() or "Hello"
-        thread_id = msg.get("thread_id") or f"cloud-peer:{from_user}"
-
-        # Resolve local access policy
-        friend = get_friend_by_id(from_user)
-        policy = friend_row_peer_policy(friend) if friend else merge_peer_access_policy(None)
-        full_catalog = _get_runtime_tool_catalog_ids()
-        effective_ids = compute_effective_tool_ids(policy, full_catalog)
-        memory_user_id = f"peer:{from_user}" if policy.memory_enabled else "default_user"
-
-        identity = get_or_create_device_identity()
-
         try:
+            from app.agent import agent_manager
+            try:
+                from app.agent import _get_runtime_tool_catalog_ids, _extract_peer_assistant_text
+            except ImportError:
+                def _get_runtime_tool_catalog_ids():
+                    return set()
+                def _extract_peer_assistant_text(r):
+                    if isinstance(r, dict):
+                        m = r.get("messages", [])
+                        if m:
+                            return getattr(m[-1], "content", "") or str(m[-1])
+                    return ""
+
+            from_user = msg.get("from_user_id", "unknown")
+            from_email = msg.get("from_email", "Friend")
+            query = (msg.get("query") or "").strip() or "Hello"
+            thread_id = msg.get("thread_id") or f"cloud-peer:{from_user}"
+
+            # Resolve local access policy
+            friend = get_friend_by_id(from_user)
+            policy = friend_row_peer_policy(friend) if friend else merge_peer_access_policy(None)
+            full_catalog = _get_runtime_tool_catalog_ids()
+            effective_ids = compute_effective_tool_ids(policy, full_catalog)
+            memory_user_id = f"peer:{from_user}" if policy.memory_enabled else "default_user"
+
+            identity = get_or_create_device_identity()
+
             # Save inbound message locally
             await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email)
             await asyncio.to_thread(save_message, thread_id, "user", query)
@@ -317,21 +340,29 @@ class CentralGatewayClient:
 
     async def _handle_inbound_stream(self, msg: Dict[str, Any]) -> None:
         """Handle incoming streaming query forwarded from central server."""
-        from app.agent import agent_manager, _get_runtime_tool_catalog_ids
-
         req_id = msg.get("request_id")
-        from_user = msg.get("from_user_id", "unknown")
-        from_email = msg.get("from_email", "Friend")
-        query = (msg.get("query") or "").strip() or "Hello"
-        thread_id = msg.get("thread_id") or f"cloud-peer:{from_user}"
-
-        friend = get_friend_by_id(from_user)
-        policy = friend_row_peer_policy(friend) if friend else merge_peer_access_policy(None)
-        full_catalog = _get_runtime_tool_catalog_ids()
-        effective_ids = compute_effective_tool_ids(policy, full_catalog)
-        memory_user_id = f"peer:{from_user}" if policy.memory_enabled else "default_user"
-
         try:
+            try:
+                from app.agent import agent_manager, _get_runtime_tool_catalog_ids
+            except ImportError:
+                from app.agent import agent_manager
+                try:
+                    from app.routes import _get_runtime_tool_catalog_ids
+                except ImportError:
+                    def _get_runtime_tool_catalog_ids():
+                        return set()
+
+            from_user = msg.get("from_user_id", "unknown")
+            from_email = msg.get("from_email", "Friend")
+            query = (msg.get("query") or "").strip() or "Hello"
+            thread_id = msg.get("thread_id") or f"cloud-peer:{from_user}"
+
+            friend = get_friend_by_id(from_user)
+            policy = friend_row_peer_policy(friend) if friend else merge_peer_access_policy(None)
+            full_catalog = _get_runtime_tool_catalog_ids()
+            effective_ids = compute_effective_tool_ids(policy, full_catalog)
+            memory_user_id = f"peer:{from_user}" if policy.memory_enabled else "default_user"
+
             await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email)
             await asyncio.to_thread(save_message, thread_id, "user", query)
             try:

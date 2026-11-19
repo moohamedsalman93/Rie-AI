@@ -2872,6 +2872,42 @@ class TaskExecutionAccountingMiddleware(AgentMiddleware):
                 raise
 
 
+def _extract_peer_assistant_text(result: Any) -> str:
+    """Extract assistant response text from an agent invocation result."""
+    if isinstance(result, dict):
+        messages = result.get("messages", [])
+        if messages:
+            last = messages[-1]
+            return getattr(last, "content", "") if hasattr(last, "content") else str(last)
+    return ""
+
+
+def _get_runtime_tool_catalog_ids() -> set[str]:
+    """Best-effort runtime tool ID catalog for validating planner assignments."""
+    tool_ids: set[str] = {
+        "internet_search",
+        "remote_friend_ask",
+        "ask_question",
+        "render_ui",
+        "read_knowledge_asset",
+        "load_skill",
+        "execute_batched_plan",
+        "get_system_status",
+        "modify_system_setting",
+        "rollback_system_setting",
+        "toggle_tool",
+        "read_system_logs",
+        "diagnose_system_errors",
+        "get_recent_task_events",
+        *[t.name for t in SCHEDULER_TOOLS],
+        *WINDOWS_TOOLS.keys(),
+        *[t.name for t in LANGGRAPH_BROWSER_TOOLS],
+        *[t.name for t in LTM_TOOLS],
+        *[t.name for t in MCP_REGISTRY_TOOLS],
+    }
+    return tool_ids
+
+
 class AgentManager:
     """Manages the Deep Agent instance"""
     

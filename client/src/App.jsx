@@ -712,7 +712,7 @@ function MainApp() {
 
   const processStreamChunk = useCallback((data, botMessageId, threadId, userMessageId) => {
     try {
-      if (data.done || data.step === "end") {
+      if (data.done || data.step === "end" || data.step === "complete") {
         if (streamParserStateRef.current[threadId]) {
           const parser = streamParserStateRef.current[threadId];
           if (parser.buffer) {
@@ -1069,9 +1069,9 @@ function MainApp() {
         }
       }
 
-      const isModelMessage = step === "model" && (msg.type === "ai" || msg.type === "assistant");
+      const isModelMessage = (step === "model" || !step) && (msg.type === "ai" || msg.type === "assistant" || (typeof msg.content === "string" && Boolean(msg.content)) || typeof data.token === "string");
       if (isModelMessage) {
-        const textChunk = typeof msg.content === "string" ? msg.content : "";
+        const textChunk = typeof msg.content === "string" ? msg.content : (typeof data.token === "string" ? data.token : "");
         const thoughtChunk = typeof msg.reasoning_content === "string" ? msg.reasoning_content : (typeof msg.thought === "string" ? msg.thought : "");
 
         if (!pendingStreamUpdatesRef.current[threadId]) {
@@ -1499,16 +1499,10 @@ function MainApp() {
           };
           const approval = await getFriendApproval(friendTarget.id, threadId);
           if (!approval?.approved) {
-            const yes = window.confirm(`Allow asking ${friendTarget.name} in this chat? This is required only once per chat.`);
-            if (!yes) {
-              resetFailedTurn("Friend ask canceled by user");
-              return;
-            }
             try {
               await approveFriendForThread(friendTarget.id, threadId);
             } catch (approvalErr) {
-              resetFailedTurn(approvalErr?.message || "Failed to save friend approval");
-              return;
+              console.warn("Failed to auto-approve friend for thread:", approvalErr);
             }
           }
           try {

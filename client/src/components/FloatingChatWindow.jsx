@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Bot } from "lucide-react";
+import { ArrowLeft, Bot, MessageSquare, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { getThreadInfo } from "../services/chatApi";
 import { ChatHeader } from "./ChatHeader";
 import { FloatingScheduleSheet } from "./FloatingScheduleSheet";
@@ -153,6 +153,15 @@ export function FloatingChatWindow({
     };
   }, [activeThreadId, propParentThreadInfo]);
 
+  const isConnectionChat = Boolean(
+    activeFriendMeta?.isFriendChat ||
+    activeFriendMeta?.friendId ||
+    friendThreadMeta?.[activeThreadId]?.isFriendChat ||
+    friendThreadMeta?.[activeThreadId]?.friendId ||
+    friendThreadMeta?.[String(activeThreadId)]?.isFriendChat ||
+    friendThreadMeta?.[String(activeThreadId)]?.friendId
+  );
+
   return (
     <motion.section
       key="chat"
@@ -172,6 +181,7 @@ export function FloatingChatWindow({
       }}
     >
       <ChatHeader
+        isConnectionChat={isConnectionChat}
         apiStatus={apiStatus}
         isMenuOpen={isMenuOpen}
         setIsMenuOpen={setIsMenuOpen}
@@ -305,18 +315,34 @@ export function FloatingChatWindow({
                             </span>
                             <div className="min-w-0">
                               <span className="truncate text-xs text-neutral-200 block font-medium">{displayName}</span>
-                              {friend.device_name && (
-                                <span className="text-[10px] text-neutral-500 block truncate font-mono">{friend.device_name}</span>
-                              )}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => onStartFriendChat(friend)}
-                            className="text-[10px] text-emerald-400 hover:text-emerald-300 font-medium px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 transition-all shrink-0 cursor-pointer"
-                          >
-                            Chat
-                          </button>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => onStartFriendChat(friend)}
+                              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                              title="Inbound communication"
+                            >
+                              <ArrowDownLeft size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onStartFriendChat(friend)}
+                              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                              title="Outbound communication"
+                            >
+                              <ArrowUpRight size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onStartFriendChat(friend)}
+                              className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
+                              title={`Chat with ${displayName}`}
+                            >
+                              <MessageSquare size={14} />
+                            </button>
+                          </div>
                         </div>
                       );
                     })

@@ -47,6 +47,7 @@ export function ChatHeader({
   contextBreakdown = null,
   currentThreadId = null,
   messages = [],
+  isConnectionChat = false,
 }) {
   return (
     <header
@@ -224,7 +225,7 @@ export function ChatHeader({
 
                 <div className="my-1 h-[1px] bg-neutral-700/50" />
 
-                {onSelectProvider && (
+                {onSelectProvider && !isConnectionChat && (
                   <div className="py-1 flex items-center justify-between gap-2 px-1">
                     <span className="text-[11px] text-neutral-400 font-medium select-none">Provider:</span>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -244,15 +245,17 @@ export function ChatHeader({
                   </div>
                 )}
 
-                <div className=" py-1">
-                  <ModeToggle
-                    chatMode={chatMode}
-                    setChatMode={setChatMode}
-                    speedMode={speedMode}
-                    setSpeedMode={setSpeedMode}
-                    provider={provider}
-                  />
-                </div>
+                {!isConnectionChat && (
+                  <div className=" py-1">
+                    <ModeToggle
+                      chatMode={chatMode}
+                      setChatMode={setChatMode}
+                      speedMode={speedMode}
+                      setSpeedMode={setSpeedMode}
+                      provider={provider}
+                    />
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
