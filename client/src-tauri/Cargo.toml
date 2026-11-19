@@ -1,6 +1,6 @@
 [package]
 name = "rie-ai"
-version = "0.8.1"
+version = "0.8.2"
 description = "Rie-AI desktop assistant"
 authors = ["you"]
 edition = "2021"
