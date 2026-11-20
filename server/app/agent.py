@@ -446,6 +446,14 @@ DOMAIN_RULES: dict[str, str] = {
         "  * Configuration Rollback: If a configuration update causes an issue, use `rollback_system_setting` to revert to the previous safe configuration.\n"
         "  * Log Diagnostics & Self-Healing: When an unexpected error occurs during tool execution or external API calls, inspect backend logs using `read_system_logs` or `diagnose_system_errors`, or inspect recent execution events using `get_recent_task_events`. Diagnose the root cause and propose or apply a remediation if possible."
     ),
+    "connected_peers": (
+        "- Connected Peers & Devices (AI-Mediated Interaction):\n"
+        "  * You act as the intelligent intermediary (AI Mediator) between the user and their connected peers / devices (e.g. other laptops, paired Rie installs).\n"
+        "  * When the user asks questions or issues commands directed at a connected laptop/device (e.g. asking for battery percentage, system status, hardware info, files, actions on 'acer', 'laptop 2', or a friend), "
+        "or when chatting in a thread linked to a peer target, invoke `remote_friend_ask` (with the question and connection_id) to query the peer's Rie agent.\n"
+        "  * Always speak and report the peer's findings to the user in the THIRD PERSON (e.g., 'I asked Acer Rie, and it reported that the battery is at 87% (On battery)', or 'According to Salman's laptop, ...'). "
+        "Never say you cannot see device stats if you have a connected peer you can query with `remote_friend_ask`, and do not speak as if you are that remote device."
+    ),
 }
 
 TECHNICAL_RULES_PROMPT = "Technical & Tool Execution Rules:\n" + "\n\n".join(DOMAIN_RULES.values())
@@ -1685,7 +1693,8 @@ class ToolNeedMiddleware(AgentMiddleware):
         "scheduler": (
             "schedule_chat_task", "list_scheduled_tasks", "update_scheduled_task", "cancel_scheduled_task"
         ),
-        "remote_friend": ("remote_friend_ask",),
+        "remote_friend": ("remote_friend_ask", "remote_connection_ask"),
+        "connected_peers": ("remote_friend_ask", "remote_connection_ask"),
         "knowledge": ("read_knowledge_asset",),
         "memory": ("get_memory", "search_memory", "delete_memory"),
         "github": ("github_",),
@@ -1722,6 +1731,16 @@ class ToolNeedMiddleware(AgentMiddleware):
             active_domains.add("scheduler")
         if any(k in q for k in ("remember", "memory", "preference", "forget", "delete memory", "remove memory")):
             active_domains.add("memory")
+        if any(k in q for k in ("friend", "peer", "remote", "connection", "acer", "laptop", "battery", "other machine", "other device")):
+            active_domains.add("remote_friend")
+            active_domains.add("connected_peers")
+        try:
+            from app.runtime_context import get_current_friend_target_id
+            if get_current_friend_target_id():
+                active_domains.add("remote_friend")
+                active_domains.add("connected_peers")
+        except Exception:
+            pass
         return active_domains
 
     @classmethod
@@ -4660,6 +4679,18 @@ class AgentManager:
                     "role": "system",
                     "content": f"Active Workspace Directory (Project Root): {str(project_root).strip()}\nWhen reading, modifying, creating files, searching, or running terminal commands for workspace tasks, operate in and relative to this directory.",
                 })
+            if friend_target_id or friend_target_name:
+                initial_msgs.append({
+                    "role": "system",
+                    "content": (
+                        f"[Connected Peer Session Target]\n"
+                        f"Target Peer Device/Friend: {friend_target_name or 'Peer'} (ID: {friend_target_id or 'unknown'})\n"
+                        f"You are the AI Mediator between the user and this connected peer. When the user asks questions or makes requests meant for or concerning this peer/device (e.g. asking for battery percentage, system status, hardware info, files, actions on that laptop), "
+                        f"invoke `remote_friend_ask` (with question and connection_id='{friend_target_id}') to query the peer's Rie agent.\n"
+                        f"CRITICAL: Always speak and report the peer's answer to the user in the THIRD PERSON (e.g., 'I asked {friend_target_name or 'Peer'}, and it reported that the battery is at 87% (On battery)'). "
+                        f"Never claim you cannot see device stats if you can query the peer with `remote_friend_ask`."
+                    ),
+                })
             input_data = {"messages": [*initial_msgs, *messages]}
 
         tokens = set_agent_context(
@@ -4803,6 +4834,18 @@ class AgentManager:
                 processed_messages.append({
                     "role": "system",
                     "content": f"[Custom Knowledge Context]\n{knowledge_context.strip()}",
+                })
+            if friend_target_id or friend_target_name:
+                processed_messages.append({
+                    "role": "system",
+                    "content": (
+                        f"[Connected Peer Session Target]\n"
+                        f"Target Peer Device/Friend: {friend_target_name or 'Peer'} (ID: {friend_target_id or 'unknown'})\n"
+                        f"You are the AI Mediator between the user and this connected peer. When the user asks questions or makes requests meant for or concerning this peer/device (e.g. asking for battery percentage, system status, hardware info, files, actions on that laptop), "
+                        f"invoke `remote_friend_ask` (with question and connection_id='{friend_target_id}') to query the peer's Rie agent.\n"
+                        f"CRITICAL: Always speak and report the peer's answer to the user in the THIRD PERSON (e.g., 'I asked {friend_target_name or 'Peer'}, and it reported that the battery is at 87% (On battery)'). "
+                        f"Never claim you cannot see device stats if you can query the peer with `remote_friend_ask`."
+                    ),
                 })
 
             for msg in messages:

@@ -435,19 +435,9 @@ export function HistorySidebar({
         });
     }, [mergedThreads, searchTerm, getThreadDisplayTitle, getMatchedFriend, friendThreadMeta]);
 
-    const handleFriendChatClick = (friend, forceNew = false) => {
+    const handleFriendChatClick = (friend) => {
         handleViewChange("chats");
-        if (!forceNew) {
-            const existing = mergedThreads.find((t) => {
-                const fMeta = getThreadFriendMeta(t.id);
-                return t.friend_id === friend.id || fMeta?.friendId === friend.id;
-            });
-            if (existing) {
-                onSelectThread(existing.id);
-                return;
-            }
-        }
-        onStartFriendChat(friend, forceNew);
+        onStartFriendChat(friend);
     };
 
     const chatViewThreads = useMemo(() => {
@@ -596,7 +586,7 @@ export function HistorySidebar({
                             )}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5 text-[10px] text-neutral-500">
-                            <span className="opacity-70">
+                            <span className="opacity-70 group-hover:opacity-0 transition-opacity">
                                 {formatDate(thread.updated_at || thread.created_at)}
                             </span>
                         </div>
@@ -608,7 +598,7 @@ export function HistorySidebar({
                             setThreadToDelete(thread.id);
                             setIsConfirmOpen(true);
                         }}
-                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all cursor-pointer"
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded bg-neutral-800 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-neutral-400 hover:text-red-400 transition-all cursor-pointer shadow-xs"
                         title="Delete conversation"
                     >
                         <Trash2 size={12} />
@@ -718,7 +708,7 @@ export function HistorySidebar({
                                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                                             )}
                                         </span>
-                                        <span className="text-[9px] text-neutral-500 font-mono shrink-0 ml-1">
+                                        <span className="text-[9px] text-neutral-500 font-mono shrink-0 ml-1 transition-opacity group-hover/devicechat:opacity-0">
                                             {formatDate(thread.updated_at || thread.created_at)}
                                         </span>
                                     </button>
@@ -729,7 +719,7 @@ export function HistorySidebar({
                                             setThreadToDelete(thread.id);
                                             setIsConfirmOpen(true);
                                         }}
-                                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded opacity-0 group-hover/devicechat:opacity-100 hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-all cursor-pointer"
+                                        className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded bg-neutral-800 opacity-0 group-hover/devicechat:opacity-100 hover:bg-red-500/20 text-neutral-400 hover:text-red-400 transition-all cursor-pointer shadow-xs"
                                         title="Delete conversation"
                                     >
                                         <Trash2 size={11} />
@@ -1115,30 +1105,6 @@ export function HistorySidebar({
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-1 shrink-0">
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleFriendChatClick(friend);
-                                                        if (closeOnSelect) onClose();
-                                                    }}
-                                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
-                                                    title="Inbound communication"
-                                                >
-                                                    <ArrowDownLeft size={13} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleFriendChatClick(friend);
-                                                        if (closeOnSelect) onClose();
-                                                    }}
-                                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors shrink-0 cursor-pointer"
-                                                    title="Outbound communication"
-                                                >
-                                                    <ArrowUpRight size={13} />
-                                                </button>
                                                 <button
                                                     type="button"
                                                     onClick={(e) => {

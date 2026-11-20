@@ -2947,6 +2947,23 @@ async def chat_stream_post(
     # 1. Ensure thread exists. The title is generated asynchronously after the first message.
     real_thread_id = await run_in_threadpool(create_thread, DEFAULT_THREAD_TITLE, thread_id)
 
+    if friend_target_id:
+        await run_in_threadpool(
+            upsert_friend_thread,
+            real_thread_id,
+            friend_target_id,
+            friend_target_name or "Friend",
+            "outbound",
+        )
+        try:
+            await run_in_threadpool(
+                approve_friend_for_thread,
+                real_thread_id,
+                friend_target_id,
+            )
+        except Exception:
+            pass
+
     knowledge_context = ""
     knowledge_snapshots: Dict[str, str] = {}
     try:

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { LogicalSize, LogicalPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -71,7 +71,7 @@ function playScheduleAlertSound() {
     osc.start();
     osc.stop(ctx.currentTime + 0.25);
     osc.onended = () => {
-      ctx.close().catch(() => {});
+      ctx.close().catch(() => { });
     };
   } catch (e) {
     console.warn("Schedule alert sound failed:", e);
@@ -101,11 +101,14 @@ function mergeFriendMetaFromHistoryRows(baseMap, rows) {
     const threadId = String(row?.thread_id || row?.id || "");
     const friendId = row?.friend_id || null;
     const friendName = row?.friend_name || "Friend";
+    const direction = row?.direction || "outbound";
     if (!threadId || !friendId) return;
     next[threadId] = {
+      ...(next[threadId] || {}),
       friendId,
       friendName,
       isFriendChat: true,
+      direction: direction || next[threadId]?.direction || "outbound",
     };
   });
   return next;
@@ -165,6 +168,19 @@ function MainApp() {
   const [friends, setFriends] = useState([]);
   const [connectionRequests, setConnectionRequests] = useState({ incoming: [], outgoing: [] });
   const [friendThreadMeta, setFriendThreadMeta] = useState({});
+
+  const activeFriendMeta = useMemo(() => {
+    const raw = friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null;
+    if (!raw) return null;
+    const friend = (friends || []).find((f) => f.id === raw.friendId);
+    return {
+      ...raw,
+      deviceName: raw.deviceName || friend?.device_name || null,
+      friendEmail: raw.friendEmail || friend?.email || raw.friendName,
+      isOnline: raw.isOnline !== undefined ? raw.isOnline : Boolean(friend?.is_online),
+      direction: raw.direction || "outbound",
+    };
+  }, [friendThreadMeta, activeThreadId, friends]);
   const [privacyToast, setPrivacyToast] = useState(null);
   const privacyHoldTimerRef = useRef(null);
   const isPrivacyHoldingRef = useRef(false);
@@ -347,7 +363,7 @@ function MainApp() {
       return newSessions;
     });
   }, [activeThreadId]);
-  
+
   const handleClearTerminal = useCallback(() => {
     setTerminalLogs([]);
   }, []);
@@ -385,7 +401,7 @@ function MainApp() {
         const bc = new BroadcastChannel("rie-sync");
         bc.postMessage({ type: "connections-refresh" });
         bc.close();
-      } catch {}
+      } catch { }
     } catch (err) {
       console.error("Failed to accept connection request:", err);
     }
@@ -400,7 +416,7 @@ function MainApp() {
         const bc = new BroadcastChannel("rie-sync");
         bc.postMessage({ type: "connections-refresh" });
         bc.close();
-      } catch {}
+      } catch { }
     } catch (err) {
       console.error("Failed to decline connection request:", err);
     }
@@ -436,8 +452,9 @@ function MainApp() {
     handleAssignFriendToThread(newThreadId, friend);
     setAttachedImage(null);
     setInput("");
+    loadThreadKnowledge(newThreadId);
     setIsMenuOpen(false);
-  }, [handleAssignFriendToThread]);
+  }, [handleAssignFriendToThread, loadThreadKnowledge]);
 
   const handleToggleWindowMode = useCallback(async () => {
     const newMode = windowMode === "floating" ? "normal" : "floating";
@@ -973,21 +990,21 @@ function MainApp() {
             setTerminalLogs((prev) => {
               const newLogs = [...prev];
               if (newLogs.length === 0 || newLogs[newLogs.length - 1].status !== "running") {
-                  newLogs.push({
-                      status: "running",
-                      command: lastTerminalCommandRef.current,
-                      stdout: "",
-                      stderr: "",
-                      returncode: undefined
-                  });
-                  return newLogs;
+                newLogs.push({
+                  status: "running",
+                  command: lastTerminalCommandRef.current,
+                  stdout: "",
+                  stderr: "",
+                  returncode: undefined
+                });
+                return newLogs;
               } else if (newLogs[newLogs.length - 1].status === "running" && newLogs[newLogs.length - 1].command !== lastTerminalCommandRef.current) {
-                  // Update the command text as it streams in
-                  newLogs[newLogs.length - 1] = {
-                      ...newLogs[newLogs.length - 1],
-                      command: lastTerminalCommandRef.current
-                  };
-                  return newLogs;
+                // Update the command text as it streams in
+                newLogs[newLogs.length - 1] = {
+                  ...newLogs[newLogs.length - 1],
+                  command: lastTerminalCommandRef.current
+                };
+                return newLogs;
               }
               return prev;
             });
@@ -1207,13 +1224,13 @@ function MainApp() {
                 next[threadId] = next[threadId].map((message) => message.id !== botMessageId
                   ? message
                   : {
-                      ...message,
-                      blocks: (message.blocks || []).map((block) =>
-                        block.type === "subagent" && block.id === matchedId
-                          ? { ...block, status: "completed", result: content, completedAt: Date.now() }
-                          : block
-                      ),
-                    });
+                    ...message,
+                    blocks: (message.blocks || []).map((block) =>
+                      block.type === "subagent" && block.id === matchedId
+                        ? { ...block, status: "completed", result: content, completedAt: Date.now() }
+                        : block
+                    ),
+                  });
                 return next;
               });
             }
@@ -1334,8 +1351,8 @@ function MainApp() {
             setTerminalLogs((prev) => {
               const newLogs = [...prev];
               if (newLogs.length > 0 && newLogs[newLogs.length - 1].status === "running") {
-                  newLogs[newLogs.length - 1] = logEntry;
-                  return newLogs;
+                newLogs[newLogs.length - 1] = logEntry;
+                return newLogs;
               }
               return [...prev, logEntry];
             });
@@ -1493,53 +1510,10 @@ function MainApp() {
         const token = localStorage.getItem('rie_token');
         const newKnowledgeIds = getNewKnowledgeIds();
         if (friendTarget?.id) {
-          friendStreamStateRef.current[threadId] = {
-            friendId: friendTarget.id,
-            streamId: null,
-          };
-          const approval = await getFriendApproval(friendTarget.id, threadId);
-          if (!approval?.approved) {
-            try {
-              await approveFriendForThread(friendTarget.id, threadId);
-            } catch (approvalErr) {
-              console.warn("Failed to auto-approve friend for thread:", approvalErr);
-            }
-          }
           try {
-            await streamFriendChat(
-              friendTarget.id,
-              finalMsgText,
-              threadId,
-              (data) => {
-                if (data?.step === "start") {
-                  friendStreamStateRef.current[threadId] = {
-                    friendId: friendTarget.id,
-                    streamId: data.stream_id || null,
-                  };
-                }
-                processStreamChunk(data, botMessageId, threadId, userMessageId);
-              },
-              () => {
-                setStreamingThreads(prev => {
-                  const next = new Set(prev);
-                  next.delete(threadId);
-                  return next;
-                });
-                setCurrentTool(null);
-                delete abortControllersRef.current[threadId];
-                delete friendStreamStateRef.current[threadId];
-              },
-              (friendErr) => {
-                resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
-                delete friendStreamStateRef.current[threadId];
-              },
-              signal
-            );
-            return;
-          } catch (friendErr) {
-            resetFailedTurn(toConnectivityHint(friendErr?.message || "Failed to ask friend"));
-            delete friendStreamStateRef.current[threadId];
-            return;
+            await approveFriendForThread(friendTarget.id, threadId);
+          } catch (approvalErr) {
+            console.warn("Failed to auto-approve friend for thread:", approvalErr);
           }
         }
         await streamChat(
@@ -1558,7 +1532,7 @@ function MainApp() {
             markAllLocked();
             loadThreadKnowledge(threadId);
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
-          window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
+            window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
             window.dispatchEvent(new CustomEvent("rie-history-refresh"));
             window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
             // Title generation runs asynchronously on the server after the first save.
@@ -1574,7 +1548,7 @@ function MainApp() {
             setCurrentTool(null);
             delete abortControllersRef.current[threadId];
             window.dispatchEvent(new CustomEvent("rie-schedule-refresh"));
-          window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
+            window.dispatchEvent(new CustomEvent("rie-settings-refresh"));
           },
           signal,
           isVoice,
@@ -1698,7 +1672,7 @@ function MainApp() {
     handleSend(formattedText, false);
   }, [activeThreadId, handleSend]);
 
-    const handleCancelRequest = useCallback((targetThreadId = null) => {
+  const handleCancelRequest = useCallback((targetThreadId = null) => {
     // If invoked from onClick, first arg is the event; ignore non-strings
     if (targetThreadId != null && typeof targetThreadId !== 'string') {
       targetThreadId = null;
@@ -1861,7 +1835,7 @@ function MainApp() {
       console.error("Failed to set window capture excluded:", e);
     }
     setSettings((prev) => ({ ...prev, exclude_from_capture: true }));
-    updateSetting("EXCLUDE_FROM_CAPTURE", "true").catch(() => {});
+    updateSetting("EXCLUDE_FROM_CAPTURE", "true").catch(() => { });
     showPrivacyToast("enabled");
   }, [showPrivacyToast]);
 
@@ -1874,7 +1848,7 @@ function MainApp() {
       console.error("Failed to disable window capture excluded:", e);
     }
     setSettings((prev) => ({ ...prev, exclude_from_capture: false }));
-    updateSetting("EXCLUDE_FROM_CAPTURE", "false").catch(() => {});
+    updateSetting("EXCLUDE_FROM_CAPTURE", "false").catch(() => { });
     showPrivacyToast("disabled");
   }, [showPrivacyToast]);
 
@@ -1889,7 +1863,7 @@ function MainApp() {
     }
 
     const isCurrentlyExcluded = settings.exclude_from_capture !== false;
-    
+
     if (!isCurrentlyExcluded) {
       // Screen privacy is OFF -> Pressing key is enough to ENABLE immediately!
       enableScreenPrivacy();
@@ -1920,7 +1894,7 @@ function MainApp() {
     }
 
     const isCurrentlyExcluded = settings.exclude_from_capture !== false;
-    
+
     if (isCurrentlyExcluded && isPrivacyHoldingRef.current) {
       if (privacyHoldTimerRef.current) {
         // Key released BEFORE 1s hold completed -> Cancel hold & show hint toast
@@ -2073,10 +2047,10 @@ function MainApp() {
       // Abort all active streams
       Object.values(abortControllersRef.current).forEach(c => c.abort());
       abortControllersRef.current = {};
-      
+
       setStreamingThreads(new Set());
       persistFriendMeta({});
-      
+
       // Generate a new thread ID
       const newThreadId = crypto.randomUUID();
       setSessions({ [newThreadId]: initialMessages });
@@ -2249,6 +2223,21 @@ function MainApp() {
             // Real-time synchronization for connections & peer chats
             if (n.intent === "peer_message") {
               loadFriends();
+              window.dispatchEvent(new CustomEvent("rie-history-refresh"));
+              if (n.thread_id && activeThreadId === n.thread_id) {
+                getThreadMessages(n.thread_id).then((msgs) => {
+                  if (Array.isArray(msgs) && msgs.length > 0) {
+                    const formatted = msgs.map((m) => ({
+                      id: m.id,
+                      from: m.role === "user" ? "user" : "bot",
+                      text: m.content,
+                      image_url: m.image_url,
+                      blocks: m.role !== "user" ? parseMessageContentToBlocks(m.content) : undefined,
+                    }));
+                    setSessions((prev) => ({ ...prev, [n.thread_id]: formatted }));
+                  }
+                }).catch((err) => console.warn("Failed refreshing active peer thread:", err));
+              }
             } else if (n.intent === "connection_request" || n.intent === "connection_accepted") {
               loadConnectionRequests();
               loadFriends();
@@ -2908,7 +2897,7 @@ function MainApp() {
           }
         };
       }
-    } catch {}
+    } catch { }
 
     // 4. Tauri event across separate WebviewWindows
     let unlistenTauri = null;
@@ -2923,7 +2912,7 @@ function MainApp() {
           if (isCancelled) unlisten();
           else unlistenTauri = unlisten;
         }).catch((err) => console.warn("Failed to listen for rie-connections-refresh:", err));
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     // 5. Window focus (when user switches back from Settings window or browser to Rie window)
@@ -2942,10 +2931,10 @@ function MainApp() {
       window.removeEventListener("focus", handleRefresh);
       clearInterval(intervalId);
       if (bc) {
-        try { bc.close(); } catch {}
+        try { bc.close(); } catch { }
       }
       if (unlistenTauri) {
-        try { unlistenTauri(); } catch {}
+        try { unlistenTauri(); } catch { }
       }
     };
   }, [loadFriends, loadConnectionRequests]);
@@ -3167,7 +3156,7 @@ function MainApp() {
                 handleOpen();
                 return;
               }
-            } catch {}
+            } catch { }
             if (isOpenRef.current) {
               handleMinimize();
             } else {
@@ -3316,7 +3305,7 @@ function MainApp() {
           const { invoke } = await import("@tauri-apps/api/core");
           const initialMode = await invoke("get_kiosk_overlay_mode");
           setKioskOverlay(initialMode);
-          
+
           unlistenToggled = await listen("kiosk-overlay-toggled", (event) => {
             console.log("[App] Kiosk overlay toggled event payload:", event.payload);
             setKioskOverlay(event.payload);
@@ -3412,11 +3401,11 @@ function MainApp() {
             navigator.clipboard.readText().then((clipText) => {
               document.execCommand("insertText", false, clipText);
               setInput(textarea.value);
-            }).catch(() => {});
+            }).catch(() => { });
           } else if (key === "c") {
             const selectedText = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
             if (selectedText) {
-              navigator.clipboard.writeText(selectedText).catch(() => {});
+              navigator.clipboard.writeText(selectedText).catch(() => { });
             }
           } else if (key === "x") {
             const selectedText = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
@@ -3424,7 +3413,7 @@ function MainApp() {
               navigator.clipboard.writeText(selectedText).then(() => {
                 document.execCommand("delete", false);
                 setInput(textarea.value);
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         }
@@ -3460,10 +3449,10 @@ function MainApp() {
         // Abort all active streams
         Object.values(abortControllersRef.current).forEach(c => c.abort());
         abortControllersRef.current = {};
-        
+
         setStreamingThreads(new Set());
         persistFriendMeta({});
-        
+
         // Generate a new thread ID
         const newThreadId = crypto.randomUUID();
         setSessions({ [newThreadId]: initialMessages });
@@ -3497,7 +3486,7 @@ function MainApp() {
             handleOpen();
             return;
           }
-        } catch {}
+        } catch { }
         if (isOpenRef.current) {
           handleMinimize();
         } else {
@@ -3910,7 +3899,7 @@ function MainApp() {
                     onDismissUpdateNotification={() => setUpdateNotificationDismissed(true)}
                     friends={friends}
                     friendThreadMeta={friendThreadMeta}
-                    activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+                    activeFriendMeta={activeFriendMeta}
                     onSelectFriendChat={handleSelectFriendChat}
                     onStartFriendChat={handleStartFriendChat}
                     connectionRequests={connectionRequests}
@@ -4044,7 +4033,7 @@ function MainApp() {
               onToggleFriendsQuick={() => setIsFloatingFriendsOpen((prev) => !prev)}
               friends={friends}
               friendThreadMeta={friendThreadMeta}
-              activeFriendMeta={(friendThreadMeta[activeThreadId] || friendThreadMeta[String(activeThreadId)] || null)}
+              activeFriendMeta={activeFriendMeta}
               onSelectFriendChat={handleSelectFriendChat}
               onStartFriendChat={handleStartFriendChat}
               connectionRequests={connectionRequests}
@@ -4107,7 +4096,7 @@ function SettingsWindowApp() {
   }, []);
 
   if (!isReady) {
-    return <LoadingScreen onMouseDown={() => {}} onClose={handleCloseSettingsWindow} onMinimize={() => getCurrentWindow().minimize()} />;
+    return <LoadingScreen onMouseDown={() => { }} onClose={handleCloseSettingsWindow} onMinimize={() => getCurrentWindow().minimize()} />;
   }
 
   const settingsParams = new URLSearchParams(window.location.search);
@@ -4154,7 +4143,7 @@ function PlannerWindowApp() {
   if (!isReady) {
     return (
       <LoadingScreen
-        onMouseDown={() => {}}
+        onMouseDown={() => { }}
         onClose={handleClosePlannerWindow}
         onMinimize={() => getCurrentWindow().minimize()}
       />

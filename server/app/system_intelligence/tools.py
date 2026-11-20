@@ -88,9 +88,28 @@ def _get_system_status(category: str = "all") -> str:
         f"- HITL Mode: `{report.active_modes.get('hitl_mode')}`",
         f"- Window Mode: `{report.active_modes.get('window_mode')}`",
         "",
+        "**Device Hardware & Battery Status:**",
+    ]
+
+    try:
+        import psutil
+        batt = psutil.sensors_battery()
+        if batt is not None:
+            plugged_str = "Plugged in" if batt.power_plugged else "On battery"
+            output.append(f"- Battery: {batt.percent}% ({plugged_str})")
+        else:
+            output.append("- Battery: Not detected (Desktop / AC powered)")
+        cpu_pct = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory()
+        output.append(f"- CPU Usage: {cpu_pct}% | Memory: {mem.percent}%")
+    except Exception as hw_err:
+        output.append(f"- Hardware query note: {hw_err}")
+
+    output.extend([
+        "",
         "**LLM & Search Providers:**",
         f"- Primary Provider: `{report.providers.get('primary_provider')}` ({report.providers.get('primary_model')}) -> **{report.providers.get('primary_state')}**",
-    ]
+    ])
     if report.providers.get("primary_hint"):
         output.append(f"  *Hint: {report.providers.get('primary_hint')}*")
     output.append(f"- Fallback Provider: `{report.providers.get('fallback_provider')}`")

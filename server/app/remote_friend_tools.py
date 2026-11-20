@@ -9,6 +9,8 @@ from app.database import (
     get_friend_by_id,
     list_friends,
     has_friend_thread_approval,
+    approve_friend_for_thread,
+    get_friend_thread,
     append_peer_query_event,
 )
 from app.runtime_context import get_current_thread_id, get_current_friend_target_id
@@ -20,22 +22,55 @@ class RemoteConnectionAskInput(BaseModel):
 
 
 def _resolve_connection(connection_id: Optional[str]):
+    friends = list_friends()
+    if not friends:
+        return None
+
     if connection_id:
-        return get_friend_by_id(connection_id)
+        target = connection_id.strip()
+        # 1. Exact ID
+        for f in friends:
+            if f.get("id") == target:
+                return f
+        # 2. Case-insensitive substring match against name, email, or device_name
+        target_lower = target.lower()
+        for f in friends:
+            fname = (f.get("name") or "").lower()
+            femail = (f.get("email") or "").lower()
+            fdevice = (f.get("device_name") or "").lower()
+            if target_lower in fname or target_lower in femail or target_lower in fdevice or fname in target_lower:
+                return f
+
     current = get_current_friend_target_id()
     if current:
-        return get_friend_by_id(current)
-    friends = list_friends()
-    return friends[0] if friends else None
+        for f in friends:
+            if f.get("id") == current:
+                return f
+
+    thread_id = get_current_thread_id()
+    if thread_id:
+        ft = get_friend_thread(thread_id)
+        if ft and ft.get("friend_id"):
+            for f in friends:
+                if f.get("id") == ft["friend_id"]:
+                    return f
+
+    return friends[0]
 
 
 def _remote_connection_ask(question: str, connection_id: Optional[str] = None) -> str:
     connection = _resolve_connection(connection_id)
     if not connection:
-        return "No connection target selected. Select a connection first."
+        return "No connection target available. Please pair a peer in Connections first."
     thread_id = get_current_thread_id()
-    if not thread_id or not has_friend_thread_approval(thread_id, connection["id"]):
-        return f"Permission required before asking {connection['name']} in this chat. Confirm once and retry."
+
+    # Automatically ensure approval for accepted connections in this turn
+    if thread_id and connection.get("id"):
+        try:
+            approve_friend_for_thread(thread_id, connection["id"])
+        except Exception:
+            pass
+
     qlog = question.strip() or "(empty)"
 
     token = settings.RIE_ACCESS_TOKEN
@@ -57,7 +92,8 @@ def _remote_connection_ask(question: str, connection_id: Optional[str] = None) -
             msg = body.get("message", "")
             preview = msg if isinstance(msg, str) else str(msg)
             append_peer_query_event("outbound", connection["id"], connection["name"], qlog, "ok", preview, None)
-            return f"{body.get('status', 'online')}: {preview}"
+            target_display = connection.get("device_name") or connection.get("name") or "Peer"
+            return f"Response from {target_display} ({body.get('status', 'online')}): {preview}"
     except Exception as exc:
         append_peer_query_event("outbound", connection["id"], connection["name"], qlog, "error", None, str(exc))
         return f"Failed to reach connection: {exc}"

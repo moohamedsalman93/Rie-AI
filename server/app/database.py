@@ -455,11 +455,49 @@ def _init_db_tables():
             thread_id TEXT PRIMARY KEY,
             friend_id TEXT NOT NULL,
             friend_name TEXT NOT NULL,
+            direction TEXT DEFAULT 'outbound',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+
+    cursor.execute("PRAGMA table_info(friend_threads)")
+    ft_cols = {row[1] for row in cursor.fetchall()}
+    if "direction" not in ft_cols:
+        cursor.execute("ALTER TABLE friend_threads ADD COLUMN direction TEXT DEFAULT 'outbound'")
+
+    # Auto-classify past inbound friend threads based on peer query events
+    try:
+        cursor.execute("""
+            UPDATE friend_threads
+            SET direction = 'inbound'
+            WHERE thread_id IN (
+                SELECT DISTINCT m.thread_id FROM messages m
+                JOIN peer_query_events pqe ON pqe.friend_id = (SELECT friend_id FROM friend_threads WHERE thread_id = m.thread_id)
+                WHERE pqe.direction = 'inbound'
+            )
+        """)
+    except Exception:
+        pass
+
+    # Auto-fix threads that have "Untitled Chat" or empty title if user messages exist
+    try:
+        cursor.execute("""
+            UPDATE threads
+            SET title = SUBSTR((
+                SELECT content FROM messages
+                WHERE messages.thread_id = threads.id AND role = 'user'
+                ORDER BY created_at ASC LIMIT 1
+            ), 1, 80)
+            WHERE (title = 'Untitled Chat' OR title IS NULL OR title = '')
+            AND EXISTS (
+                SELECT 1 FROM messages
+                WHERE messages.thread_id = threads.id AND role = 'user' AND content IS NOT NULL AND TRIM(content) != ''
+            )
+        """)
+    except Exception:
+        pass
 
     cursor.execute(
         """
@@ -1384,11 +1422,16 @@ def save_message(thread_id: str, role: str, content: str, image_url: Optional[st
     cursor = conn.cursor()
     
     now = datetime.utcnow().isoformat()
+    clean_text = (content or "").strip()
     
     # Ensure thread exists (create basic one if not found, though ideally should exist)
-    cursor.execute("SELECT id FROM threads WHERE id = ?", (thread_id,))
-    if not cursor.fetchone():
-        create_thread("Untitled Chat", thread_id)
+    cursor.execute("SELECT id, title FROM threads WHERE id = ?", (thread_id,))
+    row = cursor.fetchone()
+    if not row:
+        initial_title = clean_text[:80] if (role == "user" and clean_text) else "Untitled Chat"
+        create_thread(initial_title, thread_id)
+    elif role == "user" and clean_text and (not row[1] or row[1] == "Untitled Chat"):
+        cursor.execute("UPDATE threads SET title = ?, updated_at = ? WHERE id = ?", (clean_text[:80], now, thread_id))
         
     cursor.execute(
         "INSERT INTO messages (thread_id, role, content, image_url, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -1397,6 +1440,8 @@ def save_message(thread_id: str, role: str, content: str, image_url: Optional[st
     
     # Update thread's updated_at
     cursor.execute("UPDATE threads SET updated_at = ? WHERE id = ?", (now, thread_id))
+    conn.commit()
+    conn.close()
     
     conn.commit()
     conn.close()
@@ -1430,6 +1475,7 @@ def get_threads(
             t.*,
             ft.friend_id AS friend_id,
             ft.friend_name AS friend_name,
+            ft.direction AS direction,
             tk_agg.knowledge_names AS knowledge_names,
             COALESCE(sub_agg.subchat_count, 0) AS subchat_count
         FROM threads t
@@ -1479,6 +1525,7 @@ def get_threads(
             "is_friend_chat": bool(row["friend_id"]),
             "friend_id": row["friend_id"],
             "friend_name": row["friend_name"],
+            "direction": row["direction"] if ("direction" in row.keys() and row["direction"]) else "outbound",
             "is_knowledge_chat": len(knowledge_names) > 0,
             "knowledge_names": knowledge_names,
         })
@@ -1498,7 +1545,8 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
         SELECT
             m.*,
             ft.friend_id AS friend_id,
-            ft.friend_name AS friend_name
+            ft.friend_name AS friend_name,
+            ft.direction AS direction
         FROM messages m
         LEFT JOIN friend_threads ft ON ft.thread_id = m.thread_id
         WHERE m.thread_id = ?
@@ -1519,6 +1567,7 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
             "is_friend_chat": bool(row["friend_id"]),
             "friend_id": row["friend_id"],
             "friend_name": row["friend_name"],
+            "direction": row["direction"] if ("direction" in row.keys() and row["direction"]) else "outbound",
         })
         
     conn.close()
@@ -1591,6 +1640,7 @@ def fork_thread_messages(
                 new_thread_id,
                 friend_row["friend_id"],
                 friend_row["friend_name"],
+                friend_row.get("direction", "outbound"),
             )
 
     return to_insert
@@ -2140,6 +2190,14 @@ def delete_friend(friend_id: str) -> bool:
 
 
 def has_friend_thread_approval(thread_id: str, friend_id: str) -> bool:
+    if not thread_id or not friend_id:
+        return False
+    ft = get_friend_thread(thread_id)
+    if ft and (ft.get("friend_id") == friend_id or not ft.get("friend_id")):
+        return True
+    f = get_friend_by_id(friend_id)
+    if f is not None:
+        return True
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -2169,21 +2227,27 @@ def approve_friend_for_thread(thread_id: str, friend_id: str) -> None:
     conn.close()
 
 
-def upsert_friend_thread(thread_id: str, friend_id: str, friend_name: str) -> None:
+def upsert_friend_thread(
+    thread_id: str,
+    friend_id: str,
+    friend_name: str,
+    direction: str = "outbound",
+) -> None:
     db_path = get_db_path()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     now = datetime.utcnow().isoformat()
     cursor.execute(
         """
-        INSERT INTO friend_threads (thread_id, friend_id, friend_name, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO friend_threads (thread_id, friend_id, friend_name, direction, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(thread_id) DO UPDATE SET
             friend_id = excluded.friend_id,
             friend_name = excluded.friend_name,
+            direction = excluded.direction,
             updated_at = excluded.updated_at
         """,
-        (thread_id, friend_id, friend_name, now, now),
+        (thread_id, friend_id, friend_name, direction, now, now),
     )
     conn.commit()
     conn.close()
@@ -3053,10 +3117,10 @@ def import_backup_data(import_sections: List[str], data: Dict[str, Any]) -> Dict
             for ft in friend_threads:
                 cursor.execute(
                     """
-                    INSERT OR REPLACE INTO friend_threads (thread_id, friend_id, friend_name, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO friend_threads (thread_id, friend_id, friend_name, direction, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (ft.get("thread_id"), ft.get("friend_id"), ft.get("friend_name"), ft.get("created_at"), ft.get("updated_at"))
+                    (ft.get("thread_id"), ft.get("friend_id"), ft.get("friend_name"), ft.get("direction", "outbound"), ft.get("created_at"), ft.get("updated_at"))
                 )
                 
             conn.commit()

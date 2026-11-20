@@ -162,8 +162,8 @@ function ChatMessagesImpl({
     >
       {activeFriendMeta?.isFriendChat && (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-          <div className="font-semibold">Friend chat: {activeFriendMeta.friendName || "Friend"}</div>
-          <div className="text-emerald-200/80">You are chatting with {activeFriendMeta.friendName || "your friend"}&apos;s Rie.</div>
+          <div className="font-semibold">Connected Peer: {activeFriendMeta.deviceName || activeFriendMeta.friendName || "Peer"}</div>
+          <div className="text-emerald-200/80">AI Mediated Session · Rie queries {activeFriendMeta.deviceName || activeFriendMeta.friendName || "peer"} as an intermediary.</div>
         </div>
       )}
       <KnowledgeChatBanner attachedKnowledge={attachedKnowledge} />
@@ -312,15 +312,13 @@ function ChatMessagesImpl({
                   )}
                 </div>
               )}
-              <div className={`min-w-0 max-w-full break-words overflow-x-hidden shadow-sm transition-all ${
-                m.from === "user"
-                  ? `rounded-2xl rounded-br-sm px-4 py-2.5 text-[13.5px] leading-relaxed ${
-                      m.error
-                        ? 'border border-red-500/40 bg-red-950/25 text-red-100'
-                        : 'bg-neutral-800/90 text-neutral-100 border border-neutral-700/60 shadow-neutral-950/20 backdrop-blur-sm'
-                    }`
-                  : `rounded-2xl rounded-tl-sm px-4 py-2.5 text-[13.5px] leading-relaxed bg-neutral-900/70 text-neutral-100 border border-neutral-800/80 shadow-neutral-950/20 backdrop-blur-sm`
-              }`}>
+              <div className={`min-w-0 max-w-full break-words overflow-x-hidden shadow-sm transition-all ${m.from === "user"
+                ? `rounded-2xl rounded-br-sm px-4 py-2.5 text-[13.5px] leading-relaxed ${m.error
+                  ? 'border border-red-500/40 bg-red-950/25 text-red-100'
+                  : 'bg-neutral-800/90 text-neutral-100 border border-neutral-700/60 shadow-neutral-950/20 backdrop-blur-sm'
+                }`
+                : `rounded-2xl rounded-tl-sm px-4 py-2.5 text-[13.5px] leading-relaxed bg-neutral-900/70 text-neutral-100 border border-neutral-800/80 shadow-neutral-950/20 backdrop-blur-sm`
+                }`}>
                 {m.image_url && (
                   <div className="mb-2 overflow-hidden rounded-lg">
                     <img src={m.image_url} alt="Attached" className="max-h-60 w-full object-cover" />

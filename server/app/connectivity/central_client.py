@@ -25,6 +25,8 @@ from app.database import (
     upsert_friend_thread,
     append_peer_query_event,
     insert_schedule_notification,
+    update_thread_title,
+    get_thread_title,
 )
 from app.peer_access import (
     compute_effective_tool_ids,
@@ -278,8 +280,16 @@ class CentralGatewayClient:
             identity = get_or_create_device_identity()
 
             # Save inbound message locally
-            await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email)
+            await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email, "inbound")
             await asyncio.to_thread(save_message, thread_id, "user", query)
+            try:
+                curr_title = await asyncio.to_thread(get_thread_title, thread_id)
+                if not curr_title or curr_title == "Untitled Chat":
+                    clean_title = (query or "").strip()
+                    if clean_title:
+                        await asyncio.to_thread(update_thread_title, thread_id, clean_title[:80])
+            except Exception:
+                pass
             try:
                 await asyncio.to_thread(
                     insert_schedule_notification,
@@ -363,8 +373,16 @@ class CentralGatewayClient:
             effective_ids = compute_effective_tool_ids(policy, full_catalog)
             memory_user_id = f"peer:{from_user}" if policy.memory_enabled else "default_user"
 
-            await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email)
+            await asyncio.to_thread(upsert_friend_thread, thread_id, from_user, from_email, "inbound")
             await asyncio.to_thread(save_message, thread_id, "user", query)
+            try:
+                curr_title = await asyncio.to_thread(get_thread_title, thread_id)
+                if not curr_title or curr_title == "Untitled Chat":
+                    clean_title = (query or "").strip()
+                    if clean_title:
+                        await asyncio.to_thread(update_thread_title, thread_id, clean_title[:80])
+            except Exception:
+                pass
             try:
                 await asyncio.to_thread(
                     insert_schedule_notification,

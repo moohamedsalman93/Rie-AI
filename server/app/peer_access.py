@@ -13,6 +13,7 @@ MEMORY_TOOL_IDS: frozenset[str] = frozenset({"save_memory", "get_memory", "searc
 # Matches chat-mode tool composition in agent.AgentManager._initialize_agent_async
 CHAT_PROFILE_TOOL_IDS: Tuple[str, ...] = (
     "internet_search",
+    "get_system_status",
     "schedule_chat_task",
     "remote_friend_ask",
     "save_memory",

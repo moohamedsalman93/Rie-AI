@@ -370,15 +370,28 @@ export function NormalModeLayout({
     }, [isResizingPanel]);
 
     useEffect(() => {
-        const handleResize = () => {
-            setIsFullWindow(window.innerWidth >= 1200);
+        let isMounted = true;
+        const handleResize = async () => {
+            let maximized = false;
+            try {
+                if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+                    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                    maximized = await getCurrentWindow().isMaximized();
+                }
+            } catch (_) { }
+            if (isMounted) {
+                setIsFullWindow(maximized || window.innerWidth >= 1200);
+            }
         };
         handleResize();
         window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
+        return () => {
+            isMounted = false;
+            window.removeEventListener('resize', handleResize);
+        };
     }, []);
 
-    const sidebarWidth = isFullWindow ? 320 : 288;
+    const sidebarWidth = isFullWindow ? 320 : 240;
     const COLLAPSED_SIDEBAR_WIDTH = 48;
     const currentSidebarWidth = isSidebarCollapsed ? COLLAPSED_SIDEBAR_WIDTH : sidebarWidth;
 
@@ -614,7 +627,7 @@ export function NormalModeLayout({
                                             {activeFriendMeta.isOnline ? "Online" : "Offline"}
                                         </span>
                                         <span className="text-neutral-600">•</span>
-                                        <span>End-to-End Mesh Relay</span>
+                                        <span>AI Mediated Connection</span>
                                     </div>
                                 </div>
                             </div>
@@ -1024,7 +1037,7 @@ export function NormalModeLayout({
                                             }}
                                             placeholder={
                                                 activeFriendMeta?.isFriendChat
-                                                    ? `Message ${activeFriendMeta.deviceName || activeFriendMeta.friendName || "Peer"}...`
+                                                    ? `Ask Rie or query ${activeFriendMeta.deviceName || activeFriendMeta.friendName || "Peer"}...`
                                                     : (isNewChat ? 'Do anything' : 'Type a message...')
                                             }
                                             className="w-full resize-none bg-transparent px-1 py-1 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none max-h-[220px] custom-scrollbar font-sans"
