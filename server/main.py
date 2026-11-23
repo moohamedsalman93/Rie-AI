@@ -31,7 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 logger.info(f"Backend starting up... Logging to: {settings.LOG_FILE}")
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.routes import router
@@ -65,6 +65,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled server exception on %s %s: %s", getattr(request, "method", "UNKNOWN"), getattr(request.url, "path", "/"), exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "error": str(exc)},
+    )
 
 # Subsystem background status tracker
 _subsystem_status = {
