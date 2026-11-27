@@ -91,3 +91,18 @@ if (Test-Path $DistInternal) {
 }
 
 Write-Host "`n--- Done! Sidecar: $SidecarExe"
+
+$InstalledDir = Join-Path $env:LOCALAPPDATA "Rie-AI"
+$InstalledExe = Join-Path $InstalledDir "rie-backend.exe"
+$InstalledInternal = Join-Path $InstalledDir "_internal"
+if (Test-Path $InstalledDir) {
+    Write-Host "`n--- Updating Installed Rie-AI AppData Backend ---"
+    try {
+        taskkill /F /IM rie-backend.exe /T 2>$null
+    } catch {}
+    Copy-Item -Force $DistExe $InstalledExe
+    if (Test-Path $DistInternal) {
+        Copy-Item -Recurse -Force (Join-Path $DistInternal "*") $InstalledInternal
+    }
+    Write-Host "Updated installed backend in $InstalledDir"
+}
